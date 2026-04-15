@@ -64,6 +64,7 @@ def init_studio_db():
                 id TEXT PRIMARY KEY,
                 name TEXT NOT NULL,
                 description TEXT,
+                goal TEXT DEFAULT '',
                 tech_stack TEXT,
                 status TEXT DEFAULT 'active',
                 created_at TEXT DEFAULT (datetime('now')),
@@ -76,6 +77,7 @@ def init_studio_db():
                 title TEXT NOT NULL,
                 description TEXT,
                 assigned_to TEXT,
+                parent_task_id TEXT,
                 status TEXT DEFAULT 'pending',
                 priority INTEGER DEFAULT 0,
                 depends_on TEXT DEFAULT '[]',
@@ -83,7 +85,8 @@ def init_studio_db():
                 result TEXT,
                 created_at TEXT DEFAULT (datetime('now')),
                 updated_at TEXT DEFAULT (datetime('now')),
-                FOREIGN KEY (project_id) REFERENCES projects(id)
+                FOREIGN KEY (project_id) REFERENCES projects(id),
+                FOREIGN KEY (parent_task_id) REFERENCES tasks(id)
             );
 
             CREATE TABLE IF NOT EXISTS agent_instances (
@@ -146,6 +149,20 @@ def init_studio_db():
                 created_at TEXT DEFAULT (datetime('now'))
             );
         """)
+
+        # Migrations for existing databases
+        _migrate_add_column(db, "projects", "goal", "TEXT DEFAULT ''")
+        _migrate_add_column(db, "tasks", "parent_task_id", "TEXT")
+
+
+def _migrate_add_column(db, table: str, column: str, col_type: str):
+    """Add a column if it doesn't exist (idempotent migration)."""
+    try:
+        cols = [row[1] for row in db.execute(f"PRAGMA table_info({table})").fetchall()]
+        if column not in cols:
+            db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {col_type}")
+    except Exception:
+        pass
 
 
 def init_project_db(project_id: str):

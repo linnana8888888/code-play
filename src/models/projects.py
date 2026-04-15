@@ -9,6 +9,7 @@ class Project(BaseModel):
     id: str
     name: str
     description: str = ""
+    goal: str = ""
     tech_stack: str = ""
     status: str = "active"
     created_at: datetime | None = None
@@ -18,4 +19,5 @@ class Project(BaseModel):
 class ProjectCreate(BaseModel):
     name: str
     description: str = ""
+    goal: str = ""
     tech_stack: str = "threejs"

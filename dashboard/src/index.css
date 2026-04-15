@@ -1,0 +1,65 @@
+@import "tailwindcss";
+
+/* ── Dark game-studio theme ── */
+@theme {
+  --color-bg: #0b0f19;
+  --color-bg-card: #111827;
+  --color-bg-sidebar: #0f1629;
+  --color-bg-hover: #1e293b;
+  --color-border: #1e293b;
+  --color-text: #e2e8f0;
+  --color-text-muted: #94a3b8;
+  --color-accent: #6366f1;
+  --color-accent-hover: #818cf8;
+  --color-success: #22c55e;
+  --color-warning: #eab308;
+  --color-danger: #ef4444;
+  --color-info: #3b82f6;
+}
+
+html {
+  color-scheme: dark;
+}
+
+body {
+  margin: 0;
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: "Inter", system-ui, -apple-system, sans-serif;
+}
+
+/* ── Status badges ── */
+.badge {
+  @apply inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium;
+}
+.badge-pending {
+  @apply bg-yellow-900/40 text-yellow-400;
+}
+.badge-assigned {
+  @apply bg-blue-900/40 text-blue-400;
+}
+.badge-running {
+  @apply bg-indigo-900/40 text-indigo-400;
+}
+.badge-done {
+  @apply bg-green-900/40 text-green-400;
+}
+.badge-terminated {
+  @apply bg-red-900/40 text-red-400;
+}
+.badge-blocked {
+  @apply bg-gray-700/40 text-gray-400;
+}
+
+/* ── Scrollbar ── */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: var(--color-bg);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-border);
+  border-radius: 3px;
+}

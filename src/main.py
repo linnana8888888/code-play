@@ -12,8 +12,11 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
 import yaml
+from pathlib import Path
+
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from src.settings import settings
 from src.database import init_studio_db, init_project_db, get_studio_db
@@ -25,6 +28,8 @@ from src.orchestrator.task_queue import task_queue
 from src.runtime.llm_router import router
 from src.runtime.tool_executor import tool_executor
 from src.runtime.agent_runtime import agent_runtime
+from src.runtime.session_store import session_store
+from src.runtime.skill_registry import skill_registry
 from src.communication.message_bus import message_bus
 from src.memory.project_memory import project_memory
 
@@ -87,6 +92,15 @@ async def lifespan(app: FastAPI):
     # Load governance config
     tool_executor.load_governance()
     logger.info("Governance config loaded")
+
+    # Ensure session store table exists
+    session_store.ensure_table()
+
+    # Load skills
+    skill_registry.load_skills()
+    skill_registry.load_governance()
+    skill_count = len(skill_registry.list_skills())
+    logger.info(f"Loaded {skill_count} skills")
 
     # Wire message bus to WebSocket
     message_bus.set_ws_broadcast(ws_manager.broadcast)
@@ -165,8 +179,8 @@ async def create_project(body: ProjectCreate):
 
     with get_studio_db() as db:
         db.execute(
-            "INSERT INTO projects (id, name, description, tech_stack, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
-            (project_id, body.name, body.description, body.tech_stack, now, now),
+            "INSERT INTO projects (id, name, description, goal, tech_stack, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (project_id, body.name, body.description, body.goal, body.tech_stack, now, now),
         )
 
     # Init project memory DB
@@ -176,6 +190,7 @@ async def create_project(body: ProjectCreate):
         id=project_id,
         name=body.name,
         description=body.description,
+        goal=body.goal,
         tech_stack=body.tech_stack,
         status="active",
         created_at=datetime.fromisoformat(now),
@@ -298,7 +313,55 @@ async def terminate_agent(instance_id: str):
     return {"status": "terminated"}
 
 
-async def _run_agent_task(instance, task_prompt: str):
+@app.post("/api/agents/{instance_id}/resume")
+async def resume_agent(instance_id: str, task_prompt: str, session_id: str = None):
+    """Resume an agent from a saved session."""
+    instance = registry.get_instance(instance_id)
+    if not instance:
+        raise HTTPException(404, "Agent instance not found")
+
+    # Find latest session if not specified
+    if not session_id:
+        sessions = session_store.list_sessions(instance_id=instance_id)
+        if not sessions:
+            raise HTTPException(404, "No saved sessions for this agent")
+        session_id = sessions[0]["id"]
+
+    # Re-run with session
+    asyncio.create_task(_run_agent_task(instance, task_prompt, session_id=session_id))
+
+    return {"instance_id": instance_id, "session_id": session_id, "status": "resuming"}
+
+
+@app.get("/api/agents/{instance_id}/cost")
+async def get_agent_cost(instance_id: str):
+    """Get per-agent cost breakdown from cost_log."""
+    instance = registry.get_instance(instance_id)
+    if not instance:
+        raise HTTPException(404, "Agent instance not found")
+
+    with get_studio_db() as db:
+        rows = db.execute(
+            """SELECT provider, model, SUM(input_tokens) as input_tokens,
+                      SUM(output_tokens) as output_tokens, SUM(cost_usd) as cost_usd,
+                      COUNT(*) as calls
+               FROM cost_log WHERE agent_instance_id = ? GROUP BY provider, model""",
+            (instance_id,),
+        ).fetchall()
+
+    return {
+        "instance_id": instance_id,
+        "agent_type": instance.agent_type,
+        "status": instance.status.value,
+        "tokens_used": instance.tokens_used,
+        "cost_usd": instance.cost_usd,
+        "budget_max_tokens": instance.budget_max_tokens,
+        "budget_max_usd": instance.budget_max_usd,
+        "breakdown": [dict(r) for r in rows],
+    }
+
+
+async def _run_agent_task(instance, task_prompt: str, session_id: str = None):
     """Background task: run agent to completion, broadcasting turns."""
     try:
         # Inject project memory context if available
@@ -311,7 +374,7 @@ async def _run_agent_task(instance, task_prompt: str):
                     "content": f"[Project Context]\n{context_bundle}",
                 })
 
-        async for turn in agent_runtime.run(instance, task_prompt, context_messages):
+        async for turn in agent_runtime.run(instance, task_prompt, context_messages, session_id):
             await ws_manager.broadcast({
                 "type": "agent_turn",
                 "data": {
@@ -434,6 +497,57 @@ async def governance_log(limit: int = 50):
     return [dict(r) for r in rows]
 
 
+# ==================== Skills ====================
+
+@app.get("/api/skills")
+async def list_skills():
+    skills = skill_registry.list_skills()
+    return [
+        {
+            "id": s.id,
+            "name": s.name,
+            "description": s.description,
+            "category": s.category,
+            "is_builtin": skill_registry.is_builtin(s.id),
+        }
+        for s in skills
+    ]
+
+
+@app.get("/api/skills/{skill_id}")
+async def get_skill(skill_id: str):
+    skill = skill_registry.get_skill(skill_id)
+    if not skill:
+        raise HTTPException(404, "Skill not found")
+    return {
+        "id": skill.id,
+        "name": skill.name,
+        "description": skill.description,
+        "content": skill.content,
+        "is_builtin": skill_registry.is_builtin(skill.id),
+    }
+
+
+@app.post("/api/skills/{skill_id}/approve")
+async def approve_skill(skill_id: str, agent_type: str):
+    """Approve an agent type to use a skill."""
+    skill = skill_registry.get_skill(skill_id)
+    if not skill:
+        raise HTTPException(404, "Skill not found")
+    skill_registry.approve(skill_id, agent_type, approved_by="human")
+    return {"skill_id": skill_id, "agent_type": agent_type, "status": "approved"}
+
+
+@app.post("/api/skills/{skill_id}/deny")
+async def deny_skill(skill_id: str, agent_type: str):
+    """Revoke an agent type's access to a skill."""
+    skill = skill_registry.get_skill(skill_id)
+    if not skill:
+        raise HTTPException(404, "Skill not found")
+    skill_registry.deny(skill_id, agent_type)
+    return {"skill_id": skill_id, "agent_type": agent_type, "status": "denied"}
+
+
 # ==================== Memory ====================
 
 @app.get("/api/projects/{project_id}/memory")
@@ -504,7 +618,7 @@ async def run_pipeline(pipeline_name: str, project_id: str, input_text: str = ""
                         project_id=project_id,
                         task_id=task.id,
                     )
-                    task_queue.assign(task.id, instance.id)
+                    task_queue.checkout(task.id, instance.id)
                     asyncio.create_task(_run_agent_task(instance, task_desc))
                 except ValueError:
                     logger.warning(f"Agent type '{agent_type}' not found, skipping")
@@ -561,7 +675,30 @@ async def get_stats():
         "messages": message_count,
         "agents": {
             "definitions": len(registry.list_definitions()),
+            "instances": len(registry.list_instances()),
             "running": len(registry.list_instances(status=AgentStatus.RUNNING)),
         },
         "cost_usd": round(total_cost, 4),
     }
+
+
+# ==================== Dashboard Static Files ====================
+
+_dashboard_dist = Path(__file__).resolve().parent.parent / "dashboard" / "dist"
+if _dashboard_dist.is_dir():
+    # Serve index.html for SPA client-side routing
+    from fastapi.responses import FileResponse
+
+    @app.get("/app/{rest:path}")
+    async def spa_fallback(rest: str):
+        """Serve dashboard SPA — all non-API routes fall through to index.html."""
+        file_path = _dashboard_dist / rest
+        if file_path.is_file():
+            return FileResponse(file_path)
+        return FileResponse(_dashboard_dist / "index.html")
+
+    @app.get("/app")
+    async def spa_root():
+        return FileResponse(_dashboard_dist / "index.html")
+
+    app.mount("/assets", StaticFiles(directory=str(_dashboard_dist / "assets")), name="dashboard-assets")

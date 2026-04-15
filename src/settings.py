@@ -32,6 +32,7 @@ class Settings(BaseSettings):
     agents_dir: str = "agents"
     config_dir: str = "config"
     projects_dir: str = "projects"
+    skills_dir: str = "skills"
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 

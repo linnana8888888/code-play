@@ -7,7 +7,7 @@ venv/
 dist/
 build/
 .pytest_cache/
-projects/
+/projects/
 *.db
 *.sqlite
 node_modules/

@@ -157,7 +157,9 @@ class ToolExecutor:
             )
 
         try:
-            result = await handler(arguments, project_id=project_id)
+            result = await handler(
+                arguments, project_id=project_id, agent_instance_id=agent_instance_id,
+            )
             return ToolResult(tool_call_id="", content=str(result), is_error=False)
         except Exception as e:
             return ToolResult(tool_call_id="", content=f"Tool error: {e}", is_error=True)
@@ -374,13 +376,13 @@ class ToolExecutor:
     # --- Tool implementations ---
 
     async def _tool_file_read(self, args: dict, **ctx) -> str:
-        path = self._safe_path(args["path"], ctx.get("project_id"))
+        path = self._safe_path(args["path"], ctx.get("project_id"), ctx.get("agent_instance_id"))
         if not path.exists():
             raise FileNotFoundError(f"File not found: {args['path']}")
         return path.read_text(encoding="utf-8")
 
     async def _tool_file_write(self, args: dict, **ctx) -> str:
-        path = self._safe_path(args["path"], ctx.get("project_id"))
+        path = self._safe_path(args["path"], ctx.get("project_id"), ctx.get("agent_instance_id"))
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(args["content"], encoding="utf-8")
         return f"Wrote {len(args['content'])} chars to {args['path']}"
@@ -388,7 +390,7 @@ class ToolExecutor:
     async def _tool_bash_execute(self, args: dict, **ctx) -> str:
         command = args["command"]
         timeout = args.get("timeout", 60)
-        cwd = self._project_dir(ctx.get("project_id"))
+        cwd = self._project_dir(ctx.get("project_id"), ctx.get("agent_instance_id"))
 
         # Safety: block dangerous patterns
         dangerous = ["rm -rf /", "rm -rf /*", ":(){ :|:& };:", "dd if=/dev"]
@@ -563,14 +565,19 @@ class ToolExecutor:
 
     # --- Path safety ---
 
-    def _project_dir(self, project_id: str = None) -> Path:
+    def _project_dir(self, project_id: str = None, agent_instance_id: str = None) -> Path:
+        """Resolve project directory — uses workspace if one exists for this agent."""
+        if project_id and agent_instance_id:
+            workspace = Path(settings.projects_dir) / project_id / "worktrees" / agent_instance_id
+            if workspace.exists():
+                return workspace
         if project_id:
             return Path(settings.projects_dir) / project_id
         return Path(".")
 
-    def _safe_path(self, relative: str, project_id: str = None) -> Path:
+    def _safe_path(self, relative: str, project_id: str = None, agent_instance_id: str = None) -> Path:
         """Resolve path within project directory, preventing traversal."""
-        base = self._project_dir(project_id)
+        base = self._project_dir(project_id, agent_instance_id)
         resolved = (base / relative).resolve()
         base_resolved = base.resolve()
 

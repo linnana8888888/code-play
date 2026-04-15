@@ -21,6 +21,7 @@ class Task(BaseModel):
     title: str
     description: str = ""
     assigned_to: str | None = None             # agent instance ID
+    parent_task_id: str | None = None          # enables task hierarchy
     status: TaskStatus = TaskStatus.PENDING
     priority: int = 0
     depends_on: list[str] = Field(default_factory=list)
@@ -34,6 +35,7 @@ class TaskCreate(BaseModel):
     project_id: str
     title: str
     description: str = ""
+    parent_task_id: str | None = None
     priority: int = 0
     depends_on: list[str] = Field(default_factory=list)
     created_by: str = "human"

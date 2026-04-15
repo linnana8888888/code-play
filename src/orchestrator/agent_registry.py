@@ -49,6 +49,12 @@ class AgentRegistry:
                     defn.fallback_model = config["fallback_model"]
                 if "tools" in config:
                     defn.tools = config["tools"]
+                if "skills" in config:
+                    defn.skills = config["skills"]
+                if "budget_max_tokens" in config:
+                    defn.budget_max_tokens = config["budget_max_tokens"]
+                if "budget_max_usd" in config:
+                    defn.budget_max_usd = config["budget_max_usd"]
                 if "description" in config:
                     defn.description = config["description"]
 
@@ -81,6 +87,9 @@ class AgentRegistry:
             default_model=frontmatter.get("default_model", defaults.get("model", "")),
             fallback_model=frontmatter.get("fallback_model", defaults.get("fallback_model", "")),
             tools=frontmatter.get("tools", []),
+            skills=frontmatter.get("skills", []),
+            budget_max_tokens=frontmatter.get("budget_max_tokens", defaults.get("budget_max_tokens", 0)),
+            budget_max_usd=frontmatter.get("budget_max_usd", defaults.get("budget_max_usd", 0.0)),
             system_prompt=body.strip(),
             source_path=str(path),
         )
@@ -135,6 +144,8 @@ class AgentRegistry:
             status=AgentStatus.ASSIGNED,
             model=model,
             provider=provider,
+            budget_max_tokens=defn.budget_max_tokens,
+            budget_max_usd=defn.budget_max_usd,
             started_at=datetime.now(timezone.utc),
         )
         self._instances[instance.id] = instance

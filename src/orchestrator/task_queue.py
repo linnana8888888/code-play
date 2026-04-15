@@ -17,13 +17,14 @@ class TaskQueue:
 
         with get_studio_db() as db:
             db.execute(
-                """INSERT INTO tasks (id, project_id, title, description, priority, depends_on, created_by, status, created_at, updated_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)""",
+                """INSERT INTO tasks (id, project_id, title, description, parent_task_id, priority, depends_on, created_by, status, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)""",
                 (
                     task_id,
                     task_input.project_id,
                     task_input.title,
                     task_input.description,
+                    task_input.parent_task_id,
                     task_input.priority,
                     json.dumps(task_input.depends_on),
                     task_input.created_by,
@@ -37,6 +38,7 @@ class TaskQueue:
             project_id=task_input.project_id,
             title=task_input.title,
             description=task_input.description,
+            parent_task_id=task_input.parent_task_id,
             priority=task_input.priority,
             depends_on=task_input.depends_on,
             created_by=task_input.created_by,
@@ -80,13 +82,24 @@ class TaskQueue:
         return [self._row_to_task(r) for r in rows]
 
     def assign(self, task_id: str, agent_instance_id: str) -> Task | None:
-        """Assign a task to an agent instance."""
+        """Assign a task to an agent instance (backwards-compatible wrapper)."""
+        return self.checkout(task_id, agent_instance_id)
+
+    def checkout(self, task_id: str, agent_instance_id: str) -> Task | None:
+        """Atomically claim a pending task. Returns None if already taken.
+
+        Uses a single UPDATE with WHERE conditions so only one agent
+        can claim the task even under concurrent access.
+        """
+        now = datetime.now(timezone.utc).isoformat()
         with get_studio_db() as db:
-            db.execute(
+            cursor = db.execute(
                 """UPDATE tasks SET assigned_to = ?, status = 'assigned', updated_at = ?
-                   WHERE id = ?""",
-                (agent_instance_id, datetime.now(timezone.utc).isoformat(), task_id),
+                   WHERE id = ? AND status = 'pending' AND assigned_to IS NULL""",
+                (agent_instance_id, now, task_id),
             )
+            if cursor.rowcount == 0:
+                return None
         return self.get(task_id)
 
     def update_status(self, task_id: str, status: TaskStatus, result: dict = None):
@@ -128,12 +141,19 @@ class TaskQueue:
     def _row_to_task(self, row) -> Task:
         depends = json.loads(row["depends_on"]) if row["depends_on"] else []
         result = json.loads(row["result"]) if row["result"] else None
+        # parent_task_id may not exist in old DBs
+        parent_task_id = None
+        try:
+            parent_task_id = row["parent_task_id"]
+        except (IndexError, KeyError):
+            pass
         return Task(
             id=row["id"],
             project_id=row["project_id"],
             title=row["title"],
             description=row["description"] or "",
             assigned_to=row["assigned_to"],
+            parent_task_id=parent_task_id,
             status=TaskStatus(row["status"]),
             priority=row["priority"] or 0,
             depends_on=depends,

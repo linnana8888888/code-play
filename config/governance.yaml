@@ -34,6 +34,12 @@ restricted:
   - external_api_call  # calling unknown APIs
   - create_agent       # spawning new agent types
 
+builtin_skills:
+  # Skills that are auto-approved for all agents
+  - coding-standards
+  - git-workflow
+  - testing-patterns
+
 blocked:
   # Always denied
   - rm_rf_outside_project   # never delete outside project dir

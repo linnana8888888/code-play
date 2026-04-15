@@ -28,6 +28,9 @@ class AgentDefinition(BaseModel):
     default_model: str = ""                    # e.g. "openrouter/qwen/qwen3-coder:free"
     fallback_model: str = ""                   # e.g. "omlx/qwen3.5-9b"
     tools: list[str] = Field(default_factory=list)  # tool names this agent can use
+    skills: list[str] = Field(default_factory=list)  # skill IDs this agent can use
+    budget_max_tokens: int = 0                 # 0 = unlimited
+    budget_max_usd: float = 0.0               # 0 = unlimited
     system_prompt: str = ""                    # the markdown body
     source_path: str = ""                      # path to the .md file
 
@@ -44,5 +47,7 @@ class AgentInstance(BaseModel):
     conversation: list[dict] = Field(default_factory=list)
     tokens_used: int = 0
     cost_usd: float = 0.0
+    budget_max_tokens: int = 0                 # inherited from definition, 0 = unlimited
+    budget_max_usd: float = 0.0
     started_at: datetime | None = None
     completed_at: datetime | None = None

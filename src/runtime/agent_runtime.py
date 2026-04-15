@@ -7,6 +7,7 @@ Like Claude Code's internal loop, but for any LLM:
 4. If response has text only → return final answer
 5. Enforce max iterations to prevent runaway loops
 """
+from __future__ import annotations
 
 import json
 import logging

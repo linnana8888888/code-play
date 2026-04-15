@@ -1,4 +1,5 @@
 """Task Queue — SQLite-backed task management with dependency resolution."""
+from __future__ import annotations
 
 import json
 import uuid

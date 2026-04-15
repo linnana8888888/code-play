@@ -6,6 +6,7 @@ Each game project gets its own memory database for:
 - Feedback: human and agent feedback on outputs
 - Context: runtime context, conversation summaries, shared state
 """
+from __future__ import annotations
 
 import json
 from datetime import datetime, timezone

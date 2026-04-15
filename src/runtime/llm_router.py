@@ -1,4 +1,5 @@
 """LLM Router — multi-provider routing with fallback chains."""
+from __future__ import annotations
 
 import json
 import httpx

@@ -1,4 +1,5 @@
 """Agent Registry — loads .md definitions, manages agent lifecycle."""
+from __future__ import annotations
 
 import re
 import uuid

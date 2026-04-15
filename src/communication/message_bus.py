@@ -1,4 +1,5 @@
 """Message Bus — project channels, @-mentions, and human escalation."""
+from __future__ import annotations
 
 import asyncio
 import json

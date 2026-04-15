@@ -1,4 +1,5 @@
 """Tool Executor — shared tool pool with governance enforcement."""
+from __future__ import annotations
 
 import asyncio
 import json

@@ -1,0 +1,71 @@
+# Pipeline Definitions
+# Declarative agent chains for game production workflows
+
+pipelines:
+  new-game:
+    name: "New Game Production"
+    description: "Full pipeline from concept to deployed prototype"
+    steps:
+      - id: concept
+        agent: game-designer
+        task: "Create a Game Design Document from concept: {input}"
+        output: gdd
+
+      - id: narrative
+        agent: narrative-designer
+        depends_on: [concept]
+        task: "Create narrative framework based on the GDD"
+        output: narrative_doc
+
+      - id: prototype
+        agent: frontend-developer
+        depends_on: [concept]
+        task: "Build Three.js prototype implementing the GDD core loop"
+        output: prototype_code
+
+      - id: review
+        agent: code-reviewer
+        depends_on: [prototype]
+        task: "Review prototype code for quality, security, and performance"
+        output: review_feedback
+
+      - id: human-review
+        type: human-gate
+        depends_on: [prototype, narrative, review]
+        task: "Review prototype and narrative. Approve to continue."
+
+  quick-prototype:
+    name: "Quick Prototype"
+    description: "Fast prototype from a one-line idea"
+    steps:
+      - id: design
+        agent: game-designer
+        task: "Create a minimal GDD for: {input}. Focus on core loop only."
+        output: gdd
+
+      - id: build
+        agent: frontend-developer
+        depends_on: [design]
+        task: "Build a playable Three.js prototype from this GDD"
+        output: code
+
+  roblox-experience:
+    name: "Roblox Experience"
+    description: "Pipeline for Roblox game development"
+    steps:
+      - id: design
+        agent: roblox-experience-designer
+        task: "Design Roblox experience for: {input}"
+        output: design_doc
+
+      - id: script
+        agent: roblox-systems-scripter
+        depends_on: [design]
+        task: "Implement the core systems in Luau"
+        output: scripts
+
+      - id: review
+        agent: code-reviewer
+        depends_on: [script]
+        task: "Review Luau scripts for security and performance"
+        output: review

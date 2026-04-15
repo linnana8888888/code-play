@@ -1,0 +1,167 @@
+"""SQLite database management for tasks, messages, and project memory."""
+
+import sqlite3
+import json
+from pathlib import Path
+from contextlib import contextmanager
+from datetime import datetime, timezone
+
+
+DB_DIR = Path("projects")
+
+
+def _get_studio_db_path() -> Path:
+    DB_DIR.mkdir(parents=True, exist_ok=True)
+    return DB_DIR / "studio.db"
+
+
+def _get_project_db_path(project_id: str) -> Path:
+    project_dir = DB_DIR / project_id
+    project_dir.mkdir(parents=True, exist_ok=True)
+    return project_dir / "memory.db"
+
+
+@contextmanager
+def get_studio_db():
+    """Connection to the studio-wide database (tasks, agents, governance)."""
+    db_path = _get_studio_db_path()
+    conn = sqlite3.connect(str(db_path))
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA foreign_keys=ON")
+    try:
+        yield conn
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+@contextmanager
+def get_project_db(project_id: str):
+    """Connection to a project-specific database (memory, artifacts)."""
+    db_path = _get_project_db_path(project_id)
+    conn = sqlite3.connect(str(db_path))
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    try:
+        yield conn
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def init_studio_db():
+    """Create studio-wide tables."""
+    with get_studio_db() as db:
+        db.executescript("""
+            CREATE TABLE IF NOT EXISTS projects (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                description TEXT,
+                tech_stack TEXT,
+                status TEXT DEFAULT 'active',
+                created_at TEXT DEFAULT (datetime('now')),
+                updated_at TEXT DEFAULT (datetime('now'))
+            );
+
+            CREATE TABLE IF NOT EXISTS tasks (
+                id TEXT PRIMARY KEY,
+                project_id TEXT NOT NULL,
+                title TEXT NOT NULL,
+                description TEXT,
+                assigned_to TEXT,
+                status TEXT DEFAULT 'pending',
+                priority INTEGER DEFAULT 0,
+                depends_on TEXT DEFAULT '[]',
+                created_by TEXT DEFAULT 'human',
+                result TEXT,
+                created_at TEXT DEFAULT (datetime('now')),
+                updated_at TEXT DEFAULT (datetime('now')),
+                FOREIGN KEY (project_id) REFERENCES projects(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS agent_instances (
+                id TEXT PRIMARY KEY,
+                agent_type TEXT NOT NULL,
+                project_id TEXT,
+                task_id TEXT,
+                status TEXT DEFAULT 'idle',
+                model TEXT,
+                provider TEXT,
+                tokens_used INTEGER DEFAULT 0,
+                cost_usd REAL DEFAULT 0.0,
+                started_at TEXT,
+                completed_at TEXT,
+                FOREIGN KEY (project_id) REFERENCES projects(id),
+                FOREIGN KEY (task_id) REFERENCES tasks(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS messages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                project_id TEXT NOT NULL,
+                channel TEXT NOT NULL DEFAULT 'general',
+                sender TEXT NOT NULL,
+                content TEXT NOT NULL,
+                mentions TEXT DEFAULT '[]',
+                created_at TEXT DEFAULT (datetime('now')),
+                FOREIGN KEY (project_id) REFERENCES projects(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS governance_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                agent_instance_id TEXT,
+                tool_name TEXT NOT NULL,
+                params TEXT,
+                decision TEXT NOT NULL,
+                reason TEXT,
+                created_at TEXT DEFAULT (datetime('now'))
+            );
+
+            CREATE TABLE IF NOT EXISTS approval_queue (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                agent_instance_id TEXT NOT NULL,
+                tool_name TEXT NOT NULL,
+                params TEXT,
+                status TEXT DEFAULT 'pending',
+                decided_by TEXT,
+                decided_at TEXT,
+                created_at TEXT DEFAULT (datetime('now'))
+            );
+
+            CREATE TABLE IF NOT EXISTS cost_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                agent_instance_id TEXT,
+                project_id TEXT,
+                provider TEXT,
+                model TEXT,
+                input_tokens INTEGER DEFAULT 0,
+                output_tokens INTEGER DEFAULT 0,
+                cost_usd REAL DEFAULT 0.0,
+                created_at TEXT DEFAULT (datetime('now'))
+            );
+        """)
+
+
+def init_project_db(project_id: str):
+    """Create project-specific memory tables."""
+    with get_project_db(project_id) as db:
+        db.executescript("""
+            CREATE TABLE IF NOT EXISTS memory (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                type TEXT NOT NULL,
+                key TEXT NOT NULL,
+                content TEXT NOT NULL,
+                created_by TEXT,
+                created_at TEXT DEFAULT (datetime('now')),
+                updated_at TEXT DEFAULT (datetime('now'))
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_memory_type ON memory(type);
+            CREATE INDEX IF NOT EXISTS idx_memory_key ON memory(key);
+        """)

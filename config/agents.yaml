@@ -1,0 +1,84 @@
+# Agent Roster Configuration
+# Maps agent IDs to their model routing and tool access
+
+defaults:
+  model: "openrouter/qwen/qwen3-coder:free"
+  fallback_model: "omlx/qwen3.5-9b"
+  temperature: 0.7
+  max_tokens: 4096
+
+agents:
+  # Game Development Core
+  game-designer:
+    model: "openrouter/nvidia/nemotron-3-super-120b-a12b:free"
+    description: "Systems and mechanics architect"
+    tools: [file_read, file_write, memory_read, memory_write, channel_post, channel_read, escalate, web_search]
+
+  narrative-designer:
+    model: "openrouter/nvidia/nemotron-3-super-120b-a12b:free"
+    description: "Story systems and dialogue architect"
+    tools: [file_read, file_write, memory_read, memory_write, channel_post, channel_read, escalate]
+
+  level-designer:
+    model: "openrouter/nvidia/nemotron-3-super-120b-a12b:free"
+    description: "Spatial storytelling and flow specialist"
+    tools: [file_read, file_write, memory_read, memory_write, channel_post, channel_read, escalate]
+
+  game-audio-engineer:
+    model: "openrouter/nvidia/nemotron-3-super-120b-a12b:free"
+    description: "Interactive audio specialist"
+    tools: [file_read, file_write, memory_read, memory_write, channel_post, channel_read]
+
+  technical-artist:
+    model: "openrouter/qwen/qwen3-coder:free"
+    description: "Art-to-engine pipeline specialist"
+    tools: [file_read, file_write, bash_execute, memory_read, memory_write, channel_post, channel_read]
+
+  # Engineering
+  frontend-developer:
+    model: "openrouter/qwen/qwen3-coder:free"
+    description: "Three.js/WebGL implementation specialist"
+    tools: [file_read, file_write, bash_execute, git_status, git_add, git_commit, git_diff, memory_read, memory_write, channel_post, channel_read, escalate, run_tests]
+
+  code-reviewer:
+    model: "openrouter/qwen/qwen3-coder:free"
+    description: "Code quality and security reviewer"
+    tools: [file_read, git_diff, memory_read, channel_post, channel_read, escalate]
+
+  backend-architect:
+    model: "openrouter/qwen/qwen3-coder:free"
+    description: "Backend and API design"
+    tools: [file_read, file_write, bash_execute, git_status, git_add, git_commit, memory_read, memory_write, channel_post, channel_read]
+
+  devops-automator:
+    model: "openrouter/qwen/qwen3-coder:free"
+    description: "CI/CD and deployment specialist"
+    tools: [file_read, file_write, bash_execute, git_status, git_add, git_commit, git_diff, deploy_preview, channel_post, channel_read]
+
+  security-engineer:
+    model: "openrouter/qwen/qwen3-coder:free"
+    description: "Application security specialist"
+    tools: [file_read, bash_execute, git_diff, memory_read, channel_post, channel_read, escalate]
+
+  # Roblox
+  roblox-systems-scripter:
+    model: "openrouter/qwen/qwen3-coder:free"
+    description: "Roblox Luau scripting specialist"
+    tools: [file_read, file_write, bash_execute, memory_read, memory_write, channel_post, channel_read]
+
+  roblox-experience-designer:
+    model: "openrouter/nvidia/nemotron-3-super-120b-a12b:free"
+    description: "Roblox engagement and monetization specialist"
+    tools: [file_read, file_write, memory_read, memory_write, channel_post, channel_read, escalate]
+
+  # Testing
+  qa-engineer:
+    model: "openrouter/qwen/qwen3-coder:free"
+    description: "QA and testing specialist"
+    tools: [file_read, file_write, bash_execute, run_tests, memory_read, channel_post, channel_read, escalate]
+
+  # Local model agents (when you want to save costs)
+  local-assistant:
+    model: "omlx/qwen3.5-9b"
+    description: "General assistant running on local oMLX"
+    tools: [file_read, file_write, memory_read, memory_write, channel_post, channel_read]

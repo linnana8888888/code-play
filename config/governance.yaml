@@ -1,0 +1,42 @@
+# Tool Governance Configuration
+# Controls which tools agents can use and which need human approval
+
+builtin:
+  # Always allowed - core agent capabilities
+  - file_read
+  - file_write
+  - bash_execute
+  - git_status
+  - git_add
+  - git_commit
+  - git_diff
+  - web_search
+  - channel_post
+  - channel_read
+  - escalate
+  - memory_read
+  - memory_write
+  - memory_search
+
+pre_approved:
+  # User's existing Claude Code skills/plugins - always allowed
+  - deploy_preview
+  - run_tests
+  - project_memory_read
+  - project_memory_write
+
+restricted:
+  # Needs human approval before execution
+  - npm_install        # installing new packages
+  - pip_install        # installing python packages
+  - git_push           # pushing to remote
+  - git_branch_delete  # deleting branches
+  - external_api_call  # calling unknown APIs
+  - create_agent       # spawning new agent types
+
+blocked:
+  # Always denied
+  - rm_rf_outside_project   # never delete outside project dir
+  - git_force_push          # never force push
+  - drop_database           # never drop databases
+  - modify_system_files     # never touch system config

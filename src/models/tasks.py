@@ -1,0 +1,38 @@
+"""Task queue models."""
+
+from enum import Enum
+from pydantic import BaseModel, Field
+from datetime import datetime
+
+
+class TaskStatus(str, Enum):
+    PENDING = "pending"
+    ASSIGNED = "assigned"
+    RUNNING = "running"
+    BLOCKED = "blocked"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
+class Task(BaseModel):
+    id: str
+    project_id: str
+    title: str
+    description: str = ""
+    assigned_to: str | None = None             # agent instance ID
+    status: TaskStatus = TaskStatus.PENDING
+    priority: int = 0
+    depends_on: list[str] = Field(default_factory=list)
+    created_by: str = "human"
+    result: dict | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+
+class TaskCreate(BaseModel):
+    project_id: str
+    title: str
+    description: str = ""
+    priority: int = 0
+    depends_on: list[str] = Field(default_factory=list)
+    created_by: str = "human"

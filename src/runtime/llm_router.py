@@ -74,6 +74,7 @@ class LLMRouter:
             "messages": request.messages,
             "temperature": request.temperature,
             "max_tokens": request.max_tokens,
+            "chat_template_kwargs": {"enable_thinking": False},
         }
         if request.tools:
             payload["tools"] = self._to_openai_tools(request.tools)

@@ -2,15 +2,15 @@
 # Maps agent IDs to their model routing and tool access
 
 defaults:
-  model: "openrouter/qwen/qwen3-coder:free"
-  fallback_model: "omlx/qwen3.5-9b"
+  model: "omlx/Qwen3.5-9B-MLX-4bit"
+  fallback_model: "omlx/Qwen3.5-9B-MLX-4bit"
   temperature: 0.7
   max_tokens: 4096
 
 agents:
   # Game Development Core
   game-designer:
-    model: "openrouter/nvidia/nemotron-3-super-120b-a12b:free"
+    model: "omlx/Qwen3.5-9B-MLX-4bit"
     description: "Systems and mechanics architect"
     tools: [file_read, file_write, memory_read, memory_write, channel_post, channel_read, escalate, web_search]
 

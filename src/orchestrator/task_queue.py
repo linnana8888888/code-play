@@ -1,0 +1,147 @@
+"""Task Queue — SQLite-backed task management with dependency resolution."""
+
+import json
+import uuid
+from datetime import datetime, timezone
+
+from src.models.tasks import Task, TaskCreate, TaskStatus
+from src.database import get_studio_db
+
+
+class TaskQueue:
+    def create(self, task_input: TaskCreate) -> Task:
+        """Create a new task."""
+        task_id = f"task-{uuid.uuid4().hex[:8]}"
+        now = datetime.now(timezone.utc).isoformat()
+
+        with get_studio_db() as db:
+            db.execute(
+                """INSERT INTO tasks (id, project_id, title, description, priority, depends_on, created_by, status, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)""",
+                (
+                    task_id,
+                    task_input.project_id,
+                    task_input.title,
+                    task_input.description,
+                    task_input.priority,
+                    json.dumps(task_input.depends_on),
+                    task_input.created_by,
+                    now,
+                    now,
+                ),
+            )
+
+        return Task(
+            id=task_id,
+            project_id=task_input.project_id,
+            title=task_input.title,
+            description=task_input.description,
+            priority=task_input.priority,
+            depends_on=task_input.depends_on,
+            created_by=task_input.created_by,
+            status=TaskStatus.PENDING,
+            created_at=datetime.fromisoformat(now),
+            updated_at=datetime.fromisoformat(now),
+        )
+
+    def get(self, task_id: str) -> Task | None:
+        """Get a task by ID."""
+        with get_studio_db() as db:
+            row = db.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
+        if not row:
+            return None
+        return self._row_to_task(row)
+
+    def list_tasks(
+        self,
+        project_id: str = None,
+        status: TaskStatus = None,
+        assigned_to: str = None,
+    ) -> list[Task]:
+        """List tasks with optional filters."""
+        sql = "SELECT * FROM tasks WHERE 1=1"
+        params = []
+
+        if project_id:
+            sql += " AND project_id = ?"
+            params.append(project_id)
+        if status:
+            sql += " AND status = ?"
+            params.append(status.value)
+        if assigned_to:
+            sql += " AND assigned_to = ?"
+            params.append(assigned_to)
+
+        sql += " ORDER BY priority DESC, created_at ASC"
+
+        with get_studio_db() as db:
+            rows = db.execute(sql, params).fetchall()
+        return [self._row_to_task(r) for r in rows]
+
+    def assign(self, task_id: str, agent_instance_id: str) -> Task | None:
+        """Assign a task to an agent instance."""
+        with get_studio_db() as db:
+            db.execute(
+                """UPDATE tasks SET assigned_to = ?, status = 'assigned', updated_at = ?
+                   WHERE id = ?""",
+                (agent_instance_id, datetime.now(timezone.utc).isoformat(), task_id),
+            )
+        return self.get(task_id)
+
+    def update_status(self, task_id: str, status: TaskStatus, result: dict = None):
+        """Update task status and optionally store result."""
+        with get_studio_db() as db:
+            if result is not None:
+                db.execute(
+                    "UPDATE tasks SET status = ?, result = ?, updated_at = ? WHERE id = ?",
+                    (status.value, json.dumps(result), datetime.now(timezone.utc).isoformat(), task_id),
+                )
+            else:
+                db.execute(
+                    "UPDATE tasks SET status = ?, updated_at = ? WHERE id = ?",
+                    (status.value, datetime.now(timezone.utc).isoformat(), task_id),
+                )
+
+    def get_ready_tasks(self, project_id: str) -> list[Task]:
+        """Get pending tasks whose dependencies are all completed."""
+        pending = self.list_tasks(project_id=project_id, status=TaskStatus.PENDING)
+        ready = []
+
+        for task in pending:
+            if not task.depends_on:
+                ready.append(task)
+                continue
+
+            # Check all dependencies
+            all_done = True
+            for dep_id in task.depends_on:
+                dep = self.get(dep_id)
+                if not dep or dep.status != TaskStatus.COMPLETED:
+                    all_done = False
+                    break
+            if all_done:
+                ready.append(task)
+
+        return sorted(ready, key=lambda t: (-t.priority, t.created_at or datetime.min))
+
+    def _row_to_task(self, row) -> Task:
+        depends = json.loads(row["depends_on"]) if row["depends_on"] else []
+        result = json.loads(row["result"]) if row["result"] else None
+        return Task(
+            id=row["id"],
+            project_id=row["project_id"],
+            title=row["title"],
+            description=row["description"] or "",
+            assigned_to=row["assigned_to"],
+            status=TaskStatus(row["status"]),
+            priority=row["priority"] or 0,
+            depends_on=depends,
+            created_by=row["created_by"] or "human",
+            result=result,
+            created_at=datetime.fromisoformat(row["created_at"]) if row["created_at"] else None,
+            updated_at=datetime.fromisoformat(row["updated_at"]) if row["updated_at"] else None,
+        )
+
+
+# Singleton
+task_queue = TaskQueue()

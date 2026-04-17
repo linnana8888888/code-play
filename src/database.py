@@ -156,6 +156,7 @@ def init_studio_db():
         _migrate_add_column(db, "projects", "goal", "TEXT DEFAULT ''")
         _migrate_add_column(db, "tasks", "parent_task_id", "TEXT")
         _migrate_add_column(db, "tasks", "assignee_type", "TEXT")
+        _migrate_add_column(db, "tasks", "model_override", "TEXT")
 
 
 def _migrate_add_column(db, table: str, column: str, col_type: str):

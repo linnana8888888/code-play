@@ -1,5 +1,6 @@
-import { useState } from "react";
-import type { TaskCreate } from "../../types/api";
+import { useEffect, useState } from "react";
+import type { ModelOption, TaskCreate } from "../../types/api";
+import { getAvailableModels } from "../../api/client";
 
 interface Props {
   open: boolean;
@@ -12,16 +13,28 @@ export default function CreateTaskModal({ open, projectId, onClose, onCreate }: 
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [priority, setPriority] = useState(5);
+  const [modelOverride, setModelOverride] = useState("");
+  const [models, setModels] = useState<ModelOption[]>([]);
   const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    if (open) getAvailableModels().then(setModels).catch(() => {});
+  }, [open]);
 
   if (!open) return null;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setSubmitting(true);
-    await onCreate({ project_id: projectId, title, description, priority });
+    await onCreate({
+      project_id: projectId,
+      title,
+      description,
+      priority,
+      model_override: modelOverride || undefined,
+    });
     setSubmitting(false);
-    setTitle(""); setDescription("");
+    setTitle(""); setDescription(""); setModelOverride("");
     onClose();
   };
 
@@ -56,6 +69,22 @@ export default function CreateTaskModal({ open, projectId, onClose, onCreate }: 
             value={priority}
             onChange={(e) => setPriority(Number(e.target.value))}
           />
+        </label>
+        <label className="block text-sm text-text-muted">
+          <span className="mb-1 block">Model override</span>
+          <select
+            value={modelOverride}
+            onChange={(e) => setModelOverride(e.target.value)}
+            className="w-full rounded-lg border border-border bg-bg px-3 py-2 text-sm text-text outline-none focus:border-accent"
+          >
+            <option value="">agent default</option>
+            {models.map((m) => (
+              <option key={m.id} value={m.id}>
+                {m.label}
+                {m.output_per_1m > 0 ? ` — $${m.output_per_1m}/1M out` : " — free"}
+              </option>
+            ))}
+          </select>
         </label>
         <div className="flex justify-end gap-2">
           <button type="button" onClick={onClose} className="rounded-lg px-3 py-1.5 text-sm text-text-muted hover:text-text">

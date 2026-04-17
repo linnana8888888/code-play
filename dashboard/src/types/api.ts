@@ -29,6 +29,8 @@ export interface Task {
   priority: number;
   assigned_to: string | null;
   parent_task_id: string | null;
+  assignee_type?: string | null;
+  model_override?: string | null;
   created_by: string;
   created_at: string;
   updated_at: string;
@@ -40,6 +42,17 @@ export interface TaskCreate {
   description?: string;
   priority?: number;
   parent_task_id?: string;
+  assignee_type?: string;
+  model_override?: string;
+}
+
+export interface ModelOption {
+  id: string;
+  label: string;
+  provider: string;
+  input_per_1m: number;
+  output_per_1m: number;
+  notes?: string;
 }
 
 export interface AgentDefinition {

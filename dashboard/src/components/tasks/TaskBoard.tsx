@@ -1,4 +1,6 @@
-import type { Task } from "../../types/api";
+import { useEffect, useState } from "react";
+import type { Task, ModelOption } from "../../types/api";
+import { getAvailableModels, patchTask } from "../../api/client";
 
 const columns: { key: Task["status"]; label: string; color: string }[] = [
   { key: "pending", label: "Pending", color: "border-yellow-500/40" },
@@ -20,6 +22,26 @@ interface Props {
 }
 
 export default function TaskBoard({ tasks, onCreate }: Props) {
+  const [models, setModels] = useState<ModelOption[]>([]);
+  const [saving, setSaving] = useState<string | null>(null);
+
+  useEffect(() => {
+    getAvailableModels().then(setModels).catch(() => {});
+  }, []);
+
+  async function onModelChange(task: Task, value: string) {
+    setSaving(task.id);
+    try {
+      await patchTask(task.id, { model_override: value || null });
+    } catch (e) {
+      console.error("patchTask failed", e);
+    } finally {
+      setSaving(null);
+    }
+  }
+
+  const editableStatuses: Task["status"][] = ["pending", "assigned", "blocked"];
+
   return (
     <div>
       <div className="mb-4 flex items-center justify-between">
@@ -50,6 +72,31 @@ export default function TaskBoard({ tasks, onCreate }: Props) {
                       <p className="text-sm font-medium leading-tight">{t.title}</p>
                       {t.assigned_to && (
                         <p className="mt-1 text-[11px] text-text-muted truncate">→ {t.assigned_to}</p>
+                      )}
+                      {models.length > 0 && (
+                        <div className="mt-2">
+                          {editableStatuses.includes(t.status) ? (
+                            <select
+                              value={t.model_override ?? ""}
+                              disabled={saving === t.id}
+                              onChange={(e) => onModelChange(t, e.target.value)}
+                              className="w-full rounded border border-border bg-bg-card px-1 py-0.5 text-[10px] text-text-muted outline-none hover:border-accent/40"
+                              title="Per-task LLM override. Blank = agent default."
+                            >
+                              <option value="">agent default</option>
+                              {models.map((m) => (
+                                <option key={m.id} value={m.id}>
+                                  {m.label}
+                                  {m.output_per_1m > 0 ? ` · $${m.output_per_1m}/1M out` : " · free"}
+                                </option>
+                              ))}
+                            </select>
+                          ) : t.model_override ? (
+                            <p className="truncate text-[10px] text-text-muted" title={t.model_override}>
+                              {models.find((m) => m.id === t.model_override)?.label ?? t.model_override}
+                            </p>
+                          ) : null}
+                        </div>
                       )}
                       <div className="mt-2 flex items-center justify-between text-[10px] text-text-muted">
                         <span className={`rounded px-1.5 py-0.5 ${badge.cls}`}>{badge.label}</span>

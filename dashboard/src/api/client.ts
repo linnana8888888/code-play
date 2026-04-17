@@ -15,6 +15,7 @@ import type {
   ToolCatalogEntry,
   Stats,
   PipelineDef,
+  ModelOption,
 } from "../types/api";
 
 const BASE = "/api";
@@ -50,6 +51,11 @@ export const getReadyTasks = (projectId: string) =>
   req<Task[]>(`/projects/${projectId}/tasks/ready`);
 export const createTask = (t: TaskCreate) =>
   req<Task>("/tasks", { method: "POST", body: JSON.stringify(t) });
+export const patchTask = (id: string, patch: { model_override?: string | null }) =>
+  req<Task>(`/tasks/${id}`, { method: "PATCH", body: JSON.stringify(patch) });
+
+/* ── Models ── */
+export const getAvailableModels = () => req<ModelOption[]>("/models/available");
 
 /* ── Agents ── */
 export const getDefinitions = () => req<AgentDefinition[]>("/agents/definitions");

@@ -5,7 +5,7 @@ import json
 import uuid
 from datetime import datetime, timezone
 
-from src.models.tasks import Task, TaskCreate, TaskStatus
+from src.models.tasks import Task, TaskCreate, TaskStatus, TaskUpdate
 from src.database import get_studio_db
 
 
@@ -17,8 +17,8 @@ class TaskQueue:
 
         with get_studio_db() as db:
             db.execute(
-                """INSERT INTO tasks (id, project_id, title, description, parent_task_id, assignee_type, priority, depends_on, created_by, status, created_at, updated_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)""",
+                """INSERT INTO tasks (id, project_id, title, description, parent_task_id, assignee_type, priority, depends_on, created_by, model_override, status, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)""",
                 (
                     task_id,
                     task_input.project_id,
@@ -29,6 +29,7 @@ class TaskQueue:
                     task_input.priority,
                     json.dumps(task_input.depends_on),
                     task_input.created_by,
+                    task_input.model_override,
                     now,
                     now,
                 ),
@@ -44,6 +45,7 @@ class TaskQueue:
             priority=task_input.priority,
             depends_on=task_input.depends_on,
             created_by=task_input.created_by,
+            model_override=task_input.model_override,
             status=TaskStatus.PENDING,
             created_at=datetime.fromisoformat(now),
             updated_at=datetime.fromisoformat(now),
@@ -104,6 +106,23 @@ class TaskQueue:
                 return None
         return self.get(task_id)
 
+    def update(self, task_id: str, patch: TaskUpdate) -> Task | None:
+        """Partial update of a task (currently just model_override)."""
+        fields = patch.model_dump(exclude_unset=True)
+        if not fields:
+            return self.get(task_id)
+        now = datetime.now(timezone.utc).isoformat()
+        cols = ", ".join(f"{k}=?" for k in fields.keys())
+        values = list(fields.values()) + [now, task_id]
+        with get_studio_db() as db:
+            cursor = db.execute(
+                f"UPDATE tasks SET {cols}, updated_at=? WHERE id=?",
+                values,
+            )
+            if cursor.rowcount == 0:
+                return None
+        return self.get(task_id)
+
     def update_status(self, task_id: str, status: TaskStatus, result: dict = None):
         """Update task status and optionally store result."""
         with get_studio_db() as db:
@@ -153,12 +172,17 @@ class TaskQueue:
         # Columns added via migration may not exist on old rows
         parent_task_id = None
         assignee_type = None
+        model_override = None
         try:
             parent_task_id = row["parent_task_id"]
         except (IndexError, KeyError):
             pass
         try:
             assignee_type = row["assignee_type"]
+        except (IndexError, KeyError):
+            pass
+        try:
+            model_override = row["model_override"]
         except (IndexError, KeyError):
             pass
         return Task(
@@ -173,6 +197,7 @@ class TaskQueue:
             priority=row["priority"] or 0,
             depends_on=depends,
             created_by=row["created_by"] or "human",
+            model_override=model_override,
             result=result,
             created_at=datetime.fromisoformat(row["created_at"]) if row["created_at"] else None,
             updated_at=datetime.fromisoformat(row["updated_at"]) if row["updated_at"] else None,

@@ -25,7 +25,7 @@ from pydantic import BaseModel
 from src.settings import settings
 from src.database import init_studio_db, init_project_db, get_studio_db
 from src.models.projects import Project, ProjectCreate
-from src.models.tasks import TaskCreate, TaskStatus
+from src.models.tasks import TaskCreate, TaskStatus, TaskUpdate
 from src.models.agents import AgentStatus
 from src.orchestrator.agent_registry import registry
 from src.orchestrator.task_queue import task_queue
@@ -299,6 +299,23 @@ async def list_agent_categories():
     return registry.list_categories()
 
 
+# Approved model set (mirrors header of config/agents.yaml).
+# Cost figures are approximate per-1M input/output tokens (USD); 0 = free/local.
+_AVAILABLE_MODELS: list[dict] = [
+    {"id": "omlx/Qwen3.5-9B-MLX-4bit",                              "label": "Qwen3.5 9B (local)",       "provider": "omlx",       "input_per_1m": 0.0,  "output_per_1m": 0.0,  "notes": "Free local baseline"},
+    {"id": "anthropic/anthropic.claude-haiku-4-5-20251001-v1:0",    "label": "Claude Haiku 4.5",         "provider": "anthropic",  "input_per_1m": 1.0,  "output_per_1m": 5.0,  "notes": "Cheap, fast"},
+    {"id": "anthropic/anthropic.claude-sonnet-4-6",                 "label": "Claude Sonnet 4.6",        "provider": "anthropic",  "input_per_1m": 3.0,  "output_per_1m": 15.0, "notes": "Balanced default"},
+    {"id": "anthropic/anthropic.claude-opus-4-7",                   "label": "Claude Opus 4.7",          "provider": "anthropic",  "input_per_1m": 15.0, "output_per_1m": 75.0, "notes": "Reasoning, $$$"},
+    {"id": "openai/gpt-5-2025-08-07",                               "label": "GPT-5",                    "provider": "openai",     "input_per_1m": 5.0,  "output_per_1m": 15.0, "notes": "Reasoning, via LEGO proxy"},
+    {"id": "openrouter/openrouter/elephant-alpha",                  "label": "Elephant Alpha (stealth)", "provider": "openrouter", "input_per_1m": 0.0,  "output_per_1m": 0.0,  "notes": "Cloaked free-tier"},
+]
+
+
+@app.get("/api/models/available")
+async def list_available_models():
+    return _AVAILABLE_MODELS
+
+
 def _instance_dict(i):
     return {
         "id": i.id,
@@ -545,6 +562,7 @@ async def _advance_pipeline(project_id: str):
                 agent_type=agent_type,
                 project_id=project_id,
                 task_id=task.id,
+                model_override=task.model_override,
             )
             task_queue.checkout(task.id, instance.id)
             asyncio.create_task(_run_agent_task(instance, task.description))
@@ -581,6 +599,15 @@ async def get_task(task_id: str):
     task = task_queue.get(task_id)
     if not task:
         raise HTTPException(404, "Task not found")
+    return task.model_dump(mode="json")
+
+
+@app.patch("/api/tasks/{task_id}")
+async def patch_task(task_id: str, body: TaskUpdate):
+    task = task_queue.update(task_id, body)
+    if not task:
+        raise HTTPException(404, "Task not found")
+    await ws_manager.broadcast({"type": "task_updated", "data": task.model_dump(mode="json")})
     return task.model_dump(mode="json")
 
 
@@ -824,6 +851,7 @@ async def run_pipeline(pipeline_name: str, body: PipelineRunBody):
                         agent_type=agent_type,
                         project_id=project_id,
                         task_id=task.id,
+                        model_override=task.model_override,
                     )
                     task_queue.checkout(task.id, instance.id)
                     asyncio.create_task(_run_agent_task(instance, task_desc))

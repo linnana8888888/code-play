@@ -27,6 +27,7 @@ class Task(BaseModel):
     priority: int = 0
     depends_on: list[str] = Field(default_factory=list)
     created_by: str = "human"
+    model_override: str | None = None          # picks which LLM runs this task (overrides agent default)
     result: dict | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
@@ -41,3 +42,9 @@ class TaskCreate(BaseModel):
     priority: int = 0
     depends_on: list[str] = Field(default_factory=list)
     created_by: str = "human"
+    model_override: str | None = None          # if set, overrides the agent's default_model when spawned
+
+
+class TaskUpdate(BaseModel):
+    """Partial update of an existing task — currently just the model override."""
+    model_override: str | None = None

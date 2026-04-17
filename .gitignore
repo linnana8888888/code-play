@@ -4,12 +4,11 @@ __pycache__/
 .venv/
 venv/
 *.egg-info/
-dist/
+/dist/
 build/
 .pytest_cache/
 /projects/
 *.db
 *.sqlite
 node_modules/
-dashboard/dist/
 .DS_Store

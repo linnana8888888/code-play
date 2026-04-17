@@ -8,8 +8,11 @@ import AgentRoster from "../components/agents/AgentRoster";
 import InstanceList from "../components/agents/InstanceList";
 import GovernancePanel from "../components/governance/GovernancePanel";
 import PipelineLauncher from "../components/pipelines/PipelineLauncher";
+import TaskBoard from "../components/tasks/TaskBoard";
+import CreateTaskModal from "../components/tasks/CreateTaskModal";
 import { useProjects } from "../hooks/useProjects";
 import { useAgents } from "../hooks/useAgents";
+import { useTasks } from "../hooks/useTasks";
 
 const tabs = ["overview", "agents", "tasks", "governance"] as const;
 type Tab = (typeof tabs)[number];
@@ -18,8 +21,12 @@ export default function Dashboard() {
   const [searchParams, setSearchParams] = useSearchParams();
   const activeTab = (searchParams.get("tab") as Tab) || "overview";
   const [createOpen, setCreateOpen] = useState(false);
+  const [spawnProjectId, setSpawnProjectId] = useState<string>("");
+  const [taskFilter, setTaskFilter] = useState<string>("");
+  const [newTaskOpen, setNewTaskOpen] = useState(false);
   const { projects, create } = useProjects();
   const { definitions, categories, instances, spawn, terminate } = useAgents();
+  const { tasks, create: createNewTask } = useTasks(taskFilter || undefined);
 
   const setTab = (t: Tab) => {
     if (t === "overview") setSearchParams({});
@@ -60,15 +67,59 @@ export default function Dashboard() {
 
       {activeTab === "agents" && (
         <>
-          <AgentRoster definitions={definitions} categories={categories} onSpawn={spawn} />
+          <div className="flex items-center gap-3 rounded-xl border border-border bg-bg-card p-3">
+            <label className="text-sm text-text-muted">Spawn for project:</label>
+            <select
+              value={spawnProjectId}
+              onChange={(e) => setSpawnProjectId(e.target.value)}
+              className="rounded-lg border border-border bg-bg px-3 py-1.5 text-sm"
+            >
+              <option value="">— Studio pool (unattached) —</option>
+              {projects.map((p) => (
+                <option key={p.id} value={p.id}>{p.name}</option>
+              ))}
+            </select>
+            {!spawnProjectId && (
+              <span className="text-xs text-text-muted">
+                Tip: pick a project so the agent has a goal and workspace.
+              </span>
+            )}
+          </div>
+          <AgentRoster
+            definitions={definitions}
+            categories={categories}
+            onSpawn={(t) => spawn(t, spawnProjectId || undefined)}
+          />
           <InstanceList instances={instances} onTerminate={terminate} />
         </>
       )}
 
       {activeTab === "tasks" && (
-        <p className="text-sm text-text-muted">
-          Select a project to view its task board.
-        </p>
+        <>
+          <div className="flex items-center gap-3 rounded-xl border border-border bg-bg-card p-3">
+            <label className="text-sm text-text-muted">Project:</label>
+            <select
+              value={taskFilter}
+              onChange={(e) => setTaskFilter(e.target.value)}
+              className="rounded-lg border border-border bg-bg px-3 py-1.5 text-sm"
+            >
+              <option value="">— All projects —</option>
+              {projects.map((p) => (
+                <option key={p.id} value={p.id}>{p.name}</option>
+              ))}
+            </select>
+            <span className="ml-auto text-xs text-text-muted">
+              {tasks.length} task{tasks.length === 1 ? "" : "s"}
+            </span>
+          </div>
+          <TaskBoard tasks={tasks} onCreate={() => setNewTaskOpen(true)} />
+          <CreateTaskModal
+            open={newTaskOpen}
+            projectId={taskFilter || (projects[0]?.id ?? "")}
+            onClose={() => setNewTaskOpen(false)}
+            onCreate={async (data) => { await createNewTask(data); }}
+          />
+        </>
       )}
 
       {activeTab === "governance" && <GovernancePanel />}

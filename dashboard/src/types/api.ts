@@ -7,6 +7,8 @@ export interface Project {
   tech_stack: string;
   goal: string;
   status: string;
+  repo_url?: string | null;
+  repo_name?: string | null;
   created_at: string;
 }
 
@@ -15,6 +17,7 @@ export interface ProjectCreate {
   description: string;
   tech_stack?: string;
   goal?: string;
+  create_repo?: boolean;
 }
 
 export interface Task {
@@ -22,7 +25,7 @@ export interface Task {
   project_id: string;
   title: string;
   description: string;
-  status: "pending" | "assigned" | "running" | "done" | "blocked";
+  status: "pending" | "assigned" | "running" | "blocked" | "completed" | "failed";
   priority: number;
   assigned_to: string | null;
   parent_task_id: string | null;
@@ -116,6 +119,18 @@ export interface Pipeline {
   name: string;
   description: string;
   steps: string[];
+}
+
+export interface PipelineStep {
+  id: string;
+  agent?: string;
+  type?: string;
+}
+export interface PipelineDef {
+  id: string;
+  name: string;
+  description: string;
+  steps: PipelineStep[];
 }
 
 export interface Stats {

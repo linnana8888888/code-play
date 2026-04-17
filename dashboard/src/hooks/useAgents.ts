@@ -27,8 +27,8 @@ export function useAgents() {
 
   useEffect(() => { refresh(); }, [refresh]);
 
-  const spawn = async (agentType: string) => {
-    const inst = await spawnAgent(agentType);
+  const spawn = async (agentType: string, projectId?: string) => {
+    const inst = await spawnAgent(agentType, projectId);
     setInstances((prev) => [...prev, inst]);
     return inst;
   };

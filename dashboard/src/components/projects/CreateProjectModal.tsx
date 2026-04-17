@@ -12,6 +12,7 @@ export default function CreateProjectModal({ open, onClose, onCreate }: Props) {
   const [description, setDescription] = useState("");
   const [techStack, setTechStack] = useState("threejs");
   const [goal, setGoal] = useState("");
+  const [createRepo, setCreateRepo] = useState(true);
   const [submitting, setSubmitting] = useState(false);
 
   if (!open) return null;
@@ -19,7 +20,7 @@ export default function CreateProjectModal({ open, onClose, onCreate }: Props) {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setSubmitting(true);
-    await onCreate({ name, description, tech_stack: techStack, goal: goal || undefined });
+    await onCreate({ name, description, tech_stack: techStack, goal: goal || undefined, create_repo: createRepo });
     setSubmitting(false);
     setName(""); setDescription(""); setGoal("");
     onClose();
@@ -64,6 +65,15 @@ export default function CreateProjectModal({ open, onClose, onCreate }: Props) {
           value={goal}
           onChange={(e) => setGoal(e.target.value)}
         />
+        <label className="flex items-center gap-2 text-sm text-text-muted">
+          <input
+            type="checkbox"
+            checked={createRepo}
+            onChange={(e) => setCreateRepo(e.target.checked)}
+            className="rounded border-border"
+          />
+          Create private GitHub repo (linnana8888888)
+        </label>
         <div className="flex justify-end gap-2">
           <button type="button" onClick={onClose} className="rounded-lg px-3 py-1.5 text-sm text-text-muted hover:text-text">
             Cancel

@@ -41,10 +41,12 @@ export default function InstanceList({ instances, onTerminate }: Props) {
                 </span>
               </td>
               <td className="px-4 py-2 tabular-nums">
-                {inst.tokens_used.toLocaleString()} / {inst.budget_max_tokens.toLocaleString()}
+                {(inst.tokens_used ?? 0).toLocaleString()}
+                {inst.budget_max_tokens ? ` / ${inst.budget_max_tokens.toLocaleString()}` : ""}
               </td>
               <td className="px-4 py-2 tabular-nums">
-                ${inst.cost_usd.toFixed(4)} / ${inst.budget_max_usd.toFixed(2)}
+                ${(inst.cost_usd ?? 0).toFixed(4)}
+                {inst.budget_max_usd ? ` / $${inst.budget_max_usd.toFixed(2)}` : ""}
               </td>
               <td className="px-4 py-2">
                 {inst.status !== "terminated" && (

@@ -13,6 +13,7 @@ import type {
   GovernanceApproval,
   GovernanceLogEntry,
   Stats,
+  PipelineDef,
 } from "../types/api";
 
 const BASE = "/api";
@@ -42,8 +43,8 @@ export const createProject = (p: ProjectCreate) =>
   req<Project>("/projects", { method: "POST", body: JSON.stringify(p) });
 
 /* ── Tasks ── */
-export const getTasks = (projectId: string) =>
-  req<Task[]>(`/tasks?project_id=${projectId}`);
+export const getTasks = (projectId?: string) =>
+  req<Task[]>(`/tasks${projectId ? `?project_id=${projectId}` : ""}`);
 export const getReadyTasks = (projectId: string) =>
   req<Task[]>(`/projects/${projectId}/tasks/ready`);
 export const createTask = (t: TaskCreate) =>
@@ -53,8 +54,11 @@ export const createTask = (t: TaskCreate) =>
 export const getDefinitions = () => req<AgentDefinition[]>("/agents/definitions");
 export const getCategories = () => req<string[]>("/agents/categories");
 export const getInstances = () => req<AgentInstance[]>("/agents/instances");
-export const spawnAgent = (agentType: string) =>
-  req<AgentInstance>(`/agents/spawn${qs({ agent_type: agentType })}`, { method: "POST" });
+export const spawnAgent = (agentType: string, projectId?: string) =>
+  req<AgentInstance>(
+    `/agents/spawn${qs({ agent_type: agentType, project_id: projectId })}`,
+    { method: "POST" },
+  );
 export const terminateAgent = (id: string) =>
   req<{ status: string }>(`/agents/${id}/terminate`, { method: "POST" });
 export const getAgentCost = (id: string) => req<AgentCost>(`/agents/${id}/cost`);
@@ -87,10 +91,12 @@ export const getApprovals = () => req<GovernanceApproval[]>("/governance/approva
 export const getGovernanceLog = () => req<GovernanceLogEntry[]>("/governance/log");
 
 /* ── Pipelines ── */
-export const runPipeline = (name: string, projectId: string) =>
+export const getPipelines = () =>
+  req<PipelineDef[]>("/pipelines");
+export const runPipeline = (name: string, projectId: string, inputText = "") =>
   req<{ status: string }>(`/pipelines/${name}/run`, {
     method: "POST",
-    body: JSON.stringify({ project_id: projectId }),
+    body: JSON.stringify({ project_id: projectId, input_text: inputText }),
   });
 
 /* ── Stats ── */

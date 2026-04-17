@@ -1,0 +1,653 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+<title>Dodge the Meteors</title>
+<style>
+  :root {
+    --bg: #0B0F1E;          /* Deep Space */
+    --accent: #22D3EE;      /* Accent (thrusters, near-miss) */
+    --meteor: #FF7A1A;      /* Meteor Body */
+    --damage: #FF3B30;      /* Damage flash */
+    --text: #E6EDF3;
+    --hud-bg: rgba(0,0,0,0.25);
+  }
+  html, body {
+    height: 100%;
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
+    overflow: hidden;
+  }
+  #game-container {
+    position: relative;
+    width: 100vw;
+    height: 100vh;
+    display: grid;
+    place-items: center;
+  }
+  canvas {
+    display: block;
+    image-rendering: auto;
+    outline: none;
+    background: radial-gradient(120% 120% at 50% 20%, #0f162e 0%, var(--bg) 55%);
+    box-shadow: 0 0 0 1px rgba(255,255,255,0.03), 0 10px 40px rgba(0,0,0,0.6);
+    border-radius: 12px;
+  }
+  #hud {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    display: grid;
+    grid-template-rows: auto 1fr auto;
+    padding: 8px 12px;
+  }
+  #hud .top-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  #hud .score, #hud .lives, #hud .wave {
+    background: var(--hud-bg);
+    padding: 6px 10px;
+    border-radius: 8px;
+    font-weight: 600;
+    font-size: 14px;
+    backdrop-filter: blur(4px);
+  }
+  #hud .wave {
+    justify-self: center;
+  }
+  #controls {
+    justify-self: center;
+    background: var(--hud-bg);
+    border-radius: 999px;
+    padding: 6px 12px;
+    font-size: 12px;
+    margin-bottom: 8px;
+  }
+  #restart {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    padding: 12px 16px;
+    font-size: 16px;
+    border-radius: 10px;
+    border: 1px solid rgba(255,255,255,0.2);
+    background: rgba(0,0,0,0.5);
+    color: var(--text);
+    backdrop-filter: blur(6px);
+    cursor: pointer;
+    box-shadow: 0 10px 24px rgba(0,0,0,0.4);
+  }
+  #restart.hidden { display: none; }
+  .sr-only {
+    position: absolute !important;
+    width: 1px; height: 1px;
+    padding: 0; margin: -1px;
+    overflow: hidden; clip: rect(0,0,0,0);
+    white-space: nowrap; border: 0;
+  }
+</style>
+</head>
+<body>
+  <div id="game-container" role="application" aria-label="Dodge the Meteors">
+    <canvas id="game" tabindex="0" aria-label="Game canvas"></canvas>
+    <div id="hud" aria-hidden="true">
+      <div class="top-row">
+        <div class="score">Score: <span id="score">0</span> · Best: <span id="best">0</span></div>
+        <div class="wave">Wave <span id="wave">1</span></div>
+        <div class="lives">❤ <span id="lives">3</span></div>
+      </div>
+      <div style="flex:1"></div>
+      <div id="controls" class="instructions">Move: WASD/Arrows · Touch/Drag · Restart: R</div>
+    </div>
+    <button id="restart" class="hidden" aria-live="polite">Tap or Press R to Restart</button>
+    <div id="sr-updates" class="sr-only" aria-live="polite" aria-atomic="true"></div>
+  </div>
+<script>
+(() => {
+  'use strict';
+  // Virtual canvas size for consistent tuning
+  const VW = 480; // width
+  const VH = 800; // height
+  const DPR = Math.min(window.devicePixelRatio || 1, 2); // cap DPR for perf
+
+  // GDD tuning variables (baseline)
+  const PLAYER = {
+    radius: 14,
+    maxSpeed: 300,         // px/s
+    accel: 1200,           // px/s^2
+    decel: 1400,           // px/s^2
+    lives: 3,
+    iframes: 1.0           // s
+  };
+
+  const WAVES = {
+    length: 15.0,          // seconds
+    meteorBaseSpeed: 150,  // px/s Wave 1
+    speedPerWave: 25,      // + per wave
+    spawnBaseMs: 600,      // ms Wave 1
+    spawnDecPerWave: 40,   // ms per wave
+    spawnMinMs: 220,
+    maxMeteors: 18
+  };
+
+  const SCORING = {
+    survivalPer: 0.25, // +1 every 0.25s survived
+    passBonus: 2,      // +2 per meteor exit
+    nearMissBonus: 1,  // +1 additional if near-miss occurred
+    waveBonus: 25
+  };
+
+  const FAIRNESS = {
+    spawnSafetyX: 96,     // px margin from player X at spawn
+    graceFirstS: 3.0,     // first 3 seconds reduced pressure
+    noDeathFirstS: 2.0,   // cannot lose first life in first 2s
+    unavoidableWindow: 0.4 // not fully simulated here; approximated via spawnSafetyX
+  };
+
+  const NEAR_MISS = {
+    radius: 36 // near-miss threshold distance to ship center
+  };
+
+  // DOM refs
+  const canvas = document.getElementById('game');
+  const container = document.getElementById('game-container');
+  const scoreEl = document.getElementById('score');
+  const bestEl = document.getElementById('best');
+  const livesEl = document.getElementById('lives');
+  const waveEl = document.getElementById('wave');
+  const restartBtn = document.getElementById('restart');
+  const sr = document.getElementById('sr-updates');
+
+  // Rendering context
+  const ctx = canvas.getContext('2d', { alpha: true, desynchronized: true });
+
+  // Fit canvas to window while preserving aspect ratio
+  function fitCanvas() {
+    const ww = window.innerWidth;
+    const wh = window.innerHeight;
+    const aspect = VW / VH;
+    let cssW, cssH;
+    if (ww / wh > aspect) {
+      cssH = wh * 0.98; // small margin
+      cssW = cssH * aspect;
+    } else {
+      cssW = ww * 0.98;
+      cssH = cssW / aspect;
+    }
+    canvas.style.width = cssW + 'px';
+    canvas.style.height = cssH + 'px';
+    canvas.width = Math.round(VW * DPR);
+    canvas.height = Math.round(VH * DPR);
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0); // scale drawing operations to virtual coords
+  }
+  window.addEventListener('resize', fitCanvas);
+  fitCanvas();
+
+  // Utilities
+  const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+  const sign = (v) => v < 0 ? -1 : v > 0 ? 1 : 0;
+
+  // Seeded RNG (xorshift32)
+  let rngState = 0x12345678 >>> 0;
+  function seedRng(seed) { rngState = (seed >>> 0) || 1; }
+  function rand() {
+    let x = rngState >>> 0;
+    x ^= x << 13; x ^= x >>> 17; x ^= x << 5;
+    rngState = x >>> 0;
+    return (rngState >>> 0) / 4294967296;
+  }
+  function randRange(min, max) { return min + (max - min) * rand(); }
+
+  // Input state
+  const keys = new Set();
+  let pointerActive = false;
+  let pointerPos = { x: VW / 2, y: VH / 2 };
+
+  // Reduced motion
+  const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  // Game objects
+  const ship = {
+    x: VW / 2,
+    y: VH * 0.8,
+    vx: 0, vy: 0,
+    r: PLAYER.radius,
+    lives: PLAYER.lives,
+    inv: 0,
+    invFlash: 0,
+    thrusting: false,
+  };
+
+  // Stars background for subtle parallax (lightweight)
+  const stars = new Array(60).fill(0).map(() => ({
+    x: Math.random() * VW,
+    y: Math.random() * VH,
+    r: Math.random() * 1.2 + 0.3,
+    s: Math.random() * 0.25 + 0.05,
+    a: Math.random() * 0.5 + 0.4,
+  }));
+
+  // Meteors pool
+  const meteors = [];
+  const meteorPool = [];
+  function getMeteor() {
+    return meteorPool.pop() || {
+      x: 0, y: 0, r: 12, vy: 150, nearMissed: false, colorShift: 0,
+      active: true, passed: false, life: 0
+    };
+  }
+  function releaseMeteor(m) { m.active = false; meteorPool.push(m); }
+
+  // Spawn control
+  let spawnTimer = 0;
+  let lastSpawnXs = [];
+
+  // Waves and scoring
+  let wave = 1;
+  let waveTime = 0;
+  let elapsed = 0;
+  let score = 0;
+  let survivalAcc = 0;
+  let best = Number(localStorage.getItem('dtm_best') || 0);
+  bestEl.textContent = String(best);
+
+  // Screen shake
+  let shakeT = 0, shakeMag = 0;
+  function addShake(mag, dur) { if (!prefersReducedMotion) { shakeMag = Math.max(shakeMag, mag); shakeT = Math.max(shakeT, dur); } }
+  function getShakeOffset() {
+    if (shakeT > 0) {
+      const t = Math.random() * Math.PI * 2;
+      const m = shakeMag * (shakeT / (shakeT + 0.16));
+      return { x: Math.cos(t) * m, y: Math.sin(t) * m };
+    }
+    return { x: 0, y: 0 };
+  }
+
+  // Game state
+  let state = 'playing';
+  let baseSeed = (Date.now() ^ (Math.random() * 1e9)) >>> 0;
+  seedRng(baseSeed ^ wave);
+
+  // Accessibility updates
+  function srUpdate(text) { sr.textContent = text; }
+
+  // Input handlers
+  window.addEventListener('keydown', (e) => {
+    const k = e.key.toLowerCase();
+    if (['arrowup','arrowdown','arrowleft','arrowright','w','a','s','d'].includes(k)) {
+      keys.add(k);
+      e.preventDefault();
+    }
+    if (k === 'r') {
+      if (state === 'gameover') restart();
+    }
+  }, { passive: false });
+
+  window.addEventListener('keyup', (e) => {
+    keys.delete(e.key.toLowerCase());
+  });
+
+  // Pointer controls: drag to steer (analog)
+  function getCanvasRect() { return canvas.getBoundingClientRect(); }
+  function toGameCoords(clientX, clientY) {
+    const rect = getCanvasRect();
+    const scaleX = rect.width / VW;
+    const scaleY = rect.height / VH;
+    const x = (clientX - rect.left) / scaleX;
+    const y = (clientY - rect.top) / scaleY;
+    return { x, y };
+  }
+
+  const pointerDown = (e) => {
+    pointerActive = true;
+    const pt = e.touches ? e.touches[0] : e;
+    pointerPos = toGameCoords(pt.clientX, pt.clientY);
+  };
+  const pointerMove = (e) => {
+    if (!pointerActive) return;
+    const pt = e.touches ? e.touches[0] : e;
+    pointerPos = toGameCoords(pt.clientX, pt.clientY);
+  };
+  const pointerUp = () => { pointerActive = false; };
+
+  canvas.addEventListener('mousedown', pointerDown);
+  window.addEventListener('mousemove', pointerMove);
+  window.addEventListener('mouseup', pointerUp);
+  canvas.addEventListener('touchstart', pointerDown, { passive: true });
+  window.addEventListener('touchmove', pointerMove, { passive: true });
+  window.addEventListener('touchend', pointerUp, { passive: true });
+  window.addEventListener('touchcancel', pointerUp, { passive: true });
+
+  restartBtn.addEventListener('click', () => { if (state === 'gameover') restart(); });
+
+  // Game core
+  function currentSpawnMs() {
+    const ms = Math.max(WAVES.spawnMinMs, WAVES.spawnBaseMs - (wave - 1) * WAVES.spawnDecPerWave);
+    return elapsed < FAIRNESS.graceFirstS ? ms * 2 : ms; // slow spawns during grace
+  }
+  function currentMeteorSpeed() {
+    const s = WAVES.meteorBaseSpeed + (wave - 1) * WAVES.speedPerWave;
+    return elapsed < FAIRNESS.graceFirstS ? s * 0.5 : s; // reduced speed during grace
+  }
+
+  function spawnMeteor() {
+    if (meteors.length >= WAVES.maxMeteors) return;
+    const m = getMeteor();
+    m.r = Math.floor(randRange(10, 24));
+
+    // pick x with simple Poisson-like spacing + safety margin from player X
+    const attempts = 12;
+    let x = 0;
+    let ok = false;
+    for (let i = 0; i < attempts && !ok; i++) {
+      x = Math.floor(randRange(m.r + 4, VW - m.r - 4));
+      // Safety from player X
+      if (Math.abs(x - ship.x) < FAIRNESS.spawnSafetyX) continue;
+      // Spacing from recent spawns near top
+      ok = lastSpawnXs.every(px => Math.abs(px - x) >= Math.max(36, m.r * 1.8));
+    }
+    if (!ok) {
+      // Fallback: put on far side from player within bounds
+      x = clamp(ship.x + (ship.x < VW * 0.5 ? VW * 0.45 : -VW * 0.45), m.r + 4, VW - m.r - 4);
+    }
+
+    m.x = x;
+    m.y = -m.r - 8;
+    m.vy = currentMeteorSpeed();
+    m.nearMissed = false;
+    m.passed = false;
+    m.active = true;
+    m.life = 0;
+    m.colorShift = randRange(-0.05, 0.05);
+    meteors.push(m);
+
+    // Track recent spawn Xs for spacing (decay list size)
+    lastSpawnXs.push(x);
+    if (lastSpawnXs.length > 6) lastSpawnXs.shift();
+  }
+
+  function resetRun() {
+    ship.x = VW / 2; ship.y = VH * 0.8; ship.vx = 0; ship.vy = 0; ship.inv = 0; ship.lives = PLAYER.lives;
+    meteors.splice(0, meteors.length);
+    meteorPool.splice(0, meteorPool.length); // pool cleared implicitly
+    lastSpawnXs = [];
+    wave = 1; waveTime = 0; elapsed = 0; score = 0; survivalAcc = 0; shakeT = 0; shakeMag = 0;
+    spawnTimer = 0;
+    seedRng(baseSeed ^ wave);
+  }
+
+  function gameOver() {
+    state = 'gameover';
+    restartBtn.classList.remove('hidden');
+    restartBtn.focus({ preventScroll: true });
+    if (score > best) {
+      best = score;
+      localStorage.setItem('dtm_best', String(best));
+    }
+    bestEl.textContent = String(best);
+    srUpdate(`Game over. Score ${score}. Best ${best}. Press R to restart.`);
+  }
+  function restart() {
+    restartBtn.classList.add('hidden');
+    resetRun();
+    state = 'playing';
+    srUpdate('Run restarted.');
+  }
+
+  // Update & draw
+  let last = performance.now();
+  function loop(now) {
+    const dt = Math.min(0.032, (now - last) / 1000); // cap to ~30ms
+    last = now;
+
+    if (state === 'playing') update(dt);
+    draw(dt);
+    requestAnimationFrame(loop);
+  }
+
+  function update(dt) {
+    elapsed += dt;
+    waveTime += dt;
+
+    // Wave transition
+    if (waveTime >= WAVES.length) {
+      wave++;
+      waveTime -= WAVES.length;
+      score += SCORING.waveBonus; scoreEl.textContent = String(score);
+      waveEl.textContent = String(wave);
+      srUpdate(`Wave ${wave}. Bonus +${SCORING.waveBonus}.`);
+      seedRng(baseSeed ^ (wave * 2654435761));
+    }
+
+    // Input vector
+    let ix = 0, iy = 0;
+    const left = keys.has('a') || keys.has('arrowleft');
+    const right = keys.has('d') || keys.has('arrowright');
+    const up = keys.has('w') || keys.has('arrowup');
+    const down = keys.has('s') || keys.has('arrowdown');
+    if (left && !right) ix = -1; else if (right && !left) ix = 1; else ix = 0;
+    if (up && !down) iy = -1; else if (down && !up) iy = 1; else iy = 0;
+
+    // Pointer analog steering: overrides keys if active
+    let pix = ix, piy = iy;
+    if (pointerActive) {
+      const dx = pointerPos.x - ship.x;
+      const dy = pointerPos.y - ship.y;
+      const len = Math.hypot(dx, dy) || 1;
+      const dead = 6; // deadzone
+      if (len > dead) {
+        const nx = dx / len, ny = dy / len;
+        pix = nx; piy = ny;
+      } else {
+        pix = 0; piy = 0;
+      }
+    }
+
+    const inputMag = Math.hypot(pix, piy);
+    ship.thrusting = inputMag > 0.01;
+    const ax = ship.thrusting ? (pix / inputMag) * PLAYER.accel : 0;
+    const ay = ship.thrusting ? (piy / inputMag) * PLAYER.accel : 0;
+
+    // Apply acceleration/deceleration per axis for snappy control
+    function stepAxis(v, a, input, max, decel, dt) {
+      if (input !== 0) {
+        v += a * dt;
+        v = clamp(v, -max, max);
+      } else {
+        const speed = Math.abs(v);
+        const ds = decel * dt;
+        if (ds >= speed) v = 0; else v -= sign(v) * ds;
+      }
+      return v;
+    }
+
+    ship.vx = stepAxis(ship.vx, Math.abs(ax), pix !== 0 ? sign(pix) : 0, PLAYER.maxSpeed, PLAYER.decel, dt) * (pix !== 0 ? 1 : 1);
+    ship.vy = stepAxis(ship.vy, Math.abs(ay), piy !== 0 ? sign(piy) : 0, PLAYER.maxSpeed, PLAYER.decel, dt) * (piy !== 0 ? 1 : 1);
+
+    ship.x += ship.vx * dt;
+    ship.y += ship.vy * dt;
+
+    // Clamp to bounds
+    ship.x = clamp(ship.x, ship.r + 2, VW - ship.r - 2);
+    ship.y = clamp(ship.y, ship.r + 2, VH - ship.r - 2);
+
+    // Invulnerability timer
+    if (ship.inv > 0) ship.inv = Math.max(0, ship.inv - dt);
+    if (ship.inv > 0) ship.invFlash = (ship.invFlash + dt * 16) % 1; else ship.invFlash = 0;
+
+    // Spawn meteors
+    spawnTimer += dt * 1000;
+    const spawnMs = currentSpawnMs();
+    while (spawnTimer >= spawnMs) {
+      spawnTimer -= spawnMs;
+      spawnMeteor();
+    }
+
+    // Update meteors
+    for (let i = meteors.length - 1; i >= 0; i--) {
+      const m = meteors[i];
+      if (!m.active) continue;
+      m.life += dt;
+      m.y += m.vy * dt;
+
+      // Near-miss detection: once per meteor when passing by ship
+      const dx = m.x - ship.x;
+      const dy = m.y - ship.y;
+      const dist = Math.hypot(dx, dy);
+      const threshold = NEAR_MISS.radius + Math.max(0, m.r - 12) * 0.25; // slightly larger for big meteors
+      if (!m.nearMissed && dist < threshold && dy > 0 && dist > ship.r + m.r + 1) {
+        m.nearMissed = true;
+        addShake(2.0, 0.15);
+        // Visual feedback handled in draw via pulse
+      }
+
+      // Collision
+      if (ship.inv <= 0 && !(elapsed < FAIRNESS.noDeathFirstS)) {
+        if (dist <= ship.r + m.r) {
+          ship.lives = Math.max(0, ship.lives - 1);
+          livesEl.textContent = String(ship.lives);
+          ship.inv = PLAYER.iframes;
+          ship.invFlash = 0;
+          addShake(6.0, 0.25);
+          srUpdate(`Hit! Lives left ${ship.lives}.`);
+          if (ship.lives <= 0) {
+            gameOver();
+            break;
+          }
+        }
+      }
+
+      // Passed bottom
+      if (m.y - m.r > VH) {
+        meteors.splice(i, 1);
+        releaseMeteor(m);
+        // scoring on pass
+        score += SCORING.passBonus + (m.nearMissed ? SCORING.nearMissBonus : 0);
+        scoreEl.textContent = String(score);
+      }
+    }
+
+    // Survival score
+    survivalAcc += dt;
+    while (survivalAcc >= SCORING.survivalPer) {
+      survivalAcc -= SCORING.survivalPer;
+      score += 1; scoreEl.textContent = String(score);
+    }
+
+    // Decay shake
+    if (shakeT > 0) shakeT = Math.max(0, shakeT - dt);
+  }
+
+  function draw(dt) {
+    ctx.save();
+    ctx.clearRect(0, 0, VW, VH);
+
+    // Parallax stars
+    for (const s of stars) {
+      s.y += s.s; if (s.y > VH) s.y = -2;
+      ctx.globalAlpha = s.a;
+      ctx.fillStyle = '#9bb4ff22';
+      ctx.beginPath(); ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+
+    // Apply camera shake
+    const sh = getShakeOffset();
+    ctx.translate(sh.x, sh.y);
+
+    // Draw meteors
+    for (const m of meteors) {
+      if (!m.active) continue;
+      const grd = ctx.createRadialGradient(m.x - m.r * 0.3, m.y - m.r * 0.3, m.r * 0.2, m.x, m.y, m.r);
+      const hueShift = m.colorShift * 20; // subtle variety
+      const base = 'hsl(' + (24 + hueShift).toFixed(1) + ', 100%, 56%)';
+      const edge = 'hsl(' + (20 + hueShift).toFixed(1) + ', 100%, 42%)';
+      grd.addColorStop(0, base);
+      grd.addColorStop(1, edge);
+      ctx.fillStyle = grd;
+      ctx.beginPath();
+      ctx.arc(m.x, m.y, m.r, 0, Math.PI * 2);
+      ctx.fill();
+      // Rim highlight
+      ctx.strokeStyle = '#00000055';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+    }
+
+    // Ship
+    const flicker = ship.inv > 0 ? (ship.invFlash < 0.5 ? 0.5 : 1.0) : 1.0;
+    ctx.save();
+    ctx.globalAlpha = flicker;
+
+    // Ship body (rounded triangle)
+    const angle = Math.atan2(ship.vy, ship.vx) || -Math.PI/2;
+    const r = ship.r;
+    ctx.translate(ship.x, ship.y);
+    ctx.rotate(angle + Math.PI / 2);
+
+    // Thruster flame when thrusting
+    if (ship.thrusting) {
+      const flameLen = 10 + Math.random() * 8;
+      ctx.beginPath();
+      ctx.moveTo(-6, r + 2);
+      ctx.lineTo(0, r + 2 + flameLen);
+      ctx.lineTo(6, r + 2);
+      const grad = ctx.createLinearGradient(0, r + 2, 0, r + 2 + flameLen);
+      grad.addColorStop(0, 'rgba(34, 211, 238, 0.9)'); // accent
+      grad.addColorStop(1, 'rgba(34, 211, 238, 0.0)');
+      ctx.fillStyle = grad;
+      ctx.fill();
+    }
+
+    // Ship core
+    ctx.beginPath();
+    ctx.moveTo(0, -r);
+    ctx.quadraticCurveTo(r, 0, 0, r);
+    ctx.quadraticCurveTo(-r, 0, 0, -r);
+    ctx.closePath();
+    ctx.fillStyle = '#bcd9ff';
+    ctx.fill();
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = '#7aa1d833';
+    ctx.stroke();
+
+    // Accent outline
+    ctx.beginPath(); ctx.arc(0, 0, r + 2, 0, Math.PI * 2);
+    ctx.strokeStyle = '#22D3EE66';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+
+    ctx.restore();
+
+    // Near-miss pulse indicator
+    if (shakeT > 0 && shakeMag <= 3.0) { // triggered by near-miss
+      ctx.save();
+      ctx.globalAlpha = Math.min(0.4, shakeT * 1.2);
+      ctx.beginPath(); ctx.arc(ship.x, ship.y, ship.r + 6 + (0.6 - shakeT) * 12, 0, Math.PI * 2);
+      ctx.strokeStyle = '#22D3EE66';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    ctx.restore();
+  }
+
+  // Start loop
+  resetRun();
+  requestAnimationFrame(loop);
+
+  // Accessibility: keep HUD in sync with lives already, best already; score updates inline
+  // Allow focusing canvas to capture keys on some platforms
+  canvas.addEventListener('click', () => { canvas.focus(); });
+})();
+</script>
+</body>
+</html>

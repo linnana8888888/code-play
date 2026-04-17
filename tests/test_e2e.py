@@ -531,7 +531,10 @@ def test_phased_producer_pipeline_registered():
     assert "phased-producer" in ids
     pp = next(p for p in pipelines if p["id"] == "phased-producer")
     gate_steps = [s for s in pp["steps"] if s.get("type") == "human-gate"]
-    assert len(gate_steps) == 3
+    # concept, mechanics, laf, tech, qa
+    assert len(gate_steps) == 5
+    gate_ids = {s["id"] for s in gate_steps}
+    assert gate_ids == {"gate-concept", "gate-mechanics", "gate-laf", "gate-tech", "gate-qa"}
 
 
 def test_gate_list_approve_and_advance():
@@ -552,10 +555,10 @@ def test_gate_list_approve_and_advance():
     assert "gate-concept" in tasks_by_step
     assert "gate-mechanics" in tasks_by_step
 
-    # All 3 gates are created even before their upstream steps finish
+    # All 5 gates are created even before their upstream steps finish
     gates = client.get(f"/api/projects/{project_id}/gates").json()
     step_ids = {g["step_id"] for g in gates}
-    assert step_ids == {"gate-concept", "gate-mechanics", "gate-laf"}
+    assert step_ids == {"gate-concept", "gate-mechanics", "gate-laf", "gate-tech", "gate-qa"}
     # None are ready yet — upstream steps are still running/pending
     assert all(not g["ready"] for g in gates)
 
@@ -672,3 +675,489 @@ def test_gate_endpoints_reject_non_gate_task():
     assert resp.status_code == 400
     resp = client.post(f"/api/gates/{task['id']}/revise", json={"feedback": "x"})
     assert resp.status_code == 400
+
+
+# ==================== #1 Gate auto-surface (WebSocket broadcast) ====================
+
+
+def test_gate_ready_broadcast_on_pipeline_advance(monkeypatch):
+    """#1: when a pipeline step of type human-gate becomes ready, the server
+    must broadcast a `gate_ready` event so the dashboard can auto-surface it."""
+    import asyncio
+    from src.main import _advance_pipeline, ws_manager
+    from src.orchestrator.task_queue import task_queue
+    from src.models.tasks import TaskStatus
+
+    captured: list[dict] = []
+
+    async def fake_broadcast(msg):
+        captured.append(msg)
+
+    monkeypatch.setattr(ws_manager, "broadcast", fake_broadcast)
+
+    project = client.post("/api/projects", json={
+        "name": "Gate Broadcast Project",
+        "description": "",
+        "tech_stack": "web",
+    }).json()
+    project_id = project["id"]
+
+    launch = client.post("/api/pipelines/phased-producer/run", json={
+        "project_id": project_id,
+        "input_text": "a rhythm game about bees",
+    }).json()
+    concept_id = launch["tasks"]["concept"]
+    gate_concept_task_id = launch["tasks"]["gate-concept"]
+
+    # Before concept finishes, gate-concept is blocked -> no broadcast.
+    captured.clear()
+    asyncio.get_event_loop().run_until_complete(_advance_pipeline(project_id))
+    assert not any(m.get("type") == "gate_ready" for m in captured), \
+        "gate_ready fired before upstream completed"
+
+    # Complete concept, then advance — gate_ready should now fire.
+    task_queue.update_status(concept_id, TaskStatus.COMPLETED, result={"summary": "ok"})
+    captured.clear()
+    asyncio.get_event_loop().run_until_complete(_advance_pipeline(project_id))
+
+    gate_events = [m for m in captured if m.get("type") == "gate_ready"]
+    assert len(gate_events) >= 1, f"expected gate_ready broadcast, got {captured}"
+
+    payload = gate_events[0]["data"]
+    assert payload["task_id"] == gate_concept_task_id
+    assert payload["project_id"] == project_id
+    assert payload["pipeline"] == "phased-producer"
+    assert payload["step_id"] == "gate-concept"
+    assert "title" in payload
+    assert "review_of" in payload  # may be None for concept gate, but key is present
+
+
+# ==================== #2 Inline asset previews ====================
+
+
+def test_asset_previews_empty_for_new_project(tmp_path, monkeypatch):
+    """List endpoint returns [] when no assets/ dir exists."""
+    from src.settings import settings
+    monkeypatch.setattr(settings, "projects_dir", str(tmp_path))
+
+    project = client.post("/api/projects", json={
+        "name": "Asset Empty Project",
+        "description": "",
+        "tech_stack": "web",
+    }).json()
+
+    resp = client.get(f"/api/projects/{project['id']}/assets/previews")
+    assert resp.status_code == 200
+    assert resp.json() == []
+
+
+def test_asset_previews_lists_downloaded_images(tmp_path, monkeypatch):
+    """Images placed in projects/{id}/assets/ are surfaced with url + bytes."""
+    from src.settings import settings
+    monkeypatch.setattr(settings, "projects_dir", str(tmp_path))
+
+    project = client.post("/api/projects", json={
+        "name": "Asset List Project",
+        "description": "",
+        "tech_stack": "web",
+    }).json()
+    pid = project["id"]
+
+    assets = tmp_path / pid / "assets" / "refs"
+    assets.mkdir(parents=True)
+    (assets / "hero.png").write_bytes(b"\x89PNG\r\n\x1a\n" + b"0" * 100)
+    (assets / "palette.svg").write_text("<svg/>")
+    (assets / "notes.txt").write_text("ignore me")  # non-image, should be filtered
+
+    resp = client.get(f"/api/projects/{pid}/assets/previews")
+    assert resp.status_code == 200
+    items = resp.json()
+    paths = {i["path"] for i in items}
+    assert paths == {"refs/hero.png", "refs/palette.svg"}
+    for item in items:
+        assert item["bytes"] > 0
+        assert item["url"].startswith(f"/api/projects/{pid}/assets/file/")
+
+
+def test_asset_file_streams_content_and_blocks_traversal(tmp_path, monkeypatch):
+    """Per-file endpoint returns bytes for valid paths and 404s on traversal."""
+    from src.settings import settings
+    monkeypatch.setattr(settings, "projects_dir", str(tmp_path))
+
+    project = client.post("/api/projects", json={
+        "name": "Asset Stream Project",
+        "description": "",
+        "tech_stack": "web",
+    }).json()
+    pid = project["id"]
+
+    assets = tmp_path / pid / "assets"
+    assets.mkdir(parents=True)
+    (assets / "ok.png").write_bytes(b"PNGBYTES")
+
+    # Also place a sibling outside the assets dir the endpoint should NOT serve.
+    secret = tmp_path / pid / "secret.txt"
+    secret.write_text("top secret")
+
+    resp = client.get(f"/api/projects/{pid}/assets/file/ok.png")
+    assert resp.status_code == 200
+    assert resp.content == b"PNGBYTES"
+
+    # Path traversal attempt must be rejected.
+    resp = client.get(f"/api/projects/{pid}/assets/file/../secret.txt")
+    assert resp.status_code == 404
+
+
+# ==================== #3 tech-plan step ====================
+
+
+def test_tech_plan_step_and_agent_registered():
+    """#3: phased-producer must include a tech-plan step followed by gate-tech,
+    and the tech-lead agent must be declared in agents.yaml."""
+    # Pipeline shape
+    pipelines = client.get("/api/pipelines").json()
+    pp = next(p for p in pipelines if p["id"] == "phased-producer")
+    step_ids = [s["id"] for s in pp["steps"]]
+    assert "tech-plan" in step_ids
+    assert "gate-tech" in step_ids
+    # gate-tech must come after tech-plan, and build must come after gate-tech
+    assert step_ids.index("tech-plan") < step_ids.index("gate-tech")
+    assert step_ids.index("gate-tech") < step_ids.index("build")
+
+    tech_plan_step = next(s for s in pp["steps"] if s["id"] == "tech-plan")
+    assert tech_plan_step.get("agent") == "tech-lead"
+
+    gate_tech = next(s for s in pp["steps"] if s["id"] == "gate-tech")
+    assert gate_tech.get("type") == "human-gate"
+
+    # Agent definition exists
+    defs = client.get("/api/agents/definitions").json()
+    ids = {d["id"] for d in defs}
+    assert "tech-lead" in ids
+
+
+def test_tech_plan_tasks_created_and_wired_in_launch():
+    """Launching phased-producer must materialize a tech-plan task and wire
+    gate-tech to depend on it (so the gate surfaces only after tech-plan done)."""
+    from src.orchestrator.task_queue import task_queue
+
+    project = client.post("/api/projects", json={
+        "name": "Tech Plan Wiring",
+        "description": "",
+        "tech_stack": "web",
+    }).json()
+
+    launch = client.post("/api/pipelines/phased-producer/run", json={
+        "project_id": project["id"],
+        "input_text": "bullet heaven roguelike",
+    }).json()
+    tasks_by_step = launch["tasks"]
+
+    assert "tech-plan" in tasks_by_step
+    assert "gate-tech" in tasks_by_step
+
+    tech_plan_task = task_queue.get(tasks_by_step["tech-plan"])
+    gate_tech_task = task_queue.get(tasks_by_step["gate-tech"])
+    build_task = task_queue.get(tasks_by_step["build"])
+
+    assert tech_plan_task is not None
+    assert gate_tech_task is not None
+    assert build_task is not None
+
+    # gate-tech depends on the tech-plan task
+    assert tech_plan_task.id in gate_tech_task.depends_on
+    # build depends on gate-tech
+    assert gate_tech_task.id in build_task.depends_on
+
+
+# ==================== #4 A/B race + winner promotion ====================
+
+
+def test_phased_producer_race_pipeline_shape():
+    """#4: phased-producer-race exposes parallel build-a/build-b + gate-build-pick + qa."""
+    pipelines = client.get("/api/pipelines").json()
+    ids = {p["id"] for p in pipelines}
+    assert "phased-producer-race" in ids
+
+    race = next(p for p in pipelines if p["id"] == "phased-producer-race")
+    step_ids = [s["id"] for s in race["steps"]]
+    for sid in ("build-a", "build-b", "gate-build-pick", "qa-playtest"):
+        assert sid in step_ids
+
+    pick = next(s for s in race["steps"] if s["id"] == "gate-build-pick")
+    assert pick.get("type") == "human-gate"
+
+
+def test_ab_pick_gate_promotes_winner_a_to_game_html_v1():
+    """Approving a pick gate with 'winner: a' feedback must copy
+    game_html_v1@a into game_html_v1."""
+    from src.orchestrator.task_queue import task_queue
+    from src.models.tasks import TaskStatus
+    from src.memory.project_memory import project_memory
+
+    project = client.post("/api/projects", json={
+        "name": "AB Race A Winner",
+        "description": "",
+        "tech_stack": "web",
+    }).json()
+    pid = project["id"]
+
+    # Seed A/B artifacts directly
+    project_memory.write(pid, mem_type="artifact", key="game_html_v1@a",
+                         content="<html>A WINS</html>", created_by="test")
+    project_memory.write(pid, mem_type="artifact", key="game_html_v1@b",
+                         content="<html>B LOSES</html>", created_by="test")
+
+    launch = client.post("/api/pipelines/phased-producer-race/run", json={
+        "project_id": pid,
+        "input_text": "pick-winner test",
+    }).json()
+    pick_task_id = launch["tasks"]["gate-build-pick"]
+
+    # Force the pick gate ready by completing its upstream build tasks.
+    for step in ("build-a", "build-b"):
+        task_queue.update_status(launch["tasks"][step], TaskStatus.COMPLETED,
+                                 result={"summary": f"{step} shipped"})
+
+    resp = client.post(f"/api/gates/{pick_task_id}/approve",
+                       json={"feedback": "winner: a — cleaner movement"})
+    assert resp.status_code == 200
+    assert resp.json().get("pick_winner") == "a"
+
+    promoted = project_memory.read(pid, "artifact", "game_html_v1")
+    assert promoted == "<html>A WINS</html>"
+
+
+def test_ab_pick_gate_promotes_winner_b_to_game_html_v1():
+    """Same as above but with 'winner: b'."""
+    from src.orchestrator.task_queue import task_queue
+    from src.models.tasks import TaskStatus
+    from src.memory.project_memory import project_memory
+
+    project = client.post("/api/projects", json={
+        "name": "AB Race B Winner",
+        "description": "",
+        "tech_stack": "web",
+    }).json()
+    pid = project["id"]
+
+    project_memory.write(pid, mem_type="artifact", key="game_html_v1@a",
+                         content="<html>A LOSES</html>", created_by="test")
+    project_memory.write(pid, mem_type="artifact", key="game_html_v1@b",
+                         content="<html>B WINS</html>", created_by="test")
+
+    launch = client.post("/api/pipelines/phased-producer-race/run", json={
+        "project_id": pid,
+        "input_text": "b-winner test",
+    }).json()
+    pick_task_id = launch["tasks"]["gate-build-pick"]
+
+    for step in ("build-a", "build-b"):
+        task_queue.update_status(launch["tasks"][step], TaskStatus.COMPLETED,
+                                 result={"summary": f"{step} shipped"})
+
+    resp = client.post(f"/api/gates/{pick_task_id}/approve",
+                       json={"feedback": "pick: b, the physics feels better"})
+    assert resp.status_code == 200
+    assert resp.json().get("pick_winner") == "b"
+    assert project_memory.read(pid, "artifact", "game_html_v1") == "<html>B WINS</html>"
+
+
+def test_non_pick_gate_approval_does_not_touch_game_html():
+    """Approving a regular gate (not a pick gate) must not mutate game_html_v1."""
+    from src.orchestrator.task_queue import task_queue
+    from src.models.tasks import TaskStatus
+    from src.memory.project_memory import project_memory
+
+    project = client.post("/api/projects", json={
+        "name": "No Promote Guard",
+        "description": "",
+        "tech_stack": "web",
+    }).json()
+    pid = project["id"]
+
+    # Seed an existing game_html_v1 that must NOT be overwritten.
+    project_memory.write(pid, mem_type="artifact", key="game_html_v1",
+                         content="<html>ORIGINAL</html>", created_by="test")
+
+    launch = client.post("/api/pipelines/phased-producer/run", json={
+        "project_id": pid,
+        "input_text": "non-pick guard",
+    }).json()
+    concept_id = launch["tasks"]["concept"]
+    concept_gate_id = launch["tasks"]["gate-concept"]
+    task_queue.update_status(concept_id, TaskStatus.COMPLETED, result={"summary": "ok"})
+
+    resp = client.post(f"/api/gates/{concept_gate_id}/approve",
+                       json={"feedback": "winner: a"})  # the keyword must be ignored
+    assert resp.status_code == 200
+    assert resp.json().get("pick_winner") in (None,)
+
+    assert project_memory.read(pid, "artifact", "game_html_v1") == "<html>ORIGINAL</html>"
+
+
+# ==================== #5 QA playtest tool ====================
+
+
+def test_playwright_browser_tool_registered():
+    """#5: playwright_browser must be a callable tool in the executor registry."""
+    assert "playwright_browser" in tool_executor._tool_registry
+    handler = tool_executor._tool_registry["playwright_browser"]
+    assert callable(handler)
+
+
+def test_playwright_browser_tool_is_builtin_or_allowed():
+    """playwright_browser must be callable without pending approval so the qa-engineer
+    can use it during a pipeline run."""
+    from src.models.governance import GovernanceDecision
+    decision = tool_executor.check_permission("playwright_browser", "qa-engineer-test")
+    assert decision == GovernanceDecision.ALLOWED
+
+
+def test_qa_engineer_agent_registered():
+    """The qa-engineer agent definition must be loaded and spawnable."""
+    defs = client.get("/api/agents/definitions").json()
+    ids = {d["id"] for d in defs}
+    assert "qa-engineer" in ids
+
+    # Must be spawnable (exposes the real bug we would've hit at runtime).
+    inst = registry.spawn("qa-engineer", project_id="proj-test-qa", task_id="t-qa")
+    assert inst.agent_type == "qa-engineer"
+
+
+def test_phased_producer_has_qa_playtest_step():
+    """Both phased pipelines must include a qa-playtest step assigned to qa-engineer."""
+    pipelines = client.get("/api/pipelines").json()
+    for pid in ("phased-producer", "phased-producer-race"):
+        pl = next(p for p in pipelines if p["id"] == pid)
+        step_ids = {s["id"]: s for s in pl["steps"]}
+        assert "qa-playtest" in step_ids, f"{pid} missing qa-playtest"
+        assert step_ids["qa-playtest"].get("agent") == "qa-engineer"
+
+
+# ==================== #6 Play button + game preview endpoint ====================
+
+
+def test_game_preview_404_when_no_artifact():
+    """#6: preview endpoint returns 404 for a project with no build."""
+    project = client.post("/api/projects", json={
+        "name": "No Build Project",
+        "description": "",
+        "tech_stack": "web",
+    }).json()
+
+    resp = client.get(f"/api/projects/{project['id']}/game/preview")
+    assert resp.status_code == 404
+    assert "no build" in resp.text.lower()
+
+
+def test_game_preview_serves_default_artifact():
+    """Writing game_html_v1 into memory should make preview serve that HTML."""
+    from src.memory.project_memory import project_memory
+
+    project = client.post("/api/projects", json={
+        "name": "Preview Default Project",
+        "description": "",
+        "tech_stack": "web",
+    }).json()
+    pid = project["id"]
+    html = "<!doctype html><html><body><canvas></canvas><script>window.__game={};</script></body></html>"
+    project_memory.write(pid, mem_type="artifact", key="game_html_v1",
+                         content=html, created_by="test")
+
+    resp = client.get(f"/api/projects/{pid}/game/preview")
+    assert resp.status_code == 200
+    assert resp.headers["content-type"].startswith("text/html")
+    assert resp.text == html
+
+
+def test_game_preview_honors_key_param_for_ab_builds():
+    """The ?key= param lets the dashboard preview A and B builds side-by-side
+    before the pick gate has been resolved."""
+    from src.memory.project_memory import project_memory
+
+    project = client.post("/api/projects", json={
+        "name": "Preview AB Project",
+        "description": "",
+        "tech_stack": "web",
+    }).json()
+    pid = project["id"]
+    project_memory.write(pid, mem_type="artifact", key="game_html_v1@a",
+                         content="<html>A BUILD</html>", created_by="test")
+    project_memory.write(pid, mem_type="artifact", key="game_html_v1@b",
+                         content="<html>B BUILD</html>", created_by="test")
+
+    resp_a = client.get(f"/api/projects/{pid}/game/preview?key=game_html_v1@a")
+    assert resp_a.status_code == 200
+    assert resp_a.text == "<html>A BUILD</html>"
+
+    resp_b = client.get(f"/api/projects/{pid}/game/preview?key=game_html_v1@b")
+    assert resp_b.status_code == 200
+    assert resp_b.text == "<html>B BUILD</html>"
+
+    # No default artifact yet, so the key-less call 404s.
+    resp_default = client.get(f"/api/projects/{pid}/game/preview")
+    assert resp_default.status_code == 404
+
+
+# ==================== #7 style-research step ====================
+
+
+def test_style_research_step_and_agent_registered():
+    """#7: both phased pipelines must include a style-research step that feeds
+    look-and-feel, and the style-researcher agent must be defined."""
+    # Agent definition exists and is spawnable
+    defs = client.get("/api/agents/definitions").json()
+    ids = {d["id"] for d in defs}
+    assert "style-researcher" in ids
+
+    inst = registry.spawn("style-researcher", project_id="proj-style-test", task_id="t-style")
+    assert inst.agent_type == "style-researcher"
+
+    # Present in both phased pipelines, before look-and-feel
+    pipelines = client.get("/api/pipelines").json()
+    for pid in ("phased-producer", "phased-producer-race"):
+        pl = next(p for p in pipelines if p["id"] == pid)
+        step_ids = [s["id"] for s in pl["steps"]]
+        assert "style-research" in step_ids, f"{pid} missing style-research"
+        assert "look-and-feel" in step_ids, f"{pid} missing look-and-feel"
+        assert step_ids.index("style-research") < step_ids.index("look-and-feel")
+
+        sr_step = next(s for s in pl["steps"] if s["id"] == "style-research")
+        assert sr_step.get("agent") == "style-researcher"
+
+
+def test_style_research_wired_into_task_graph():
+    """Launching the pipeline must create a style-research task, and look-and-feel
+    must depend on it so the brief consumes the research artifact."""
+    from src.orchestrator.task_queue import task_queue
+
+    project = client.post("/api/projects", json={
+        "name": "Style Research Wiring",
+        "description": "",
+        "tech_stack": "web",
+    }).json()
+
+    launch = client.post("/api/pipelines/phased-producer/run", json={
+        "project_id": project["id"],
+        "input_text": "bullet-hell bunny garden",
+    }).json()
+    tasks_by_step = launch["tasks"]
+
+    assert "style-research" in tasks_by_step
+    assert "look-and-feel" in tasks_by_step
+
+    sr_task = task_queue.get(tasks_by_step["style-research"])
+    laf_task = task_queue.get(tasks_by_step["look-and-feel"])
+    assert sr_task is not None
+    assert laf_task is not None
+    # look-and-feel depends on style-research
+    assert sr_task.id in laf_task.depends_on
+
+
+def test_style_research_agent_category_is_research():
+    """style-researcher lives in the research category so the dashboard sidebar
+    can group it correctly."""
+    defs = client.get("/api/agents/definitions").json()
+    sr = next(d for d in defs if d["id"] == "style-researcher")
+    assert sr.get("category") == "research"

@@ -9,11 +9,12 @@ from src.settings import settings
 
 class LLMRouter:
     def __init__(self):
-        self._client = httpx.AsyncClient(timeout=120.0)
+        self._client = httpx.AsyncClient(timeout=httpx.Timeout(600.0, connect=30.0))
         self._provider_health: dict[str, bool] = {
-            "openrouter": True,
+            "openrouter": bool(settings.openrouter_api_key),
             "omlx": True,
-            "anthropic": True,
+            "anthropic": bool(settings.anthropic_api_key or settings.anthropic_auth_token),
+            "openai": bool(settings.anthropic_auth_token),  # LEGO proxy reuses this token
         }
 
     async def close(self):
@@ -31,6 +32,8 @@ class LLMRouter:
                 return await self._call_omlx(model_id, request)
             elif provider == Provider.ANTHROPIC:
                 return await self._call_anthropic(model_id, request)
+            elif provider == Provider.OPENAI:
+                return await self._call_openai(model_id, request)
             else:
                 raise ValueError(f"Unknown provider: {provider}")
         except Exception as e:
@@ -94,6 +97,32 @@ class LLMRouter:
 
         return self._parse_openai_response(data, Provider.OMLX)
 
+    # --- OpenAI via LEGO proxy (Azure deployment, chat completions) ---
+
+    async def _call_openai(self, model: str, request: LLMRequest) -> LLMResponse:
+        # GPT-5 is a reasoning model: `reasoning_tokens` count against output budget,
+        # so tiny caps return empty content. Enforce a floor.
+        max_completion = max(request.max_tokens or 0, 4096)
+        payload: dict = {
+            "messages": request.messages,
+            "max_completion_tokens": max_completion,
+        }
+        if request.tools:
+            payload["tools"] = self._to_openai_tools(request.tools)
+
+        base = settings.lego_openai_base_url.rstrip("/")
+        url = (
+            f"{base}/openai/deployments/{model}/chat/completions"
+            f"?api-version={settings.lego_openai_api_version}"
+        )
+        headers = {
+            "api-key": settings.anthropic_auth_token,
+            "Content-Type": "application/json",
+        }
+        resp = await self._client.post(url, json=payload, headers=headers)
+        resp.raise_for_status()
+        return self._parse_openai_response(resp.json(), Provider.OPENAI)
+
     # --- Anthropic (native format) ---
 
     async def _call_anthropic(self, model: str, request: LLMRequest) -> LLMResponse:
@@ -117,13 +146,19 @@ class LLMRouter:
             payload["tools"] = self._to_anthropic_tools(request.tools)
 
         headers = {
-            "x-api-key": settings.anthropic_api_key,
             "anthropic-version": "2023-06-01",
             "Content-Type": "application/json",
         }
+        # Proxy path (LEGO etc.) uses Bearer token; direct Anthropic uses x-api-key
+        if settings.anthropic_auth_token:
+            headers["Authorization"] = f"Bearer {settings.anthropic_auth_token}"
+        elif settings.anthropic_api_key:
+            headers["x-api-key"] = settings.anthropic_api_key
 
+        base = settings.anthropic_base_url.rstrip("/")
+        url = f"{base}/v1/messages" if not base.endswith("/v1/messages") else base
         resp = await self._client.post(
-            "https://api.anthropic.com/v1/messages",
+            url,
             json=payload,
             headers=headers,
         )
@@ -227,10 +262,12 @@ class LLMRouter:
             return Provider.OMLX
         elif model.startswith("anthropic/"):
             return Provider.ANTHROPIC
-        return Provider.OPENROUTER
+        elif model.startswith("openai/"):
+            return Provider.OPENAI
+        return Provider.OMLX  # OpenRouter is retired; unknown prefixes default to local
 
     def _strip_provider_prefix(self, model: str) -> str:
-        for prefix in ["openrouter/", "omlx/", "anthropic/"]:
+        for prefix in ["openrouter/", "omlx/", "anthropic/", "openai/"]:
             if model.startswith(prefix):
                 return model[len(prefix):]
         return model

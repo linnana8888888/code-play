@@ -9,6 +9,7 @@ class Provider(str, Enum):
     OPENROUTER = "openrouter"
     OMLX = "omlx"
     ANTHROPIC = "anthropic"
+    OPENAI = "openai"
 
 
 class ToolCall(BaseModel):

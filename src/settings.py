@@ -8,12 +8,18 @@ class Settings(BaseSettings):
     openrouter_api_key: str = ""
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
 
-    # Anthropic direct
+    # Anthropic (direct or via proxy — LEGO proxy uses AUTH_TOKEN + BASE_URL)
     anthropic_api_key: str = ""
+    anthropic_auth_token: str = ""
+    anthropic_base_url: str = "https://api.anthropic.com"
 
     # oMLX local
     omlx_base_url: str = "http://127.0.0.1:8000"
     omlx_api_key: str = ""
+
+    # LEGO proxy → OpenAI (GPT-5). Reuses `anthropic_auth_token` as the api-key header.
+    lego_openai_base_url: str = "https://models.assistant.legogroup.io"
+    lego_openai_api_version: str = "2025-04-01-preview"
 
     # GitHub
     github_token: str = ""

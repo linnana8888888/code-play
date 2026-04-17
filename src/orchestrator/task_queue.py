@@ -17,14 +17,15 @@ class TaskQueue:
 
         with get_studio_db() as db:
             db.execute(
-                """INSERT INTO tasks (id, project_id, title, description, parent_task_id, priority, depends_on, created_by, status, created_at, updated_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)""",
+                """INSERT INTO tasks (id, project_id, title, description, parent_task_id, assignee_type, priority, depends_on, created_by, status, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)""",
                 (
                     task_id,
                     task_input.project_id,
                     task_input.title,
                     task_input.description,
                     task_input.parent_task_id,
+                    task_input.assignee_type,
                     task_input.priority,
                     json.dumps(task_input.depends_on),
                     task_input.created_by,
@@ -39,6 +40,7 @@ class TaskQueue:
             title=task_input.title,
             description=task_input.description,
             parent_task_id=task_input.parent_task_id,
+            assignee_type=task_input.assignee_type,
             priority=task_input.priority,
             depends_on=task_input.depends_on,
             created_by=task_input.created_by,
@@ -136,15 +138,27 @@ class TaskQueue:
             if all_done:
                 ready.append(task)
 
-        return sorted(ready, key=lambda t: (-t.priority, t.created_at or datetime.min))
+        def _sort_key(t):
+            ts = t.created_at
+            if ts is None:
+                return (-t.priority, "")
+            # Normalize tz to get consistent ordering across naive/aware timestamps
+            iso = ts.isoformat() if hasattr(ts, "isoformat") else str(ts)
+            return (-t.priority, iso)
+        return sorted(ready, key=_sort_key)
 
     def _row_to_task(self, row) -> Task:
         depends = json.loads(row["depends_on"]) if row["depends_on"] else []
         result = json.loads(row["result"]) if row["result"] else None
-        # parent_task_id may not exist in old DBs
+        # Columns added via migration may not exist on old rows
         parent_task_id = None
+        assignee_type = None
         try:
             parent_task_id = row["parent_task_id"]
+        except (IndexError, KeyError):
+            pass
+        try:
+            assignee_type = row["assignee_type"]
         except (IndexError, KeyError):
             pass
         return Task(
@@ -153,6 +167,7 @@ class TaskQueue:
             title=row["title"],
             description=row["description"] or "",
             assigned_to=row["assigned_to"],
+            assignee_type=assignee_type,
             parent_task_id=parent_task_id,
             status=TaskStatus(row["status"]),
             priority=row["priority"] or 0,

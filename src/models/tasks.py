@@ -21,6 +21,7 @@ class Task(BaseModel):
     title: str
     description: str = ""
     assigned_to: str | None = None             # agent instance ID
+    assignee_type: str | None = None           # agent-type hint for auto-spawn
     parent_task_id: str | None = None          # enables task hierarchy
     status: TaskStatus = TaskStatus.PENDING
     priority: int = 0
@@ -35,6 +36,7 @@ class TaskCreate(BaseModel):
     project_id: str
     title: str
     description: str = ""
+    assignee_type: str | None = None           # agent-type hint (e.g. "frontend-developer")
     parent_task_id: str | None = None
     priority: int = 0
     depends_on: list[str] = Field(default_factory=list)

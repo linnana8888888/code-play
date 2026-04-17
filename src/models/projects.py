@@ -12,6 +12,8 @@ class Project(BaseModel):
     goal: str = ""
     tech_stack: str = ""
     status: str = "active"
+    repo_url: str | None = None
+    repo_name: str | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
 
@@ -21,3 +23,4 @@ class ProjectCreate(BaseModel):
     description: str = ""
     goal: str = ""
     tech_stack: str = "threejs"
+    create_repo: bool = True

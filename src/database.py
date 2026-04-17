@@ -67,6 +67,8 @@ def init_studio_db():
                 goal TEXT DEFAULT '',
                 tech_stack TEXT,
                 status TEXT DEFAULT 'active',
+                repo_url TEXT,
+                repo_name TEXT,
                 created_at TEXT DEFAULT (datetime('now')),
                 updated_at TEXT DEFAULT (datetime('now'))
             );
@@ -153,6 +155,7 @@ def init_studio_db():
         # Migrations for existing databases
         _migrate_add_column(db, "projects", "goal", "TEXT DEFAULT ''")
         _migrate_add_column(db, "tasks", "parent_task_id", "TEXT")
+        _migrate_add_column(db, "tasks", "assignee_type", "TEXT")
 
 
 def _migrate_add_column(db, table: str, column: str, col_type: str):

@@ -17,6 +17,7 @@ builtin:
   - memory_read
   - memory_write
   - memory_search
+  - task_create
 
 pre_approved:
   # User's existing Claude Code skills/plugins - always allowed

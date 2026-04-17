@@ -7,6 +7,9 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
+import shutil
+import subprocess
 import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
@@ -17,6 +20,7 @@ from pathlib import Path
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
 
 from src.settings import settings
 from src.database import init_studio_db, init_project_db, get_studio_db
@@ -172,15 +176,46 @@ async def _handle_ws_command(msg: dict):
 
 # ==================== Projects ====================
 
+def _slugify(name: str) -> str:
+    slug = re.sub(r"[^a-zA-Z0-9]+", "-", name.strip().lower()).strip("-")
+    return slug or f"game-{uuid.uuid4().hex[:6]}"
+
+
+def _create_github_repo(name: str, description: str) -> tuple[str | None, str | None]:
+    """Create a private GitHub repo under the authed user. Returns (repo_url, repo_name) or (None, None)."""
+    if not shutil.which("gh"):
+        logger.warning("gh CLI not available; skipping repo creation")
+        return None, None
+    slug = _slugify(name)
+    desc = (description or "").replace("\n", " ")[:300]
+    try:
+        result = subprocess.run(
+            ["gh", "repo", "create", slug, "--private", "--description", desc or "Published by Code PLAY studio"],
+            capture_output=True, text=True, timeout=30,
+        )
+        if result.returncode != 0:
+            logger.warning("gh repo create failed: %s", result.stderr.strip())
+            return None, None
+        url = result.stdout.strip().splitlines()[-1] if result.stdout.strip() else f"https://github.com/linnana8888888/{slug}"
+        return url, slug
+    except Exception as exc:
+        logger.warning("gh repo create exception: %s", exc)
+        return None, None
+
+
 @app.post("/api/projects", response_model=Project)
 async def create_project(body: ProjectCreate):
     project_id = f"proj-{uuid.uuid4().hex[:8]}"
     now = datetime.now(timezone.utc).isoformat()
 
+    repo_url, repo_name = (None, None)
+    if body.create_repo:
+        repo_url, repo_name = await asyncio.to_thread(_create_github_repo, body.name, body.description)
+
     with get_studio_db() as db:
         db.execute(
-            "INSERT INTO projects (id, name, description, goal, tech_stack, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (project_id, body.name, body.description, body.goal, body.tech_stack, now, now),
+            "INSERT INTO projects (id, name, description, goal, tech_stack, repo_url, repo_name, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (project_id, body.name, body.description, body.goal, body.tech_stack, repo_url, repo_name, now, now),
         )
 
     # Init project memory DB
@@ -193,6 +228,8 @@ async def create_project(body: ProjectCreate):
         goal=body.goal,
         tech_stack=body.tech_stack,
         status="active",
+        repo_url=repo_url,
+        repo_name=repo_name,
         created_at=datetime.fromisoformat(now),
         updated_at=datetime.fromisoformat(now),
     )
@@ -242,26 +279,30 @@ async def list_agent_categories():
     return registry.list_categories()
 
 
+def _instance_dict(i):
+    return {
+        "id": i.id,
+        "agent_type": i.agent_type,
+        "project_id": i.project_id,
+        "task_id": i.task_id,
+        "status": i.status.value,
+        "model": i.model,
+        "provider": i.provider,
+        "tokens_used": i.tokens_used,
+        "cost_usd": i.cost_usd,
+        "budget_max_tokens": i.budget_max_tokens,
+        "budget_max_usd": i.budget_max_usd,
+        "started_at": i.started_at.isoformat() if i.started_at else None,
+        "completed_at": i.completed_at.isoformat() if i.completed_at else None,
+        "created_at": i.started_at.isoformat() if i.started_at else None,
+    }
+
+
 @app.get("/api/agents/instances")
 async def list_agent_instances(project_id: str = None, status: str = None):
     agent_status = AgentStatus(status) if status else None
     instances = registry.list_instances(project_id=project_id, status=agent_status)
-    return [
-        {
-            "id": i.id,
-            "agent_type": i.agent_type,
-            "project_id": i.project_id,
-            "task_id": i.task_id,
-            "status": i.status.value,
-            "model": i.model,
-            "provider": i.provider,
-            "tokens_used": i.tokens_used,
-            "cost_usd": i.cost_usd,
-            "started_at": i.started_at.isoformat() if i.started_at else None,
-            "completed_at": i.completed_at.isoformat() if i.completed_at else None,
-        }
-        for i in instances
-    ]
+    return [_instance_dict(i) for i in instances]
 
 
 @app.post("/api/agents/spawn")
@@ -295,12 +336,7 @@ async def spawn_agent(
     if task_prompt:
         asyncio.create_task(_run_agent_task(instance, task_prompt))
 
-    return {
-        "id": instance.id,
-        "agent_type": instance.agent_type,
-        "status": instance.status.value,
-        "model": instance.model,
-    }
+    return _instance_dict(instance)
 
 
 @app.post("/api/agents/{instance_id}/terminate")
@@ -363,6 +399,7 @@ async def get_agent_cost(instance_id: str):
 
 async def _run_agent_task(instance, task_prompt: str, session_id: str = None):
     """Background task: run agent to completion, broadcasting turns."""
+    final_content = ""
     try:
         # Inject project memory context if available
         context_messages = []
@@ -375,6 +412,8 @@ async def _run_agent_task(instance, task_prompt: str, session_id: str = None):
                 })
 
         async for turn in agent_runtime.run(instance, task_prompt, context_messages, session_id):
+            if turn.role == "assistant" and turn.content:
+                final_content = turn.content
             await ws_manager.broadcast({
                 "type": "agent_turn",
                 "data": {
@@ -392,15 +431,116 @@ async def _run_agent_task(instance, task_prompt: str, session_id: str = None):
                     "timestamp": turn.timestamp.isoformat(),
                 },
             })
+
+        # Rescue: if the model emitted HTML inline but never called memory_write,
+        # capture it to project memory so the pipeline can still advance.
+        if instance.project_id and final_content and "<!DOCTYPE html>" in final_content:
+            try:
+                start = final_content.find("<!DOCTYPE html>")
+                end_html = final_content.find("</html>", start)
+                if end_html > 0:
+                    html_blob = final_content[start:end_html + len("</html>")]
+                    project_memory.write(
+                        instance.project_id,
+                        mem_type="artifact",
+                        key="game_html_v1",
+                        content=html_blob,
+                        created_by=instance.id,
+                    )
+                    logger.info(f"Rescued HTML ({len(html_blob)} chars) to memory for {instance.project_id}")
+            except Exception as exc:
+                logger.warning(f"Failed to rescue HTML: {exc}")
+
+        # Mark the task completed and try to advance the pipeline
+        if instance.task_id:
+            try:
+                task_queue.update_status(
+                    instance.task_id,
+                    TaskStatus.COMPLETED,
+                    result={"summary": final_content[:20000], "agent_instance_id": instance.id},
+                )
+                await ws_manager.broadcast({
+                    "type": "task_completed",
+                    "data": {"task_id": instance.task_id, "instance_id": instance.id},
+                })
+            except Exception as exc:
+                logger.warning(f"Failed to mark task {instance.task_id} completed: {exc}")
+        if instance.project_id:
+            await _advance_pipeline(instance.project_id)
     except Exception as e:
         logger.error(f"Agent {instance.id} failed: {e}")
+        if instance.task_id:
+            try:
+                task_queue.update_status(instance.task_id, TaskStatus.BLOCKED, result={"error": str(e)})
+            except Exception:
+                pass
         await ws_manager.broadcast({
             "type": "agent_error",
             "data": {"instance_id": instance.id, "error": str(e)},
         })
 
 
+async def _advance_pipeline(project_id: str):
+    """Spawn agents for any newly-ready pipeline tasks."""
+    try:
+        ready = task_queue.get_ready_tasks(project_id)
+    except Exception as exc:
+        logger.warning(f"get_ready_tasks failed: {exc}")
+        return
+
+    if not ready:
+        return
+
+    pipeline_specs = _load_pipelines_yaml().get("pipelines", {}) or {}
+
+    for task in ready:
+        if task.assigned_to:
+            continue
+
+        agent_type: str | None = None
+        created_by = task.created_by or ""
+
+        if created_by.startswith("pipeline:"):
+            pipeline_name = created_by.split(":", 1)[1]
+            pipeline = pipeline_specs.get(pipeline_name)
+            if not pipeline:
+                continue
+
+            step_id = task.title.replace(f"[{pipeline_name}] ", "").strip()
+            step = next((s for s in pipeline.get("steps", []) if s.get("id") == step_id), None)
+            if not step:
+                continue
+            if step.get("type") == "human-gate":
+                continue
+            agent_type = step.get("agent")
+        elif task.assignee_type:
+            # Human- or agent-created task with an explicit agent-type hint
+            agent_type = task.assignee_type
+
+        if not agent_type:
+            continue
+
+        try:
+            instance = registry.spawn(
+                agent_type=agent_type,
+                project_id=project_id,
+                task_id=task.id,
+            )
+            task_queue.checkout(task.id, instance.id)
+            asyncio.create_task(_run_agent_task(instance, task.description))
+            logger.info(f"Advanced pipeline: spawned {agent_type} for task {task.id}")
+        except ValueError as exc:
+            logger.warning(f"Failed to spawn {agent_type} for task {task.id}: {exc}")
+
+
 # ==================== Tasks ====================
+
+@app.post("/api/pipelines/advance")
+async def advance_pipeline_endpoint(project_id: str):
+    """Manually trigger pipeline advancement for a project."""
+    await _advance_pipeline(project_id)
+    return {"status": "ok", "project_id": project_id}
+
 
 @app.post("/api/tasks")
 async def create_task(body: TaskCreate):
@@ -426,10 +566,16 @@ async def get_task(task_id: str):
 
 @app.post("/api/tasks/{task_id}/assign")
 async def assign_task(task_id: str, agent_instance_id: str):
-    task = task_queue.assign(task_id, agent_instance_id)
-    if not task:
-        raise HTTPException(404, "Task not found")
-    return task.model_dump(mode="json")
+    # Deprecated: this endpoint only flipped the DB row without booting a
+    # runtime, which left tasks permanently orphaned. Use `/api/agents/spawn`
+    # (with a task_prompt) or set `assignee_type` on task_create so
+    # `_advance_pipeline` picks it up.
+    raise HTTPException(
+        410,
+        "POST /api/tasks/{id}/assign is deprecated. Use /api/agents/spawn "
+        "with a task_prompt, or create the task with assignee_type set so "
+        "the pipeline advances it automatically.",
+    )
 
 
 @app.get("/api/projects/{project_id}/tasks/ready")
@@ -572,17 +718,44 @@ async def search_memory(project_id: str, query: str, mem_type: str = None):
 
 # ==================== Pipelines ====================
 
-@app.post("/api/pipelines/{pipeline_name}/run")
-async def run_pipeline(pipeline_name: str, project_id: str, input_text: str = ""):
-    """Launch a predefined pipeline for a project."""
-    # Load pipeline definition
+def _load_pipelines_yaml():
     pipelines_path = f"{settings.config_dir}/pipelines.yaml"
     try:
         with open(pipelines_path) as f:
-            data = yaml.safe_load(f)
+            return yaml.safe_load(f) or {}
     except FileNotFoundError:
-        raise HTTPException(404, "Pipelines config not found")
+        return {}
 
+
+@app.get("/api/pipelines")
+async def list_pipelines():
+    data = _load_pipelines_yaml()
+    pipelines = data.get("pipelines", {}) or {}
+    return [
+        {
+            "id": key,
+            "name": p.get("name", key),
+            "description": p.get("description", ""),
+            "steps": [
+                {"id": s.get("id"), "agent": s.get("agent"), "type": s.get("type", "agent")}
+                for s in p.get("steps", [])
+            ],
+        }
+        for key, p in pipelines.items()
+    ]
+
+
+class PipelineRunBody(BaseModel):
+    project_id: str
+    input_text: str = ""
+
+
+@app.post("/api/pipelines/{pipeline_name}/run")
+async def run_pipeline(pipeline_name: str, body: PipelineRunBody):
+    """Launch a predefined pipeline for a project."""
+    project_id = body.project_id
+    input_text = body.input_text
+    data = _load_pipelines_yaml()
     pipeline = data.get("pipelines", {}).get(pipeline_name)
     if not pipeline:
         raise HTTPException(404, f"Pipeline '{pipeline_name}' not found")

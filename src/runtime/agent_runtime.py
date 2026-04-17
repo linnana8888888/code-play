@@ -121,7 +121,7 @@ class AgentRuntime:
                     model=instance.model,
                     tools=tool_schemas if tool_schemas else None,
                     temperature=0.7,
-                    max_tokens=4096,
+                    max_tokens=16384,
                 )
 
                 try:
@@ -209,6 +209,7 @@ class AgentRuntime:
 
             # Update instance stats
             instance.tokens_used = total_input_tokens + total_output_tokens
+            registry.record_usage(instance.id, instance.tokens_used, instance.cost_usd)
             registry.update_status(instance.id, AgentStatus.COMPLETED)
             self._log_event(
                 instance, "completed",
@@ -216,6 +217,7 @@ class AgentRuntime:
             )
 
         except Exception as e:
+            registry.record_usage(instance.id, total_input_tokens + total_output_tokens, instance.cost_usd)
             registry.update_status(instance.id, AgentStatus.FAILED)
             self._log_event(instance, "failed", str(e))
             raise

@@ -369,6 +369,38 @@ class ToolExecutor:
             },
         })
 
+        # task_create — agent-to-agent task delegation
+        self._register("task_create", self._tool_task_create, {
+            "name": "task_create",
+            "description": (
+                "Create a follow-up task for another agent to pick up. Use this to delegate work, "
+                "file bugs, or queue QA/review steps. The task appears on the kanban board tagged as "
+                "agent-created. Depends_on lets you chain work (task runs only after listed tasks complete)."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string", "description": "Short task title (imperative, e.g. 'Run QA on game.html')"},
+                    "description": {"type": "string", "description": "Full task description with context and acceptance criteria"},
+                    "priority": {"type": "integer", "description": "0 = normal, higher = more urgent", "default": 0},
+                    "depends_on": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Task IDs that must complete before this one runs",
+                    },
+                    "parent_task_id": {"type": "string", "description": "Optional parent task ID (for subtasks)"},
+                    "assignee_type": {
+                        "type": "string",
+                        "description": (
+                            "Optional agent-type hint (e.g. 'qa-engineer', 'frontend-developer'). "
+                            "If set, the orchestrator auto-spawns that agent when the task is ready."
+                        ),
+                    },
+                },
+                "required": ["title"],
+            },
+        })
+
     def _register(self, name: str, handler: callable, schema: dict):
         self._tool_registry[name] = handler
         self._tool_schemas[name] = schema
@@ -562,6 +594,53 @@ class ToolExecutor:
             preview = r["content"][:200]
             lines.append(f"[{r['type']}/{r['key']}] {preview}")
         return "\n".join(lines)
+
+    async def _tool_task_create(self, args: dict, **ctx) -> str:
+        """Agent-to-agent task delegation. Creates a pending task on the board."""
+        from src.orchestrator.task_queue import task_queue
+        from src.models.tasks import TaskCreate
+
+        project_id = ctx.get("project_id")
+        if not project_id:
+            return "Error: no project context — task_create requires a project_id."
+
+        agent_id = ctx.get("agent_instance_id", "agent")
+        title = (args.get("title") or "").strip()
+        if not title:
+            return "Error: 'title' is required."
+
+        try:
+            task = task_queue.create(TaskCreate(
+                project_id=project_id,
+                title=title[:200],
+                description=args.get("description", ""),
+                priority=int(args.get("priority", 0) or 0),
+                depends_on=args.get("depends_on", []) or [],
+                parent_task_id=args.get("parent_task_id"),
+                assignee_type=args.get("assignee_type") or None,
+                created_by=agent_id,
+            ))
+        except Exception as e:
+            return f"Error creating task: {e}"
+
+        # Broadcast so the live ActivityFeed + TaskBoard pick it up immediately.
+        # Resolve ws_manager via sys.modules to avoid re-importing src.main (which boots a new app).
+        try:
+            import sys
+            main_mod = sys.modules.get("src.main")
+            ws_manager = getattr(main_mod, "ws_manager", None) if main_mod else None
+            if ws_manager is not None:
+                await ws_manager.broadcast({
+                    "type": "task_created",
+                    "data": task.model_dump(mode="json"),
+                })
+        except Exception:
+            pass
+
+        return (
+            f"Created task {task.id}: \"{task.title}\" "
+            f"(priority={task.priority}, depends_on={task.depends_on or 'none'})."
+        )
 
     # --- Path safety ---
 

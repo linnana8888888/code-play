@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 
 from src.models.agents import AgentDefinition, AgentInstance, AgentStatus
 from src.settings import settings
+from src.database import get_studio_db
 
 
 class AgentRegistry:
@@ -149,7 +150,46 @@ class AgentRegistry:
             started_at=datetime.now(timezone.utc),
         )
         self._instances[instance.id] = instance
+        self._persist_insert(instance)
         return instance
+
+    def _persist_insert(self, instance: AgentInstance):
+        """INSERT a freshly spawned instance into agent_instances."""
+        try:
+            with get_studio_db() as db:
+                db.execute(
+                    """INSERT OR REPLACE INTO agent_instances
+                       (id, agent_type, project_id, task_id, status, model, provider,
+                        tokens_used, cost_usd, started_at, completed_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0.0, ?, NULL)""",
+                    (
+                        instance.id,
+                        instance.agent_type,
+                        instance.project_id,
+                        instance.task_id,
+                        instance.status.value,
+                        instance.model,
+                        instance.provider,
+                        instance.started_at.isoformat() if instance.started_at else None,
+                    ),
+                )
+        except Exception as e:
+            print(f"Warning: failed to persist agent instance {instance.id}: {e}")
+
+    def _persist_update(self, instance_id: str, **fields):
+        """UPDATE fields on an existing agent_instances row."""
+        if not fields:
+            return
+        cols = ", ".join(f"{k}=?" for k in fields.keys())
+        values = list(fields.values()) + [instance_id]
+        try:
+            with get_studio_db() as db:
+                db.execute(
+                    f"UPDATE agent_instances SET {cols} WHERE id=?",
+                    values,
+                )
+        except Exception as e:
+            print(f"Warning: failed to update agent instance {instance_id}: {e}")
 
     def get_instance(self, instance_id: str) -> AgentInstance | None:
         return self._instances.get(instance_id)
@@ -168,8 +208,19 @@ class AgentRegistry:
         inst = self._instances.get(instance_id)
         if inst:
             inst.status = status
+            fields = {"status": status.value}
             if status in (AgentStatus.COMPLETED, AgentStatus.FAILED, AgentStatus.TERMINATED):
                 inst.completed_at = datetime.now(timezone.utc)
+                fields["completed_at"] = inst.completed_at.isoformat()
+            self._persist_update(instance_id, **fields)
+
+    def record_usage(self, instance_id: str, tokens_used: int, cost_usd: float):
+        """Persist final token + cost totals at end of a run."""
+        inst = self._instances.get(instance_id)
+        if inst:
+            inst.tokens_used = tokens_used
+            inst.cost_usd = cost_usd
+        self._persist_update(instance_id, tokens_used=tokens_used, cost_usd=cost_usd)
 
     def terminate(self, instance_id: str):
         self.update_status(instance_id, AgentStatus.TERMINATED)
@@ -182,7 +233,9 @@ class AgentRegistry:
             return "omlx"
         elif model.startswith("anthropic/"):
             return "anthropic"
-        return "openrouter"  # default
+        elif model.startswith("openai/"):
+            return "openai"
+        return "omlx"  # default — OpenRouter retired, local Qwen is the baseline
 
 
 # Singleton

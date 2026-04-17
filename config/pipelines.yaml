@@ -20,7 +20,7 @@ pipelines:
       - id: prototype
         agent: frontend-developer
         depends_on: [concept]
-        task: "Build Three.js prototype implementing the GDD core loop"
+        task: "Build a playable web prototype implementing the GDD core loop. Use the tech_stack specified in the project (Phaser, Three.js, Pixi.js, Babylon.js, or plain web). Keep it a single HTML file when possible."
         output: prototype_code
 
       - id: review
@@ -36,18 +36,30 @@ pipelines:
 
   quick-prototype:
     name: "Quick Prototype"
-    description: "Fast prototype from a one-line idea"
+    description: "Fast prototype from a one-line idea — parallel art + build after design"
     steps:
       - id: design
         agent: game-designer
-        task: "Create a minimal GDD for: {input}. Focus on core loop only."
+        task: "Create a minimal GDD for: {input}. Focus on core loop only. Save to memory as artifact key 'gdd_v1'."
         output: gdd
+
+      - id: art-brief
+        agent: technical-artist
+        depends_on: [design]
+        task: "Based on the GDD in memory (key: gdd_v1), draft a short art brief: color palette (3-5 hex codes), sprite style, UI font suggestion. Save to memory as artifact key 'art_brief_v1'."
+        output: art_brief
 
       - id: build
         agent: frontend-developer
         depends_on: [design]
-        task: "Build a playable Three.js prototype from this GDD"
+        task: "Build a playable web prototype from the GDD (memory key: gdd_v1). Use the project's tech_stack (Phaser, Three.js, Pixi.js, Babylon.js, or plain web). Prefer a single HTML file. Save the final HTML to memory as artifact key 'game_html_v1'."
         output: code
+
+      - id: review
+        agent: code-reviewer
+        depends_on: [build]
+        task: "Review the HTML prototype in memory (key: game_html_v1) for bugs, performance, and security. Short report only."
+        output: review
 
   roblox-experience:
     name: "Roblox Experience"

@@ -4,7 +4,7 @@
 pipelines:
   phased-producer:
     name: "Phased Producer (human-gated)"
-    description: "Concept → mechanics → look-and-feel → build, with a human review gate between each phase"
+    description: "Concept → mechanics → style-research → look-and-feel → tech-plan → build → QA, with a human gate at every major phase"
     steps:
       - id: concept
         agent: game-designer
@@ -29,19 +29,47 @@ pipelines:
         review_of: mechanics
         task: "Review the mechanics doc. Approve, or request changes with specific feedback."
 
-      - id: look-and-feel
-        agent: technical-artist
+      - id: style-research
+        agent: style-researcher
         depends_on: [gate-mechanics]
         task: |
-          Based on the approved concept + mechanics (memory keys: concept_options_v1, mechanics_v1),
-          ground the look-and-feel in real reusable art:
-            1. Call asset_search (pool='both') with 2-3 queries derived from the game's genre and mood.
-               Include at least one query per pool so BOTH kenney and itch are represented.
-            2. Pick 3-5 concrete hits across the two pools that share a coherent aesthetic.
-            3. Call asset_fetch(kind='preview') on each pick to pull thumbnails into assets/.
-            4. Draft the brief: palette (3-5 hex codes derived from the chosen refs),
-               art style (reference the asset_ids chosen), UI/typography direction, audio tone.
-               List the referenced asset_ids in a 'references' section.
+          Read concept_options_v1 + mechanics_v1 from memory. The target platform style
+          reference is Roblox (kids audience, low-poly stylized 3D). Find 6-10 live Roblox
+          games that match this project's genre AND its comedic/narrative subject. For
+          each reference save: game name, cover_url, 2-3 screenshot_urls, a one-line note
+          on "why this reads" (silhouette / palette / camera / material vibe).
+          Close with:
+            - Synthesis paragraph: the concrete style to target (engine class, camera,
+              palette feel, material treatment, character proportions, UI chrome).
+            - Character design section: describe the player AND each enemy literally —
+              silhouette, proportions, colors. Do not sanitize the subject of the brief.
+            - Palette block: 5-9 hex codes organised as primary / accent / enemy / fx / bg.
+            - "Don't do this" list: 3-5 anti-patterns to avoid.
+          Save to memory as artifact key 'style_research_v1'.
+        output: style_research
+
+      - id: look-and-feel
+        agent: technical-artist
+        depends_on: [style-research]
+        task: |
+          Read style_research_v1 from memory FIRST — the brief must match it. Then read
+          concept_options_v1 + mechanics_v1. Now ground the look-and-feel:
+            1. Call asset_search (pool='both') with 2-3 queries derived from the style
+               research synthesis (not generic genre terms). Include at least one query
+               per pool so BOTH kenney and itch are represented.
+            2. Pick 3-5 concrete hits across the two pools that share the aesthetic the
+               research specified. If nothing fits the research, say so explicitly — do
+               not silently sanitize to match generic assets.
+            3. Call asset_fetch(kind='preview') on each pick to pull thumbnails into
+               assets/. If a fetch fails, note it in the brief (don't silently skip).
+            4. Draft the brief with these sections:
+                 - Palette (3-7 hex codes, derive from the style_research palette block).
+                 - Art style (reference chosen asset_ids AND the research synthesis
+                   paragraph verbatim).
+                 - Character design (player + enemies — literal, per the research).
+                 - UI / typography direction.
+                 - Audio tone.
+                 - References (list the asset_ids).
           Save the final brief to memory as artifact key 'laf_brief_v1'.
         output: look_and_feel
 
@@ -49,18 +77,184 @@ pipelines:
         type: human-gate
         depends_on: [look-and-feel]
         review_of: look-and-feel
-        task: "Review the look-and-feel brief. Approve, or request changes."
+        task: "Review the look-and-feel brief against the style research. Approve, or request changes."
+
+      - id: tech-plan
+        agent: tech-lead
+        depends_on: [gate-laf]
+        task: |
+          Read concept_options_v1 + mechanics_v1 + style_research_v1 + laf_brief_v1 from memory.
+          Pick ONE engine from the project's tech_stack list (or infer from research if 3D is
+          targeted: three.js or babylon.js). Justify in 1-2 sentences. Define:
+            - File layout (single HTML vs modules).
+            - Scene / screen list.
+            - Asset loader strategy: map each referenced asset_id to a concrete load call.
+            - Input model (keyboard, mouse, gamepad).
+            - Game loop shape (fixed timestep? rAF? how pause/resume works).
+            - Test hook convention: expose `window.__game` with { player, enemies, projectiles,
+              state } so the QA step can assert state.
+          Keep it to ≤ 1 page. Save to memory as artifact key 'tech_plan_v1'.
+        output: tech_plan
+
+      - id: gate-tech
+        type: human-gate
+        depends_on: [tech-plan]
+        review_of: tech-plan
+        task: "Review the tech plan. Approve the stack + structure, or request changes."
 
       - id: build
         agent: frontend-developer
-        depends_on: [gate-laf]
-        task: "Build a playable web prototype from the approved plan (memory keys: concept_options_v1, mechanics_v1, laf_brief_v1). Prefer a single HTML file using the project's tech_stack. Save the final HTML to memory as artifact key 'game_html_v1'."
+        depends_on: [gate-tech]
+        task: |
+          Build a playable web prototype from the approved plan. Read these memory keys verbatim
+          BEFORE writing any code: concept_options_v1, mechanics_v1, style_research_v1,
+          laf_brief_v1, tech_plan_v1.
+
+          Engine choice: follow tech_plan_v1 exactly. If the plan picked three.js / babylon.js,
+          deliver a 3D scene — a 2D canvas on a 3D brief is a build failure.
+          File layout: follow tech_plan_v1 exactly (usually a single self-contained HTML file
+          with an importmap for three.js).
+          Test hook: expose window.__game = { player, enemies, projectiles, state } — the QA
+          step depends on this.
+          Do not sanitize the brief's character design. The joke / subject matter IS the
+          look-and-feel.
+
+          Save the final HTML to memory as artifact key 'game_html_v1'.
         output: code
+
+      - id: qa-playtest
+        agent: qa-engineer
+        depends_on: [build]
+        task: |
+          Read game_html_v1 + mechanics_v1 from memory. Launch the HTML in a headless browser
+          via the playwright_browser tool. Verify:
+            1. Page loads with no console errors in the first 3 seconds.
+            2. window.__game exists and exposes { player, enemies, projectiles, state }.
+            3. For each player verb in mechanics_v1 (move, shoot, dash, …): drive the input
+               and assert observable state change (e.g. player.x changed after WASD;
+               projectiles.length > 0 after click). One check per verb.
+            4. If style_research_v1 calls for 3D, assert the scene is WebGL-driven
+               (getContext('webgl') must return non-null).
+            5. Screenshot title, post-first-move, mid-combat — save paths under
+               assets/qa/ and reference them in the report.
+          Save a structured report to memory as 'qa_report_v1':
+            { verdict: pass|fail, checks: [{name, pass, evidence_path, note}], console_errors: […] }.
+        output: qa_report
+
+      - id: gate-qa
+        type: human-gate
+        depends_on: [qa-playtest]
+        review_of: qa-playtest
+        task: |
+          Review the QA report + screenshots and actually play the game (primary button on
+          the gate). Approve to ship, or request changes to kick the build step back with
+          your feedback.
 
       - id: review
         agent: code-reviewer
-        depends_on: [build]
-        task: "Review the prototype (memory key: game_html_v1) for bugs, performance, security. Short report only."
+        depends_on: [gate-qa]
+        task: "Lint report only — review the prototype (memory key: game_html_v1) for bugs, performance, security. QA already validated gameplay; this is for code-quality concerns only."
+        output: review
+
+  phased-producer-race:
+    name: "Phased Producer (A/B build race)"
+    description: "Same as phased-producer but fans out the build step to two parallel agents on different models with a pick gate."
+    steps:
+      - id: concept
+        agent: game-designer
+        task: "Draft 3 distinct concept directions for: {input}. For each: one-line pitch, core loop (2-3 sentences), target feel. Save to memory as artifact key 'concept_options_v1'."
+        output: concepts
+
+      - id: gate-concept
+        type: human-gate
+        depends_on: [concept]
+        review_of: concept
+        task: "Review the 3 concept directions. Pick one, request changes, or regenerate."
+
+      - id: mechanics
+        agent: game-designer
+        depends_on: [gate-concept]
+        task: "Expand the approved concept into a mechanics doc. Save as 'mechanics_v1'."
+        output: mechanics
+
+      - id: gate-mechanics
+        type: human-gate
+        depends_on: [mechanics]
+        review_of: mechanics
+        task: "Review the mechanics doc."
+
+      - id: style-research
+        agent: style-researcher
+        depends_on: [gate-mechanics]
+        task: "Roblox-style research, save as 'style_research_v1'."
+        output: style_research
+
+      - id: look-and-feel
+        agent: technical-artist
+        depends_on: [style-research]
+        task: "Read style_research_v1 first; produce 'laf_brief_v1' matching it."
+        output: look_and_feel
+
+      - id: gate-laf
+        type: human-gate
+        depends_on: [look-and-feel]
+        review_of: look-and-feel
+        task: "Review the look-and-feel brief."
+
+      - id: tech-plan
+        agent: tech-lead
+        depends_on: [gate-laf]
+        task: "Engine + layout + asset loader + input model + loop shape. Save as 'tech_plan_v1'."
+        output: tech_plan
+
+      - id: gate-tech
+        type: human-gate
+        depends_on: [tech-plan]
+        review_of: tech-plan
+        task: "Review the tech plan."
+
+      # Two builders run in parallel on different models, each writing to a
+      # namespaced artifact key so they don't clobber one another.
+      - id: build-a
+        agent: frontend-developer
+        depends_on: [gate-tech]
+        model_override: "openai/gpt-5-2025-08-07"
+        task: |
+          Build the game per tech_plan_v1. Save HTML to memory artifact 'game_html_v1@a'.
+          Expose window.__game = { player, enemies, projectiles, state }.
+        output: code_a
+
+      - id: build-b
+        agent: frontend-developer
+        depends_on: [gate-tech]
+        model_override: "anthropic/anthropic.claude-opus-4-7"
+        task: |
+          Build the game per tech_plan_v1. Save HTML to memory artifact 'game_html_v1@b'.
+          Expose window.__game = { player, enemies, projectiles, state }.
+        output: code_b
+
+      - id: gate-build-pick
+        type: human-gate
+        depends_on: [build-a, build-b]
+        review_of: build-a
+        task: "Play both candidate builds side-by-side. Pick A or B — the winning artifact will be promoted to 'game_html_v1' for downstream QA."
+
+      - id: qa-playtest
+        agent: qa-engineer
+        depends_on: [gate-build-pick]
+        task: "Playtest game_html_v1 against mechanics_v1. Save 'qa_report_v1'."
+        output: qa_report
+
+      - id: gate-qa
+        type: human-gate
+        depends_on: [qa-playtest]
+        review_of: qa-playtest
+        task: "Review QA evidence + play the game. Approve or request changes."
+
+      - id: review
+        agent: code-reviewer
+        depends_on: [gate-qa]
+        task: "Lint report on game_html_v1 (code quality/security only)."
         output: review
 
   new-game:

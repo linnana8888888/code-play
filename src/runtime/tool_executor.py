@@ -556,6 +556,33 @@ class ToolExecutor:
             },
         })
 
+        # playwright_browser — headless browser driver for QA playtests
+        self._register("playwright_browser", self._tool_playwright_browser, {
+            "name": "playwright_browser",
+            "description": (
+                "Drive a headless Chromium session against a URL or project-relative HTML. "
+                "Actions: open (returns {title, has_canvas, has_webgl, has_game_hook}), key "
+                "(Playwright key e.g. 'KeyW', 'Space'), key_sequence (hold multiple keys for "
+                "hold_ms), click ({x,y}), evaluate ({expr} → returns value), screenshot "
+                "({path, full}), wait ({ms}). Use for QA: launch game_html_v1, assert "
+                "window.__game exists, drive each verb in mechanics_v1, screenshot milestones."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "url": {"type": "string", "description": "URL or project-relative HTML path"},
+                    "action": {
+                        "type": "string",
+                        "enum": ["open", "key", "key_sequence", "click", "evaluate", "screenshot", "wait"],
+                        "default": "open",
+                    },
+                    "payload": {"type": "object", "description": "Action-specific payload"},
+                    "timeout_ms": {"type": "integer", "default": 8000},
+                },
+                "required": ["action"],
+            },
+        })
+
         # asset_fetch — download an asset's preview or zip into the workspace
         self._register("asset_fetch", self._tool_asset_fetch, {
             "name": "asset_fetch",
@@ -947,7 +974,7 @@ class ToolExecutor:
 
         asset_id = (args.get("asset_id") or "").strip()
         if ":" not in asset_id:
-            raise ValueError("asset_id must be 'kenney:<slug>' or 'itch:<id>'")
+            return json.dumps({"status": "error", "error": "asset_id must be 'kenney:<slug>' or 'itch:<id>'"})
         pool, ident = asset_id.split(":", 1)
         kind = args.get("kind", "preview")
         dest_rel = (args.get("dest") or "assets/").rstrip("/") + "/"
@@ -955,39 +982,196 @@ class ToolExecutor:
         # Compose a filename based on asset id + kind.
         safe_ident = re.sub(r"[^A-Za-z0-9_.-]", "_", ident)
 
-        async with httpx.AsyncClient(follow_redirects=True, timeout=60.0) as client:
-            if pool == "kenney" and kind == "zip":
-                zip_url = await resolve_kenney_zip(ident, client=client)
-                if not zip_url:
-                    return f"No zip download found for kenney:{ident}"
-                dest = self._safe_path(f"{dest_rel}{safe_ident}.zip", ctx.get("project_id"), ctx.get("agent_instance_id"))
-                await download(zip_url, dest, client=client)
-                rel = Path(dest_rel) / f"{safe_ident}.zip"
-                return f"Downloaded {zip_url} -> {rel}"
+        try:
+            async with httpx.AsyncClient(follow_redirects=True, timeout=60.0) as client:
+                if pool == "kenney" and kind == "zip":
+                    zip_url = await resolve_kenney_zip(ident, client=client)
+                    if not zip_url:
+                        return json.dumps({
+                            "status": "error", "asset_id": asset_id, "kind": kind,
+                            "error": f"No zip download found for kenney:{ident}",
+                        })
+                    dest = self._safe_path(f"{dest_rel}{safe_ident}.zip", ctx.get("project_id"), ctx.get("agent_instance_id"))
+                    await download(zip_url, dest, client=client)
+                    return json.dumps({
+                        "status": "ok", "asset_id": asset_id, "kind": kind,
+                        "path": str(Path(dest_rel) / f"{safe_ident}.zip"),
+                        "source_url": zip_url,
+                    })
 
-            # Preview path: we need the preview URL. We don't keep a search cache,
-            # so fetch the pack/page HTML and grab the primary image.
-            if pool == "kenney":
-                html = (await client.get(f"https://kenney.nl/assets/{ident}", headers={"User-Agent": "code-play-agent/1.0"})).text
-                m = re.search(r'<meta[^>]+property="og:image"[^>]+content="([^"]+)"', html)
-                preview_url = m.group(1) if m else None
-            elif pool == "itch":
-                # itch project id alone isn't browseable; search again to recover the preview.
-                from src.runtime.asset_sources import search_itch
-                results = await search_itch(ident, limit=8, client=client)
-                match = next((r for r in results if r.asset_id == asset_id), None)
-                preview_url = match.preview_url if match else None
-            else:
-                raise ValueError(f"unknown pool: {pool}")
+                if pool == "kenney":
+                    resp = await client.get(
+                        f"https://kenney.nl/assets/{ident}",
+                        headers={"User-Agent": "code-play-agent/1.0"},
+                    )
+                    m = re.search(r'<meta[^>]+property="og:image"[^>]+content="([^"]+)"', resp.text)
+                    preview_url = m.group(1) if m else None
+                elif pool == "itch":
+                    from src.runtime.asset_sources import search_itch
+                    results = await search_itch(ident, limit=8, client=client)
+                    match = next((r for r in results if r.asset_id == asset_id), None)
+                    preview_url = match.preview_url if match else None
+                else:
+                    return json.dumps({"status": "error", "asset_id": asset_id, "error": f"unknown pool: {pool}"})
 
-            if not preview_url:
-                return f"No preview URL resolved for {asset_id}"
+                if not preview_url:
+                    return json.dumps({
+                        "status": "error", "asset_id": asset_id, "kind": kind,
+                        "error": f"No preview URL resolved for {asset_id}",
+                    })
 
-            suffix = Path(preview_url.split("?", 1)[0]).suffix or ".png"
-            dest = self._safe_path(f"{dest_rel}{safe_ident}{suffix}", ctx.get("project_id"), ctx.get("agent_instance_id"))
-            await download(preview_url, dest, client=client)
-            rel = Path(dest_rel) / f"{safe_ident}{suffix}"
-            return f"Downloaded {preview_url} -> {rel}"
+                suffix = Path(preview_url.split("?", 1)[0]).suffix or ".png"
+                dest = self._safe_path(f"{dest_rel}{safe_ident}{suffix}", ctx.get("project_id"), ctx.get("agent_instance_id"))
+                await download(preview_url, dest, client=client)
+                return json.dumps({
+                    "status": "ok", "asset_id": asset_id, "kind": kind,
+                    "path": str(Path(dest_rel) / f"{safe_ident}{suffix}"),
+                    "source_url": preview_url,
+                })
+        except Exception as e:
+            return json.dumps({
+                "status": "error", "asset_id": asset_id, "kind": kind,
+                "error": f"{type(e).__name__}: {e}",
+            })
+
+    async def _tool_playwright_browser(self, args: dict, **ctx) -> str:
+        """Headless browser driver — small action set tuned for QA playtests.
+
+        Actions:
+          - open: load a URL (or file://.../path from the project), returns title + body excerpt.
+          - key: dispatch keyboard events (e.g. 'KeyW', 'Space').
+          - click: click at {x, y} (viewport px).
+          - evaluate: run a JS expression and return its JSON-serialized result.
+          - screenshot: save PNG to a project-relative path, returns that path.
+          - close: release the shared context.
+
+        The agent is expected to drive a sequence:
+          open → evaluate(window.__game) → key('KeyW') → evaluate(player.x) → …
+
+        Implementation uses the playwright node module already installed for the
+        digest skill, invoked as a long-lived subprocess over a line-delimited
+        JSON protocol. Each tool call is one script invocation (simpler + more
+        robust than holding a persistent subprocess across awaits).
+        """
+        import json as _json
+        import shlex
+        url = (args.get("url") or "").strip()
+        action = (args.get("action") or "open").strip()
+        payload = args.get("payload") or {}
+        timeout_ms = int(args.get("timeout_ms", 8000))
+
+        script = r"""
+const { chromium } = require('playwright');
+(async () => {
+  const input = JSON.parse(process.argv[2]);
+  const browser = await chromium.launch({ headless: true });
+  const ctx = await browser.newContext({ viewport: { width: 1024, height: 720 } });
+  const page = await ctx.newPage();
+  const consoleErrors = [];
+  page.on('pageerror', e => consoleErrors.push(String(e)));
+  page.on('console', m => { if (m.type() === 'error') consoleErrors.push(m.text()); });
+  const out = { ok: true, action: input.action, console_errors: [] };
+  try {
+    if (input.url) await page.goto(input.url, { waitUntil: 'load', timeout: input.timeout_ms });
+    if (input.action === 'open') {
+      await page.waitForTimeout(500);
+      out.title = await page.title();
+      out.has_canvas = await page.evaluate(() => !!document.querySelector('canvas'));
+      out.has_webgl = await page.evaluate(() => {
+        const c = document.querySelector('canvas');
+        if (!c) return false;
+        return !!(c.getContext('webgl') || c.getContext('webgl2'));
+      });
+      out.has_game_hook = await page.evaluate(() => !!window.__game);
+    } else if (input.action === 'evaluate') {
+      out.value = await page.evaluate(input.payload.expr);
+    } else if (input.action === 'key') {
+      await page.keyboard.press(input.payload.key, { delay: 16 });
+      if (input.payload.hold_ms) await page.waitForTimeout(input.payload.hold_ms);
+    } else if (input.action === 'key_sequence') {
+      for (const k of input.payload.keys || []) {
+        await page.keyboard.down(k);
+      }
+      await page.waitForTimeout(input.payload.hold_ms || 200);
+      for (const k of (input.payload.keys || []).slice().reverse()) {
+        await page.keyboard.up(k);
+      }
+    } else if (input.action === 'click') {
+      await page.mouse.click(input.payload.x || 512, input.payload.y || 360);
+    } else if (input.action === 'screenshot') {
+      await page.screenshot({ path: input.payload.path, fullPage: !!input.payload.full });
+      out.path = input.payload.path;
+    } else if (input.action === 'wait') {
+      await page.waitForTimeout(input.payload.ms || 500);
+    } else {
+      out.ok = false; out.error = 'unknown action';
+    }
+    out.console_errors = consoleErrors.slice(0, 20);
+  } catch (e) {
+    out.ok = false; out.error = String(e && e.message || e);
+    out.console_errors = consoleErrors.slice(0, 20);
+  } finally {
+    await browser.close();
+  }
+  process.stdout.write(JSON.stringify(out));
+})();
+"""
+        # Resolve playwright install (shared with digest skill).
+        pw_paths = [
+            "/Users/dknanlin/.claude/skills/digest/node_modules",
+            "/Users/dknanlin/.claude/skills/email-digest/node_modules",
+        ]
+        node_path = ":".join(p for p in pw_paths if Path(p).is_dir())
+        if not node_path:
+            return json.dumps({"ok": False, "error": "playwright module not found locally"})
+
+        # If an asset relative path was passed as url, resolve it to file://.
+        base = self._project_dir(ctx.get("project_id"), ctx.get("agent_instance_id"))
+        if url and not url.startswith(("http://", "https://", "file://")):
+            local = (base / url).resolve()
+            if str(local).startswith(str(base.resolve())) and local.exists():
+                url = f"file://{local}"
+
+        # screenshot path → resolve under project
+        if action == "screenshot":
+            rel = payload.get("path") or f"assets/qa/shot-{int(asyncio.get_event_loop().time()*1000)}.png"
+            abs_path = self._safe_path(rel, ctx.get("project_id"), ctx.get("agent_instance_id"))
+            abs_path.parent.mkdir(parents=True, exist_ok=True)
+            payload = {**payload, "path": str(abs_path)}
+
+        driver_input = _json.dumps({
+            "url": url or None,
+            "action": action,
+            "payload": payload,
+            "timeout_ms": timeout_ms,
+        })
+
+        cmd = f"NODE_PATH={shlex.quote(node_path)} node -e {shlex.quote(script)} {shlex.quote(driver_input)}"
+        proc = await asyncio.create_subprocess_shell(
+            cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        try:
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout_ms / 1000.0 + 30)
+        except asyncio.TimeoutError:
+            proc.kill()
+            return json.dumps({"ok": False, "error": f"playwright timeout after {timeout_ms}ms"})
+        out = stdout.decode(errors="replace").strip()
+        err = stderr.decode(errors="replace").strip()
+        if not out:
+            return json.dumps({"ok": False, "error": err or "no output from playwright driver"})
+        # Convert absolute screenshot path back to project-relative for downstream agents.
+        try:
+            parsed = _json.loads(out)
+            if parsed.get("path"):
+                try:
+                    parsed["path"] = str(Path(parsed["path"]).relative_to(base.resolve()))
+                except ValueError:
+                    pass
+            return _json.dumps(parsed)
+        except Exception:
+            return out
 
     async def _tool_web_fetch(self, args: dict, **ctx) -> str:
         import httpx

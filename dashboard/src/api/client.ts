@@ -130,3 +130,10 @@ export const getMemory = (projectId: string, memType: string, key: string) =>
   req<{ content: string }>(`/projects/${projectId}/memory${qs({ mem_type: memType, key })}`);
 export const searchMemory = (projectId: string, query: string) =>
   req<Record<string, unknown>[]>(`/projects/${projectId}/memory/search${qs({ query })}`);
+
+/* ── Game preview + asset previews ── */
+export const gamePreviewUrl = (projectId: string, key = "game_html_v1") =>
+  `${BASE}/projects/${projectId}/game/preview?key=${encodeURIComponent(key)}`;
+export type AssetPreview = { path: string; url: string; bytes: number };
+export const getAssetPreviews = (projectId: string) =>
+  req<AssetPreview[]>(`/projects/${projectId}/assets/previews`);

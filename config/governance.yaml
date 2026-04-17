@@ -43,6 +43,8 @@ builtin:
   # Shared asset pools — kenney.nl (CC0) + itch.io (game-assets)
   - asset_search
   - asset_fetch
+  # Headless browser for QA playtests
+  - playwright_browser
 
 pre_approved:
   # User's existing Claude Code skills/plugins — allowed without prompt.

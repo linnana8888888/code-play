@@ -46,6 +46,20 @@ export interface TaskCreate {
   model_override?: string;
 }
 
+export interface HumanGate {
+  task_id: string;
+  title: string;
+  ready: boolean;
+  created_at: string | null;
+  pipeline: string;
+  pipeline_label: string;
+  step_id: string;
+  review_of: string | null;
+  review_of_agent: string | null;
+  prompt: string;
+  preceding_result: Record<string, unknown> | null;
+}
+
 export interface ModelOption {
   id: string;
   label: string;

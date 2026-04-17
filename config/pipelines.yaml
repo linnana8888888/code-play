@@ -2,6 +2,57 @@
 # Declarative agent chains for game production workflows
 
 pipelines:
+  phased-producer:
+    name: "Phased Producer (human-gated)"
+    description: "Concept → mechanics → look-and-feel → build, with a human review gate between each phase"
+    steps:
+      - id: concept
+        agent: game-designer
+        task: "Draft 3 distinct concept directions for: {input}. For each: one-line pitch, core loop (2-3 sentences), target feel. Save to memory as artifact key 'concept_options_v1'."
+        output: concepts
+
+      - id: gate-concept
+        type: human-gate
+        depends_on: [concept]
+        review_of: concept
+        task: "Review the 3 concept directions. Pick one, request changes, or regenerate."
+
+      - id: mechanics
+        agent: game-designer
+        depends_on: [gate-concept]
+        task: "Expand the approved concept (memory key: concept_options_v1, see review notes for chosen direction) into a mechanics doc: player verbs, progression, win/lose conditions, 2-3 signature systems. Save to memory as artifact key 'mechanics_v1'."
+        output: mechanics
+
+      - id: gate-mechanics
+        type: human-gate
+        depends_on: [mechanics]
+        review_of: mechanics
+        task: "Review the mechanics doc. Approve, or request changes with specific feedback."
+
+      - id: look-and-feel
+        agent: technical-artist
+        depends_on: [gate-mechanics]
+        task: "Based on the approved concept + mechanics (memory keys: concept_options_v1, mechanics_v1), draft a look-and-feel brief: palette (3-5 hex codes), art style (reference points), UI/typography direction, audio tone. Save to memory as artifact key 'laf_brief_v1'."
+        output: look_and_feel
+
+      - id: gate-laf
+        type: human-gate
+        depends_on: [look-and-feel]
+        review_of: look-and-feel
+        task: "Review the look-and-feel brief. Approve, or request changes."
+
+      - id: build
+        agent: frontend-developer
+        depends_on: [gate-laf]
+        task: "Build a playable web prototype from the approved plan (memory keys: concept_options_v1, mechanics_v1, laf_brief_v1). Prefer a single HTML file using the project's tech_stack. Save the final HTML to memory as artifact key 'game_html_v1'."
+        output: code
+
+      - id: review
+        agent: code-reviewer
+        depends_on: [build]
+        task: "Review the prototype (memory key: game_html_v1) for bugs, performance, security. Short report only."
+        output: review
+
   new-game:
     name: "New Game Production"
     description: "Full pipeline from concept to deployed prototype"

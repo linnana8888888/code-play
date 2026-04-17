@@ -874,6 +874,150 @@ async def run_pipeline(pipeline_name: str, body: PipelineRunBody):
     }
 
 
+# ==================== Human gates ====================
+
+def _gate_context(task) -> dict:
+    """Look up the pipeline spec for a gate task and pull in the preceding step's result."""
+    created_by = task.created_by or ""
+    if not created_by.startswith("pipeline:"):
+        return {}
+    pipeline_name = created_by.split(":", 1)[1]
+    pipeline = _load_pipelines_yaml().get("pipelines", {}).get(pipeline_name)
+    if not pipeline:
+        return {}
+    step_id = task.title.replace(f"[{pipeline_name}] ", "").strip()
+    step = next((s for s in pipeline.get("steps", []) if s.get("id") == step_id), None)
+    if not step or step.get("type") != "human-gate":
+        return {}
+
+    review_of = step.get("review_of")
+    preceding_result = None
+    preceding_agent = None
+    if review_of:
+        # Find the most recent sibling task for the review_of step in the same pipeline run
+        siblings = task_queue.list_tasks(project_id=task.project_id)
+        target_title = f"[{pipeline_name}] {review_of}"
+        candidates = [t for t in siblings if t.title == target_title]
+        if candidates:
+            # Pick the latest one (iteration revisions get newer timestamps)
+            candidates.sort(key=lambda t: t.updated_at or t.created_at or "", reverse=True)
+            top = candidates[0]
+            preceding_result = top.result
+            review_step = next((s for s in pipeline.get("steps", []) if s.get("id") == review_of), None)
+            if review_step:
+                preceding_agent = review_step.get("agent")
+    return {
+        "pipeline": pipeline_name,
+        "pipeline_label": pipeline.get("name", pipeline_name),
+        "step_id": step_id,
+        "review_of": review_of,
+        "review_of_agent": preceding_agent,
+        "prompt": step.get("task", ""),
+        "preceding_result": preceding_result,
+    }
+
+
+@app.get("/api/projects/{project_id}/gates")
+async def list_project_gates(project_id: str):
+    """List pending human-gate tasks for a project, with the artifacts they're meant to review."""
+    tasks = task_queue.list_tasks(project_id=project_id)
+    pending_gates = []
+    for t in tasks:
+        if t.status != TaskStatus.PENDING:
+            continue
+        ctx = _gate_context(t)
+        if not ctx:
+            continue
+        # Only surface once dependencies have actually resolved — otherwise the
+        # gate is upstream of in-flight work and has nothing to show yet.
+        ready = not t.depends_on or all(
+            (dep := task_queue.get(dep_id)) and dep.status == TaskStatus.COMPLETED
+            for dep_id in t.depends_on
+        )
+        pending_gates.append({
+            "task_id": t.id,
+            "title": t.title,
+            "ready": ready,
+            "created_at": t.created_at.isoformat() if t.created_at else None,
+            **ctx,
+        })
+    return pending_gates
+
+
+class GateDecisionBody(BaseModel):
+    feedback: str = ""
+
+
+@app.post("/api/gates/{task_id}/approve")
+async def approve_gate(task_id: str, body: GateDecisionBody | None = None):
+    task = task_queue.get(task_id)
+    if not task:
+        raise HTTPException(404, "Gate task not found")
+    ctx = _gate_context(task)
+    if not ctx:
+        raise HTTPException(400, "Task is not a human gate")
+    feedback = (body.feedback if body else "") or "approved"
+    task_queue.update_status(task.id, TaskStatus.COMPLETED, result={"decision": "approved", "feedback": feedback})
+    await ws_manager.broadcast({"type": "gate_approved", "data": {"task_id": task.id}})
+    await _advance_pipeline(task.project_id)
+    return {"status": "approved", "task_id": task.id}
+
+
+@app.post("/api/gates/{task_id}/revise")
+async def revise_gate(task_id: str, body: GateDecisionBody):
+    """Request changes on the preceding step: spawn a revision task, leave the gate pending."""
+    task = task_queue.get(task_id)
+    if not task:
+        raise HTTPException(404, "Gate task not found")
+    ctx = _gate_context(task)
+    if not ctx:
+        raise HTTPException(400, "Task is not a human gate")
+    feedback = (body.feedback or "").strip()
+    if not feedback:
+        raise HTTPException(400, "Feedback required to request changes")
+
+    agent_type = ctx.get("review_of_agent")
+    if not agent_type:
+        raise HTTPException(400, "Gate has no preceding agent step to revise")
+
+    revise_desc = (
+        f"Revise the previous {ctx.get('review_of')} output based on human feedback:\n\n"
+        f"{feedback}\n\n"
+        "Update the same memory artifact keys the original step wrote to."
+    )
+    revision = task_queue.create(TaskCreate(
+        project_id=task.project_id,
+        title=f"[{ctx['pipeline']}] {ctx['review_of']}-revision",
+        description=revise_desc,
+        assignee_type=agent_type,
+        created_by=f"pipeline:{ctx['pipeline']}",
+        model_override=task.model_override,
+    ))
+    # Make the gate wait on the new revision instead of the original step so it re-opens once revised.
+    import json as _json
+    from src.database import get_studio_db as _db
+    new_deps = list(task.depends_on) + [revision.id]
+    with _db() as db:
+        db.execute("UPDATE tasks SET depends_on=?, result=? WHERE id=?",
+                   (_json.dumps(new_deps), _json.dumps({"decision": "changes_requested", "feedback": feedback, "revision_task_id": revision.id}), task.id))
+
+    # Kick the revision task running
+    try:
+        instance = registry.spawn(
+            agent_type=agent_type,
+            project_id=task.project_id,
+            task_id=revision.id,
+            model_override=revision.model_override,
+        )
+        task_queue.checkout(revision.id, instance.id)
+        asyncio.create_task(_run_agent_task(instance, revise_desc))
+    except ValueError as exc:
+        logger.warning(f"Failed to spawn revision for gate {task.id}: {exc}")
+
+    await ws_manager.broadcast({"type": "gate_revision", "data": {"task_id": task.id, "revision_task_id": revision.id}})
+    return {"status": "revision_requested", "task_id": task.id, "revision_task_id": revision.id}
+
+
 # ==================== Health ====================
 
 @app.get("/api/health")

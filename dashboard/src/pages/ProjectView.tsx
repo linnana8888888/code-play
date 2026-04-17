@@ -7,9 +7,10 @@ import TaskBoard from "../components/tasks/TaskBoard";
 import CreateTaskModal from "../components/tasks/CreateTaskModal";
 import InstanceList from "../components/agents/InstanceList";
 import ChannelView from "../components/channels/ChannelView";
+import GatesPanel from "../components/gates/GatesPanel";
 import type { Project } from "../types/api";
 
-type Section = "tasks" | "agents" | "channels";
+type Section = "tasks" | "plan" | "agents" | "channels";
 
 export default function ProjectView() {
   const { id } = useParams<{ id: string }>();
@@ -51,7 +52,7 @@ export default function ProjectView() {
 
       {/* Section tabs */}
       <div className="flex gap-1 border-b border-border pb-px">
-        {(["tasks", "agents", "channels"] as Section[]).map((s) => (
+        {(["tasks", "plan", "agents", "channels"] as Section[]).map((s) => (
           <button
             key={s}
             onClick={() => setSection(s)}
@@ -77,6 +78,8 @@ export default function ProjectView() {
           />
         </>
       )}
+
+      {section === "plan" && <GatesPanel projectId={id} />}
 
       {section === "agents" && (
         <InstanceList instances={projectInstances} onTerminate={terminate} />

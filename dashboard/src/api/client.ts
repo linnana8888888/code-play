@@ -16,6 +16,7 @@ import type {
   Stats,
   PipelineDef,
   ModelOption,
+  HumanGate,
 } from "../types/api";
 
 const BASE = "/api";
@@ -56,6 +57,20 @@ export const patchTask = (id: string, patch: { model_override?: string | null })
 
 /* ── Models ── */
 export const getAvailableModels = () => req<ModelOption[]>("/models/available");
+
+/* ── Gates (human-in-the-loop) ── */
+export const getGates = (projectId: string) =>
+  req<HumanGate[]>(`/projects/${projectId}/gates`);
+export const approveGate = (taskId: string, feedback = "") =>
+  req<{ status: string; task_id: string }>(`/gates/${taskId}/approve`, {
+    method: "POST",
+    body: JSON.stringify({ feedback }),
+  });
+export const reviseGate = (taskId: string, feedback: string) =>
+  req<{ status: string; task_id: string; revision_task_id: string }>(
+    `/gates/${taskId}/revise`,
+    { method: "POST", body: JSON.stringify({ feedback }) },
+  );
 
 /* ── Agents ── */
 export const getDefinitions = () => req<AgentDefinition[]>("/agents/definitions");

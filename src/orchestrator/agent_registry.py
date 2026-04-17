@@ -17,6 +17,7 @@ class AgentRegistry:
         self._definitions: dict[str, AgentDefinition] = {}
         self._instances: dict[str, AgentInstance] = {}
         self._agent_config: dict = {}
+        self._builtin_tools: list[str] = []
 
     def load_config(self, config_path: str = None):
         """Load agent routing config from agents.yaml."""
@@ -26,6 +27,31 @@ class AgentRegistry:
                 data = yaml.safe_load(f)
             self._agent_config = data.get("agents", {})
             self._defaults = data.get("defaults", {})
+
+        # Preload governance tiers so `tools: [builtin]` can expand to the real list.
+        self._builtin_tools: list[str] = []
+        gov_path = Path(f"{settings.config_dir}/governance.yaml")
+        if gov_path.exists():
+            with open(gov_path) as f:
+                gov = yaml.safe_load(f) or {}
+            self._builtin_tools = list(gov.get("builtin", [])) + list(gov.get("pre_approved", []))
+
+    def _expand_tools(self, tools: list[str]) -> list[str]:
+        """Expand the `builtin` shorthand to the full governance builtin+pre_approved list."""
+        if not tools:
+            return []
+        out: list[str] = []
+        seen: set[str] = set()
+        for t in tools:
+            if t == "builtin":
+                for bt in self._builtin_tools:
+                    if bt not in seen:
+                        out.append(bt)
+                        seen.add(bt)
+            elif t not in seen:
+                out.append(t)
+                seen.add(t)
+        return out
 
     def load_agents(self, agents_dir: str = None):
         """Scan agents/ directory, parse .md files, register definitions."""
@@ -49,7 +75,7 @@ class AgentRegistry:
                 if "fallback_model" in config:
                     defn.fallback_model = config["fallback_model"]
                 if "tools" in config:
-                    defn.tools = config["tools"]
+                    defn.tools = self._expand_tools(config["tools"])
                 if "skills" in config:
                     defn.skills = config["skills"]
                 if "budget_max_tokens" in config:
@@ -87,7 +113,7 @@ class AgentRegistry:
             vibe=frontmatter.get("vibe", ""),
             default_model=frontmatter.get("default_model", defaults.get("model", "")),
             fallback_model=frontmatter.get("fallback_model", defaults.get("fallback_model", "")),
-            tools=frontmatter.get("tools", []),
+            tools=self._expand_tools(frontmatter.get("tools", []) or []),
             skills=frontmatter.get("skills", []),
             budget_max_tokens=frontmatter.get("budget_max_tokens", defaults.get("budget_max_tokens", 0)),
             budget_max_usd=frontmatter.get("budget_max_usd", defaults.get("budget_max_usd", 0.0)),

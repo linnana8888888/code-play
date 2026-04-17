@@ -1,14 +1,21 @@
 # Agent Roster Configuration
-# Maps agent IDs to their model routing and tool access
+# Maps agent IDs to their model routing and tool access.
 #
-# Approved model set (LEGO proxy + local, as of 2026-04-17):
+# Approved model set (LEGO proxy + local + OpenRouter stealth, as of 2026-04-17):
 #   - omlx/Qwen3.5-9B-MLX-4bit                                  (local, free)
 #   - anthropic/anthropic.claude-opus-4-7                       (reasoning, $$$)
 #   - anthropic/anthropic.claude-sonnet-4-6                     (balanced)
 #   - anthropic/anthropic.claude-haiku-4-5-20251001-v1:0        (cheap)
 #   - openai/gpt-5-2025-08-07                                   (reasoning, via LEGO)
+#   - openrouter/openrouter/elephant-alpha                      (stealth/cloaked, free tier)
 #
-# OpenRouter retired 2026-04-17 — do NOT add `openrouter/` prefixes.
+# OpenRouter format: first `openrouter/` is our router prefix, second is OR's model namespace.
+# Only use OpenRouter for stealth/experimental models not available via LEGO proxy.
+#
+# Tools:
+#   `tools: [builtin]`               → every builtin + pre_approved tool (parity with Claude Code).
+#   `tools: [builtin, git_push, ..]` → builtins plus one or more restricted extras (still gated).
+#   `tools: [file_read, channel_post, ...]` → explicit subset (no builtin expansion).
 
 defaults:
   model: "omlx/Qwen3.5-9B-MLX-4bit"
@@ -24,77 +31,85 @@ agents:
     model: "openai/gpt-5-2025-08-07"
     fallback_model: "omlx/Qwen3.5-9B-MLX-4bit"
     description: "Systems and mechanics architect (GPT-5 for reasoning)"
-    tools: [file_read, file_write, memory_read, memory_write, channel_post, channel_read, escalate, web_search, task_create]
+    tools: [builtin]
 
   narrative-designer:
     model: "omlx/Qwen3.5-9B-MLX-4bit"
     description: "Story systems and dialogue architect"
-    tools: [file_read, file_write, memory_read, memory_write, channel_post, channel_read, escalate, task_create]
+    tools: [builtin]
 
   level-designer:
     model: "omlx/Qwen3.5-9B-MLX-4bit"
     description: "Spatial storytelling and flow specialist"
-    tools: [file_read, file_write, memory_read, memory_write, channel_post, channel_read, escalate, task_create]
+    tools: [builtin]
 
   game-audio-engineer:
     model: "omlx/Qwen3.5-9B-MLX-4bit"
     description: "Interactive audio specialist"
-    tools: [file_read, file_write, memory_read, memory_write, channel_post, channel_read, task_create]
+    tools: [builtin]
 
   technical-artist:
     model: "openai/gpt-5-2025-08-07"
     fallback_model: "anthropic/anthropic.claude-sonnet-4-6"
     description: "Art-to-engine pipeline specialist (GPT-5 for visual/logic judgment)"
-    tools: [file_read, file_write, bash_execute, memory_read, memory_write, channel_post, channel_read, task_create]
+    tools: [builtin]
 
   # Engineering
   frontend-developer:
     model: "openai/gpt-5-2025-08-07"
     fallback_model: "anthropic/anthropic.claude-sonnet-4-6"
     description: "Three.js/WebGL implementation specialist (GPT-5 primary codegen)"
-    tools: [file_read, file_write, bash_execute, git_status, git_add, git_commit, git_diff, memory_read, memory_write, channel_post, channel_read, escalate, run_tests, task_create]
+    tools: [builtin]
 
   code-reviewer:
     model: "anthropic/anthropic.claude-haiku-4-5-20251001-v1:0"
     fallback_model: "omlx/Qwen3.5-9B-MLX-4bit"
     description: "Code quality and security reviewer"
-    tools: [file_read, git_diff, memory_read, channel_post, channel_read, escalate, task_create]
+    tools: [builtin]
 
   backend-architect:
     model: "omlx/Qwen3.5-9B-MLX-4bit"
     description: "Backend and API design"
-    tools: [file_read, file_write, bash_execute, git_status, git_add, git_commit, memory_read, memory_write, channel_post, channel_read, task_create]
+    tools: [builtin]
 
   devops-automator:
     model: "omlx/Qwen3.5-9B-MLX-4bit"
     description: "CI/CD and deployment specialist"
-    tools: [file_read, file_write, bash_execute, git_status, git_add, git_commit, git_diff, deploy_preview, channel_post, channel_read, task_create]
+    # git_push is restricted — devops can request it and the approval queue gates it.
+    tools: [builtin, git_push]
 
   security-engineer:
     model: "omlx/Qwen3.5-9B-MLX-4bit"
     description: "Application security specialist"
-    tools: [file_read, bash_execute, git_diff, memory_read, channel_post, channel_read, escalate, task_create]
+    tools: [builtin]
 
   # Roblox
   roblox-systems-scripter:
     model: "omlx/Qwen3.5-9B-MLX-4bit"
     description: "Roblox Luau scripting specialist"
-    tools: [file_read, file_write, bash_execute, memory_read, memory_write, channel_post, channel_read, task_create]
+    tools: [builtin]
 
   roblox-experience-designer:
     model: "omlx/Qwen3.5-9B-MLX-4bit"
     description: "Roblox engagement and monetization specialist"
-    tools: [file_read, file_write, memory_read, memory_write, channel_post, channel_read, escalate, task_create]
+    tools: [builtin]
 
   # Testing
   qa-engineer:
     model: "openai/gpt-5-2025-08-07"
     fallback_model: "omlx/Qwen3.5-9B-MLX-4bit"
     description: "QA and testing specialist (GPT-5 reality-check step)"
-    tools: [file_read, file_write, bash_execute, run_tests, memory_read, channel_post, channel_read, escalate, task_create]
+    tools: [builtin]
 
   # Local model agents (when you want to save costs)
   local-assistant:
     model: "omlx/Qwen3.5-9B-MLX-4bit"
     description: "General assistant running on local oMLX"
-    tools: [file_read, file_write, memory_read, memory_write, channel_post, channel_read, task_create]
+    tools: [builtin]
+
+  # Stealth/experimental — OpenRouter cloaked models for benchmarking
+  stealth-experiment:
+    model: "openrouter/openrouter/elephant-alpha"
+    fallback_model: "omlx/Qwen3.5-9B-MLX-4bit"
+    description: "Stealth model (elephant-alpha) for experiments and benchmarking"
+    tools: [builtin]

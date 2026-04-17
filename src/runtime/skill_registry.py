@@ -52,6 +52,29 @@ class SkillRegistry:
             except Exception as e:
                 print(f"Warning: failed to parse skill {md_file}: {e}")
 
+    def load_claude_plugin_skills(self, skills) -> int:
+        """Ingest skills discovered from ~/.claude (user + enabled plugins).
+
+        `skills` is an iterable of src.runtime.claude_bridge.SkillDef. All of these
+        are auto-approved because the user already enabled the host plugin in
+        Claude Code. Returns number of skills added.
+        """
+        added = 0
+        for s in skills:
+            if s.id in self._skills:
+                continue
+            self._skills[s.id] = SkillDefinition(
+                id=s.id,
+                name=s.name,
+                description=s.description,
+                category=s.source,           # "user" or plugin id
+                content=s.body,
+                source_path=s.path,
+            )
+            self._builtin_skills.add(s.id)   # no approval prompt — host already trusted it
+            added += 1
+        return added
+
     def load_governance(self, config_path: str = None):
         """Load builtin_skills list from governance.yaml."""
         path = Path(config_path or f"{settings.config_dir}/governance.yaml")

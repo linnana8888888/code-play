@@ -2,6 +2,7 @@
 __pycache__/
 *.pyc
 .venv/
+.venv.py39-backup/
 venv/
 *.egg-info/
 /dist/

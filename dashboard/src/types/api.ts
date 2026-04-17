@@ -115,6 +115,17 @@ export interface GovernanceLogEntry {
   detail: string;
 }
 
+export interface ToolCatalogEntry {
+  name: string;
+  tier: "builtin" | "pre_approved" | "restricted" | "blocked" | "unconfigured";
+  description: string;
+  has_handler: boolean;
+  parameters: Record<string, unknown>;
+  agents: string[];
+  source?: string;          // "native" | "user" | plugin id (e.g. "figma@claude-plugins-official")
+  mcp_server?: string;      // set only for MCP-bridged tools
+}
+
 export interface Pipeline {
   name: string;
   description: string;

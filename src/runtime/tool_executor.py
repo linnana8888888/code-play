@@ -18,6 +18,7 @@ from src.settings import settings
 class ToolExecutor:
     def __init__(self):
         self._governance: dict[str, ToolPermission] = {}
+        self._pre_approved_prefixes: list[str] = []  # e.g. "mcp__" -> auto-approved
         self._tool_registry: dict[str, callable] = {}
         self._tool_schemas: dict[str, dict] = {}
         self._pending_approvals: dict[str, asyncio.Event] = {}
@@ -42,6 +43,9 @@ class ToolExecutor:
         for tool_name in data.get("blocked", []):
             self._governance[tool_name] = ToolPermission.BLOCKED
 
+        # Prefix-based auto-approval (Claude Code plugin surface)
+        self._pre_approved_prefixes = list(data.get("claude_plugins_prefixes", []))
+
     # --- Governance ---
 
     def check_permission(
@@ -49,6 +53,14 @@ class ToolExecutor:
     ) -> GovernanceDecision:
         """Check if a tool call is allowed, needs approval, or is blocked."""
         tier = self._governance.get(tool_name)
+
+        if tier is None:
+            # Prefix-based auto-approval (e.g. mcp__*) — user already enabled
+            # these plugins in Claude Code so we don't prompt again.
+            for prefix in self._pre_approved_prefixes:
+                if tool_name.startswith(prefix):
+                    tier = ToolPermission.PRE_APPROVED
+                    break
 
         if tier is None:
             # Unknown tool — treat as restricted
@@ -147,6 +159,16 @@ class ToolExecutor:
                     is_error=True,
                 )
 
+        # MCP bridge handles tools named mcp__<server>__<tool>.
+        if tool_name.startswith("mcp__"):
+            from src.runtime.mcp_bridge import mcp_bridge
+            try:
+                content = await mcp_bridge.call_tool(tool_name, arguments)
+            except Exception as e:
+                return ToolResult(tool_call_id="", content=f"MCP error: {e}", is_error=True)
+            is_err = content.startswith("ERROR:") or content.startswith("MCP call error")
+            return ToolResult(tool_call_id="", content=content, is_error=is_err)
+
         # Execute the tool
         handler = self._tool_registry.get(tool_name)
         if not handler:
@@ -169,6 +191,38 @@ class ToolExecutor:
         if tool_names:
             return [self._tool_schemas[n] for n in tool_names if n in self._tool_schemas]
         return list(self._tool_schemas.values())
+
+    def list_tool_catalog(self) -> list[dict]:
+        """All known tools with their governance tier and schema, for the dashboard.
+
+        Includes native Code PLAY tools plus MCP tools discovered from Claude Code
+        plugins (via mcp_bridge). MCP tools get the pre_approved tier because the
+        user explicitly enabled them in Claude Code.
+        """
+        tiers = set(self._governance.keys()) | set(self._tool_schemas.keys())
+        catalog = []
+        for name in sorted(tiers):
+            tier = self._governance.get(name)
+            schema = self._tool_schemas.get(name, {})
+            catalog.append({
+                "name": name,
+                "tier": tier.value if tier else "unconfigured",
+                "description": schema.get("description", ""),
+                "has_handler": name in self._tool_registry,
+                "parameters": schema.get("parameters", {}),
+                "source": "native",
+            })
+        # MCP tools (discovered from Claude Code plugins)
+        try:
+            from src.runtime.mcp_bridge import mcp_bridge
+            for entry in mcp_bridge.catalog_entries():
+                # claude_plugins renders as 'pre_approved' in the UI tier logic;
+                # keep the distinct tag too so the dashboard can group by origin.
+                entry = {**entry, "tier": "pre_approved"}
+                catalog.append(entry)
+        except Exception:
+            pass
+        return catalog
 
     # --- Builtin Tool Implementations ---
 
@@ -366,6 +420,87 @@ class ToolExecutor:
                     "type": {"type": "string", "description": "Optional filter by memory type"},
                 },
                 "required": ["query"],
+            },
+        })
+
+        # file_edit — exact string replacement in an existing file
+        self._register("file_edit", self._tool_file_edit, {
+            "name": "file_edit",
+            "description": (
+                "Edit a file by replacing an exact string. old_string must appear exactly once "
+                "unless replace_all=true. Use for surgical edits instead of rewriting a file."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "Relative file path to edit"},
+                    "old_string": {"type": "string", "description": "Exact text to find"},
+                    "new_string": {"type": "string", "description": "Replacement text"},
+                    "replace_all": {"type": "boolean", "description": "Replace every occurrence", "default": False},
+                },
+                "required": ["path", "old_string", "new_string"],
+            },
+        })
+
+        # grep — regex search across project files (via ripgrep if available)
+        self._register("grep", self._tool_grep, {
+            "name": "grep",
+            "description": "Search file contents with a regex. Returns matching lines with file:line prefixes.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "pattern": {"type": "string", "description": "Regex pattern"},
+                    "path": {"type": "string", "description": "Subdirectory to search (default: project root)"},
+                    "glob": {"type": "string", "description": "Optional filename filter (e.g. '*.py')"},
+                    "case_insensitive": {"type": "boolean", "default": False},
+                    "max_results": {"type": "integer", "default": 100},
+                },
+                "required": ["pattern"],
+            },
+        })
+
+        # glob — find files by glob pattern
+        self._register("glob", self._tool_glob, {
+            "name": "glob",
+            "description": "Find files matching a glob pattern (e.g. '**/*.ts'). Returns paths sorted by modified time.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "pattern": {"type": "string", "description": "Glob pattern, e.g. '**/*.html'"},
+                    "path": {"type": "string", "description": "Subdirectory (default: project root)"},
+                },
+                "required": ["pattern"],
+            },
+        })
+
+        # web_fetch — download a URL and return text content
+        self._register("web_fetch", self._tool_web_fetch, {
+            "name": "web_fetch",
+            "description": "Fetch a URL and return its body as text. Use for downloading documentation, asset manifests, or small reference pages.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "url": {"type": "string", "description": "Absolute URL (http/https)"},
+                    "max_bytes": {"type": "integer", "description": "Truncate body to this many bytes", "default": 200000},
+                },
+                "required": ["url"],
+            },
+        })
+
+        # skill_invoke — read a Claude Code skill's markdown body
+        self._register("skill_invoke", self._tool_skill_invoke, {
+            "name": "skill_invoke",
+            "description": (
+                "Retrieve a Claude Code skill's full instructions by id (e.g. 'superpowers:brainstorming' "
+                "or 'email-digest'). Returns the skill markdown body. Use before starting a task that "
+                "matches a skill's description."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "skill_id": {"type": "string", "description": "Skill id from the skill catalog"},
+                },
+                "required": ["skill_id"],
             },
         })
 
@@ -641,6 +776,117 @@ class ToolExecutor:
             f"Created task {task.id}: \"{task.title}\" "
             f"(priority={task.priority}, depends_on={task.depends_on or 'none'})."
         )
+
+    async def _tool_skill_invoke(self, args: dict, **ctx) -> str:
+        from src.runtime.skill_registry import skill_registry
+        skill_id = args["skill_id"]
+        skill = skill_registry.get_skill(skill_id)
+        if not skill:
+            near = ", ".join(s.id for s in skill_registry.list_skills()[:10])
+            return f"Skill '{skill_id}' not found. Sample available ids: {near}"
+        header = f"# Skill: {skill.name}\n_{skill.description}_\n\n"
+        return header + (skill.content or "")
+
+    async def _tool_file_edit(self, args: dict, **ctx) -> str:
+        path = self._safe_path(args["path"], ctx.get("project_id"), ctx.get("agent_instance_id"))
+        if not path.exists():
+            raise FileNotFoundError(f"File not found: {args['path']}")
+        content = path.read_text(encoding="utf-8")
+        old = args["old_string"]
+        new = args["new_string"]
+        if old not in content:
+            raise ValueError(f"old_string not found in {args['path']}")
+        if args.get("replace_all"):
+            updated = content.replace(old, new)
+            count = content.count(old)
+        else:
+            count = content.count(old)
+            if count > 1:
+                raise ValueError(
+                    f"old_string appears {count} times in {args['path']} — "
+                    "provide more context or set replace_all=true"
+                )
+            updated = content.replace(old, new, 1)
+        path.write_text(updated, encoding="utf-8")
+        return f"Edited {args['path']} — {count} replacement(s)"
+
+    async def _tool_grep(self, args: dict, **ctx) -> str:
+        import shutil
+        base = self._project_dir(ctx.get("project_id"), ctx.get("agent_instance_id"))
+        subdir = args.get("path") or ""
+        search_root = (base / subdir).resolve()
+        if not str(search_root).startswith(str(base.resolve())):
+            raise PermissionError("path escapes project directory")
+        pattern = args["pattern"]
+        max_results = int(args.get("max_results", 100))
+
+        rg = shutil.which("rg")
+        if rg:
+            cmd = [rg, "--no-heading", "-n", f"-m{max_results}"]
+            if args.get("case_insensitive"):
+                cmd.append("-i")
+            if args.get("glob"):
+                cmd += ["--glob", args["glob"]]
+            cmd += [pattern, str(search_root)]
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, stderr = await proc.communicate()
+            out = stdout.decode(errors="replace").strip()
+            if not out:
+                return "No matches."
+            lines = out.splitlines()[:max_results]
+            # Strip base prefix for readability
+            prefix = str(base.resolve()) + "/"
+            cleaned = [l.removeprefix(prefix) for l in lines]
+            return "\n".join(cleaned)
+
+        # Fallback: pure-Python regex walk
+        flags = re.IGNORECASE if args.get("case_insensitive") else 0
+        rx = re.compile(pattern, flags)
+        glob_pat = args.get("glob")
+        matches: list[str] = []
+        for fp in search_root.rglob(glob_pat or "*"):
+            if not fp.is_file():
+                continue
+            try:
+                for i, line in enumerate(fp.read_text(encoding="utf-8", errors="replace").splitlines(), 1):
+                    if rx.search(line):
+                        rel = fp.relative_to(base)
+                        matches.append(f"{rel}:{i}:{line}")
+                        if len(matches) >= max_results:
+                            return "\n".join(matches)
+            except (OSError, UnicodeDecodeError):
+                continue
+        return "\n".join(matches) if matches else "No matches."
+
+    async def _tool_glob(self, args: dict, **ctx) -> str:
+        base = self._project_dir(ctx.get("project_id"), ctx.get("agent_instance_id"))
+        subdir = args.get("path") or ""
+        search_root = (base / subdir).resolve()
+        if not str(search_root).startswith(str(base.resolve())):
+            raise PermissionError("path escapes project directory")
+        pattern = args["pattern"]
+        hits = [p for p in search_root.glob(pattern) if p.is_file()]
+        hits.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+        rels = [str(p.relative_to(base)) for p in hits[:200]]
+        return "\n".join(rels) if rels else "No files matched."
+
+    async def _tool_web_fetch(self, args: dict, **ctx) -> str:
+        import httpx
+        url = args["url"]
+        if not url.startswith(("http://", "https://")):
+            raise ValueError("url must start with http:// or https://")
+        max_bytes = int(args.get("max_bytes", 200_000))
+        async with httpx.AsyncClient(follow_redirects=True, timeout=30.0) as client:
+            resp = await client.get(url, headers={"User-Agent": "code-play-agent/1.0"})
+        body = resp.text
+        header = f"HTTP {resp.status_code} {url}\n"
+        if len(body) > max_bytes:
+            body = body[:max_bytes] + f"\n... (truncated, total {len(body)} chars)"
+        return header + body
 
     # --- Path safety ---
 

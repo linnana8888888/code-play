@@ -1,33 +1,63 @@
 # Tool Governance Configuration
-# Controls which tools agents can use and which need human approval
+# Controls which tools agents can use and which need human approval.
+#
+# Tiers (enforced by src/runtime/tool_executor.py):
+#   builtin       — always allowed for any agent that lists the tool (or uses `tools: [builtin]`)
+#   pre_approved  — allowed without prompt; dashboard-installed plugins/skills
+#   restricted    — blocks on the approval queue (human must approve via dashboard)
+#   blocked       — always denied
+#
+# In config/agents.yaml, use `tools: [builtin]` to grant an agent every builtin+pre_approved tool,
+# or `tools: [builtin, git_push]` to grant builtins plus a specific restricted extra.
 
 builtin:
-  # Always allowed - core agent capabilities
+  # Core Claude-Code-parity tools — every agent gets these by default.
+  # File & shell
   - file_read
   - file_write
+  - file_edit
   - bash_execute
+  # Search
+  - grep
+  - glob
+  # Git (read/stage/local-commit; push stays restricted)
   - git_status
   - git_add
   - git_commit
   - git_diff
+  # Web
   - web_search
+  - web_fetch
+  # Collaboration
   - channel_post
   - channel_read
   - escalate
+  # Memory
   - memory_read
   - memory_write
   - memory_search
+  # Orchestration
   - task_create
+  # Claude Code skills
+  - skill_invoke
 
 pre_approved:
-  # User's existing Claude Code skills/plugins - always allowed
+  # User's existing Claude Code skills/plugins — allowed without prompt.
   - deploy_preview
   - run_tests
   - project_memory_read
   - project_memory_write
 
+# Claude Code plugin surface — auto-allowed by prefix.
+# Tools with names matching these prefixes bypass the approval queue on the
+# grounds that the user already enabled the host MCP server / skill inside
+# Claude Code. See src/runtime/mcp_bridge.py and src/runtime/skill_registry.py.
+claude_plugins_prefixes:
+  - "mcp__"         # all MCP server tools
+  - "skill_invoke"  # the single skill invoker (exact match)
+
 restricted:
-  # Needs human approval before execution
+  # Needs human approval before execution.
   - npm_install        # installing new packages
   - pip_install        # installing python packages
   - git_push           # pushing to remote
@@ -36,13 +66,13 @@ restricted:
   - create_agent       # spawning new agent types
 
 builtin_skills:
-  # Skills that are auto-approved for all agents
+  # Skills that are auto-approved for all agents.
   - coding-standards
   - git-workflow
   - testing-patterns
 
 blocked:
-  # Always denied
+  # Always denied.
   - rm_rf_outside_project   # never delete outside project dir
   - git_force_push          # never force push
   - drop_database           # never drop databases

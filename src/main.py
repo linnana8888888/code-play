@@ -34,6 +34,8 @@ from src.runtime.tool_executor import tool_executor
 from src.runtime.agent_runtime import agent_runtime
 from src.runtime.session_store import session_store
 from src.runtime.skill_registry import skill_registry
+from src.runtime.claude_bridge import discover as discover_claude_plugins
+from src.runtime.mcp_bridge import mcp_bridge
 from src.communication.message_bus import message_bus
 from src.memory.project_memory import project_memory
 
@@ -103,6 +105,24 @@ async def lifespan(app: FastAPI):
     # Load skills
     skill_registry.load_skills()
     skill_registry.load_governance()
+
+    # Bridge Claude Code plugin surface: MCP servers + plugin/user skills.
+    # Any MCP server or skill the user already enabled in Claude Code becomes
+    # available to Code PLAY agents. Network calls to MCP servers happen
+    # lazily on first use, but we list their tools upfront.
+    try:
+        disc = discover_claude_plugins()
+        mcp_bridge.register_servers(disc.mcp_servers)
+        added_skills = skill_registry.load_claude_plugin_skills(disc.skills)
+        logger.info(
+            "Claude plugin surface: %d enabled plugins, %d MCP servers, +%d skills",
+            len(disc.enabled_plugins), len(disc.mcp_servers), added_skills,
+        )
+        # Discover tools in background so startup stays fast even with 40+ MCPs.
+        asyncio.create_task(mcp_bridge.discover_tools())
+    except Exception as exc:
+        logger.warning("Claude plugin bridge failed: %s", exc)
+
     skill_count = len(skill_registry.list_skills())
     logger.info(f"Loaded {skill_count} skills")
 
@@ -641,6 +661,20 @@ async def governance_log(limit: int = 50):
             "SELECT * FROM governance_log ORDER BY created_at DESC LIMIT ?", (limit,)
         ).fetchall()
     return [dict(r) for r in rows]
+
+
+@app.get("/api/governance/tools")
+async def governance_tools():
+    """Tool catalog: every known tool, its tier, and which agents hold it."""
+    catalog = tool_executor.list_tool_catalog()
+    # Map tool -> [agent_ids] so the UI can show who can invoke each.
+    agents_by_tool: dict[str, list[str]] = {}
+    for defn in registry.list_definitions():
+        for tool in (defn.tools or []):
+            agents_by_tool.setdefault(tool, []).append(defn.id)
+    for entry in catalog:
+        entry["agents"] = sorted(agents_by_tool.get(entry["name"], []))
+    return catalog
 
 
 # ==================== Skills ====================

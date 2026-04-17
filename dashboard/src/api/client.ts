@@ -12,6 +12,7 @@ import type {
   Skill,
   GovernanceApproval,
   GovernanceLogEntry,
+  ToolCatalogEntry,
   Stats,
   PipelineDef,
 } from "../types/api";
@@ -89,6 +90,7 @@ export const approveSkill = (id: string, agentType: string) =>
 /* ── Governance ── */
 export const getApprovals = () => req<GovernanceApproval[]>("/governance/approvals");
 export const getGovernanceLog = () => req<GovernanceLogEntry[]>("/governance/log");
+export const getToolCatalog = () => req<ToolCatalogEntry[]>("/governance/tools");
 
 /* ── Pipelines ── */
 export const getPipelines = () =>

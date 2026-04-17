@@ -478,3 +478,197 @@ def test_ready_tasks():
 
     resp = client.get(f"/api/projects/{project_id}/tasks/ready")
     assert resp.status_code == 200
+
+
+# ==================== Per-task LLM picker (#4) ====================
+
+
+def test_available_models_endpoint():
+    resp = client.get("/api/models/available")
+    assert resp.status_code == 200
+    models = resp.json()
+    assert len(models) >= 5
+    ids = {m["id"] for m in models}
+    assert "omlx/Qwen3.5-9B-MLX-4bit" in ids
+    assert any("claude" in m["id"] for m in models)
+    # Each option carries pricing fields so the UI can surface cost
+    for m in models:
+        assert "input_per_1m" in m and "output_per_1m" in m
+
+
+def test_task_model_override_roundtrip():
+    project = client.post("/api/projects", json={
+        "name": "Model Override Project",
+        "description": "",
+        "tech_stack": "web",
+    }).json()
+    task = client.post("/api/tasks", json={
+        "project_id": project["id"],
+        "title": "Test override",
+        "description": "dry run",
+        "model_override": "anthropic/anthropic.claude-haiku-4-5-20251001-v1:0",
+    }).json()
+    assert task["model_override"].endswith("haiku-4-5-20251001-v1:0")
+
+    # PATCH updates the override
+    resp = client.patch(f"/api/tasks/{task['id']}", json={
+        "model_override": "openai/gpt-5-2025-08-07",
+    })
+    assert resp.status_code == 200
+    assert resp.json()["model_override"] == "openai/gpt-5-2025-08-07"
+
+    # GET returns the updated value
+    got = client.get(f"/api/tasks/{task['id']}").json()
+    assert got["model_override"] == "openai/gpt-5-2025-08-07"
+
+
+# ==================== Phased producer gates (#2) ====================
+
+
+def test_phased_producer_pipeline_registered():
+    pipelines = client.get("/api/pipelines").json()
+    ids = {p["id"] for p in pipelines}
+    assert "phased-producer" in ids
+    pp = next(p for p in pipelines if p["id"] == "phased-producer")
+    gate_steps = [s for s in pp["steps"] if s.get("type") == "human-gate"]
+    assert len(gate_steps) == 3
+
+
+def test_gate_list_approve_and_advance():
+    """Launch the phased pipeline, approve a gate, verify downstream advances."""
+    project = client.post("/api/projects", json={
+        "name": "Gate Test Project",
+        "description": "",
+        "tech_stack": "web",
+    }).json()
+    project_id = project["id"]
+
+    resp = client.post("/api/pipelines/phased-producer/run", json={
+        "project_id": project_id,
+        "input_text": "a cozy farming game on a tiny asteroid",
+    })
+    assert resp.status_code == 200
+    tasks_by_step = resp.json()["tasks"]
+    assert "gate-concept" in tasks_by_step
+    assert "gate-mechanics" in tasks_by_step
+
+    # All 3 gates are created even before their upstream steps finish
+    gates = client.get(f"/api/projects/{project_id}/gates").json()
+    step_ids = {g["step_id"] for g in gates}
+    assert step_ids == {"gate-concept", "gate-mechanics", "gate-laf"}
+    # None are ready yet — upstream steps are still running/pending
+    assert all(not g["ready"] for g in gates)
+
+    # Simulate the concept agent completing so the first gate becomes ready
+    from src.orchestrator.task_queue import task_queue
+    from src.models.tasks import TaskStatus
+    concept_id = tasks_by_step["concept"]
+    task_queue.update_status(
+        concept_id,
+        TaskStatus.COMPLETED,
+        result={"summary": "3 concept directions: (A)/(B)/(C)"},
+    )
+
+    gates = client.get(f"/api/projects/{project_id}/gates").json()
+    concept_gate = next(g for g in gates if g["step_id"] == "gate-concept")
+    assert concept_gate["ready"] is True
+    assert concept_gate["preceding_result"]["summary"].startswith("3 concept")
+
+    # Approve the concept gate
+    resp = client.post(f"/api/gates/{concept_gate['task_id']}/approve", json={
+        "feedback": "go with B",
+    })
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "approved"
+
+    approved = client.get(f"/api/tasks/{concept_gate['task_id']}").json()
+    assert approved["status"] == "completed"
+    assert approved["result"]["decision"] == "approved"
+
+
+def test_gate_revise_spawns_revision_and_rebinds():
+    """Request changes on a gate → revision task + gate depends on it."""
+    from src.orchestrator.task_queue import task_queue
+    from src.models.tasks import TaskStatus
+
+    project = client.post("/api/projects", json={
+        "name": "Gate Revise Project",
+        "description": "",
+        "tech_stack": "web",
+    }).json()
+    project_id = project["id"]
+
+    launch = client.post("/api/pipelines/phased-producer/run", json={
+        "project_id": project_id,
+        "input_text": "puzzle platformer",
+    }).json()
+    concept_id = launch["tasks"]["concept"]
+    mechanics_id = launch["tasks"]["mechanics"]
+
+    # Complete concept, approve its gate so mechanics becomes ready
+    task_queue.update_status(concept_id, TaskStatus.COMPLETED, result={"summary": "ok"})
+    gates = client.get(f"/api/projects/{project_id}/gates").json()
+    concept_gate = next(g for g in gates if g["step_id"] == "gate-concept")
+    client.post(f"/api/gates/{concept_gate['task_id']}/approve", json={})
+
+    # Complete mechanics so gate-mechanics becomes ready
+    task_queue.update_status(
+        mechanics_id,
+        TaskStatus.COMPLETED,
+        result={"summary": "mechanics v1"},
+    )
+    gates = client.get(f"/api/projects/{project_id}/gates").json()
+    mech_gate = next(g for g in gates if g["step_id"] == "gate-mechanics")
+    assert mech_gate["ready"] is True
+
+    # Request changes
+    resp = client.post(f"/api/gates/{mech_gate['task_id']}/revise", json={
+        "feedback": "please add a co-op mode",
+    })
+    assert resp.status_code == 200
+    revision_id = resp.json()["revision_task_id"]
+
+    # Revision task was created, assigned to the mechanics agent
+    revision = client.get(f"/api/tasks/{revision_id}").json()
+    assert revision["project_id"] == project_id
+    assert "co-op" in revision["description"]
+
+    # Gate is still pending, now depends on the revision task as well
+    gate_task = client.get(f"/api/tasks/{mech_gate['task_id']}").json()
+    assert gate_task["status"] == "pending"
+    assert revision_id in gate_task["depends_on"]
+    assert gate_task["result"]["decision"] == "changes_requested"
+
+
+def test_gate_revise_requires_feedback():
+    """Revise without feedback is rejected."""
+    project = client.post("/api/projects", json={
+        "name": "Gate Feedback Guard",
+        "description": "",
+        "tech_stack": "web",
+    }).json()
+    launch = client.post("/api/pipelines/phased-producer/run", json={
+        "project_id": project["id"],
+        "input_text": "test",
+    }).json()
+
+    gate_id = launch["tasks"]["gate-concept"]
+    resp = client.post(f"/api/gates/{gate_id}/revise", json={"feedback": "   "})
+    assert resp.status_code == 400
+
+
+def test_gate_endpoints_reject_non_gate_task():
+    """approve/revise on a non-gate task 400s."""
+    project = client.post("/api/projects", json={
+        "name": "Non-gate guard",
+        "description": "",
+        "tech_stack": "web",
+    }).json()
+    task = client.post("/api/tasks", json={
+        "project_id": project["id"],
+        "title": "plain task",
+    }).json()
+    resp = client.post(f"/api/gates/{task['id']}/approve", json={})
+    assert resp.status_code == 400
+    resp = client.post(f"/api/gates/{task['id']}/revise", json={"feedback": "x"})
+    assert resp.status_code == 400

@@ -536,6 +536,46 @@ class ToolExecutor:
             },
         })
 
+        # asset_search — search shared visual asset pools
+        self._register("asset_search", self._tool_asset_search, {
+            "name": "asset_search",
+            "description": (
+                "Search shared asset pools for game art references: 'kenney' (CC0 packs) and 'itch' "
+                "(itch.io game-assets). Returns a list of {pool, asset_id, title, page_url, preview_url}. "
+                "Always call this during the look-and-feel phase BEFORE proposing a visual direction — "
+                "ground the aesthetic in real, reusable assets."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Keywords e.g. 'pixel platformer hero', 'low-poly forest'"},
+                    "pool": {"type": "string", "enum": ["kenney", "itch", "both"], "default": "both"},
+                    "limit": {"type": "integer", "description": "Max hits per pool (default 6)", "default": 6},
+                },
+                "required": ["query"],
+            },
+        })
+
+        # asset_fetch — download an asset's preview or zip into the workspace
+        self._register("asset_fetch", self._tool_asset_fetch, {
+            "name": "asset_fetch",
+            "description": (
+                "Download an asset from a shared pool into the project workspace. "
+                "asset_id format is 'kenney:<slug>' or 'itch:<project_id>' (from asset_search). "
+                "kind='preview' grabs the thumbnail (small, fast). kind='zip' grabs the full pack "
+                "(kenney only; itch projects don't expose a direct zip). Returns the saved relative path."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "asset_id": {"type": "string", "description": "Asset id from asset_search"},
+                    "kind": {"type": "string", "enum": ["preview", "zip"], "default": "preview"},
+                    "dest": {"type": "string", "description": "Destination directory relative to project root", "default": "assets/"},
+                },
+                "required": ["asset_id"],
+            },
+        })
+
     def _register(self, name: str, handler: callable, schema: dict):
         self._tool_registry[name] = handler
         self._tool_schemas[name] = schema
@@ -873,6 +913,81 @@ class ToolExecutor:
         hits.sort(key=lambda p: p.stat().st_mtime, reverse=True)
         rels = [str(p.relative_to(base)) for p in hits[:200]]
         return "\n".join(rels) if rels else "No files matched."
+
+    async def _tool_asset_search(self, args: dict, **ctx) -> str:
+        from src.runtime.asset_sources import search_kenney, search_itch
+        import httpx, json
+
+        query = (args.get("query") or "").strip()
+        if not query:
+            raise ValueError("query is required")
+        pool = args.get("pool", "both")
+        limit = int(args.get("limit", 6))
+
+        hits: list = []
+        async with httpx.AsyncClient(follow_redirects=True, timeout=20.0) as client:
+            if pool in ("kenney", "both"):
+                try:
+                    hits.extend(await search_kenney(query, limit, client=client))
+                except Exception as e:
+                    hits.append({"error": f"kenney search failed: {e}"})
+            if pool in ("itch", "both"):
+                try:
+                    hits.extend(await search_itch(query, limit, client=client))
+                except Exception as e:
+                    hits.append({"error": f"itch search failed: {e}"})
+
+        payload = [h.to_dict() if hasattr(h, "to_dict") else h for h in hits]
+        return json.dumps({"query": query, "pool": pool, "hits": payload}, indent=2)
+
+    async def _tool_asset_fetch(self, args: dict, **ctx) -> str:
+        from src.runtime.asset_sources import download, resolve_kenney_zip
+        from pathlib import Path
+        import httpx
+
+        asset_id = (args.get("asset_id") or "").strip()
+        if ":" not in asset_id:
+            raise ValueError("asset_id must be 'kenney:<slug>' or 'itch:<id>'")
+        pool, ident = asset_id.split(":", 1)
+        kind = args.get("kind", "preview")
+        dest_rel = (args.get("dest") or "assets/").rstrip("/") + "/"
+
+        # Compose a filename based on asset id + kind.
+        safe_ident = re.sub(r"[^A-Za-z0-9_.-]", "_", ident)
+
+        async with httpx.AsyncClient(follow_redirects=True, timeout=60.0) as client:
+            if pool == "kenney" and kind == "zip":
+                zip_url = await resolve_kenney_zip(ident, client=client)
+                if not zip_url:
+                    return f"No zip download found for kenney:{ident}"
+                dest = self._safe_path(f"{dest_rel}{safe_ident}.zip", ctx.get("project_id"), ctx.get("agent_instance_id"))
+                await download(zip_url, dest, client=client)
+                rel = Path(dest_rel) / f"{safe_ident}.zip"
+                return f"Downloaded {zip_url} -> {rel}"
+
+            # Preview path: we need the preview URL. We don't keep a search cache,
+            # so fetch the pack/page HTML and grab the primary image.
+            if pool == "kenney":
+                html = (await client.get(f"https://kenney.nl/assets/{ident}", headers={"User-Agent": "code-play-agent/1.0"})).text
+                m = re.search(r'<meta[^>]+property="og:image"[^>]+content="([^"]+)"', html)
+                preview_url = m.group(1) if m else None
+            elif pool == "itch":
+                # itch project id alone isn't browseable; search again to recover the preview.
+                from src.runtime.asset_sources import search_itch
+                results = await search_itch(ident, limit=8, client=client)
+                match = next((r for r in results if r.asset_id == asset_id), None)
+                preview_url = match.preview_url if match else None
+            else:
+                raise ValueError(f"unknown pool: {pool}")
+
+            if not preview_url:
+                return f"No preview URL resolved for {asset_id}"
+
+            suffix = Path(preview_url.split("?", 1)[0]).suffix or ".png"
+            dest = self._safe_path(f"{dest_rel}{safe_ident}{suffix}", ctx.get("project_id"), ctx.get("agent_instance_id"))
+            await download(preview_url, dest, client=client)
+            rel = Path(dest_rel) / f"{safe_ident}{suffix}"
+            return f"Downloaded {preview_url} -> {rel}"
 
     async def _tool_web_fetch(self, args: dict, **ctx) -> str:
         import httpx

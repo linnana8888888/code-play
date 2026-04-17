@@ -32,7 +32,17 @@ pipelines:
       - id: look-and-feel
         agent: technical-artist
         depends_on: [gate-mechanics]
-        task: "Based on the approved concept + mechanics (memory keys: concept_options_v1, mechanics_v1), draft a look-and-feel brief: palette (3-5 hex codes), art style (reference points), UI/typography direction, audio tone. Save to memory as artifact key 'laf_brief_v1'."
+        task: |
+          Based on the approved concept + mechanics (memory keys: concept_options_v1, mechanics_v1),
+          ground the look-and-feel in real reusable art:
+            1. Call asset_search (pool='both') with 2-3 queries derived from the game's genre and mood.
+               Include at least one query per pool so BOTH kenney and itch are represented.
+            2. Pick 3-5 concrete hits across the two pools that share a coherent aesthetic.
+            3. Call asset_fetch(kind='preview') on each pick to pull thumbnails into assets/.
+            4. Draft the brief: palette (3-5 hex codes derived from the chosen refs),
+               art style (reference the asset_ids chosen), UI/typography direction, audio tone.
+               List the referenced asset_ids in a 'references' section.
+          Save the final brief to memory as artifact key 'laf_brief_v1'.
         output: look_and_feel
 
       - id: gate-laf

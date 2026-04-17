@@ -1,5 +1,14 @@
 # Agent Roster Configuration
 # Maps agent IDs to their model routing and tool access
+#
+# Approved model set (LEGO proxy + local, as of 2026-04-17):
+#   - omlx/Qwen3.5-9B-MLX-4bit                                  (local, free)
+#   - anthropic/anthropic.claude-opus-4-7                       (reasoning, $$$)
+#   - anthropic/anthropic.claude-sonnet-4-6                     (balanced)
+#   - anthropic/anthropic.claude-haiku-4-5-20251001-v1:0        (cheap)
+#   - openai/gpt-5-2025-08-07                                   (reasoning, via LEGO)
+#
+# OpenRouter retired 2026-04-17 — do NOT add `openrouter/` prefixes.
 
 defaults:
   model: "omlx/Qwen3.5-9B-MLX-4bit"
@@ -12,75 +21,80 @@ defaults:
 agents:
   # Game Development Core
   game-designer:
-    model: "omlx/Qwen3.5-9B-MLX-4bit"
-    description: "Systems and mechanics architect"
-    tools: [file_read, file_write, memory_read, memory_write, channel_post, channel_read, escalate, web_search]
+    model: "openai/gpt-5-2025-08-07"
+    fallback_model: "omlx/Qwen3.5-9B-MLX-4bit"
+    description: "Systems and mechanics architect (GPT-5 for reasoning)"
+    tools: [file_read, file_write, memory_read, memory_write, channel_post, channel_read, escalate, web_search, task_create]
 
   narrative-designer:
-    model: "openrouter/nvidia/nemotron-3-super-120b-a12b:free"
+    model: "omlx/Qwen3.5-9B-MLX-4bit"
     description: "Story systems and dialogue architect"
-    tools: [file_read, file_write, memory_read, memory_write, channel_post, channel_read, escalate]
+    tools: [file_read, file_write, memory_read, memory_write, channel_post, channel_read, escalate, task_create]
 
   level-designer:
-    model: "openrouter/nvidia/nemotron-3-super-120b-a12b:free"
+    model: "omlx/Qwen3.5-9B-MLX-4bit"
     description: "Spatial storytelling and flow specialist"
-    tools: [file_read, file_write, memory_read, memory_write, channel_post, channel_read, escalate]
+    tools: [file_read, file_write, memory_read, memory_write, channel_post, channel_read, escalate, task_create]
 
   game-audio-engineer:
-    model: "openrouter/nvidia/nemotron-3-super-120b-a12b:free"
+    model: "omlx/Qwen3.5-9B-MLX-4bit"
     description: "Interactive audio specialist"
-    tools: [file_read, file_write, memory_read, memory_write, channel_post, channel_read]
+    tools: [file_read, file_write, memory_read, memory_write, channel_post, channel_read, task_create]
 
   technical-artist:
-    model: "openrouter/qwen/qwen3-coder:free"
-    description: "Art-to-engine pipeline specialist"
-    tools: [file_read, file_write, bash_execute, memory_read, memory_write, channel_post, channel_read]
+    model: "openai/gpt-5-2025-08-07"
+    fallback_model: "anthropic/anthropic.claude-sonnet-4-6"
+    description: "Art-to-engine pipeline specialist (GPT-5 for visual/logic judgment)"
+    tools: [file_read, file_write, bash_execute, memory_read, memory_write, channel_post, channel_read, task_create]
 
   # Engineering
   frontend-developer:
-    model: "openrouter/qwen/qwen3-coder:free"
-    description: "Three.js/WebGL implementation specialist"
-    tools: [file_read, file_write, bash_execute, git_status, git_add, git_commit, git_diff, memory_read, memory_write, channel_post, channel_read, escalate, run_tests]
+    model: "openai/gpt-5-2025-08-07"
+    fallback_model: "anthropic/anthropic.claude-sonnet-4-6"
+    description: "Three.js/WebGL implementation specialist (GPT-5 primary codegen)"
+    tools: [file_read, file_write, bash_execute, git_status, git_add, git_commit, git_diff, memory_read, memory_write, channel_post, channel_read, escalate, run_tests, task_create]
 
   code-reviewer:
-    model: "openrouter/qwen/qwen3-coder:free"
+    model: "anthropic/anthropic.claude-haiku-4-5-20251001-v1:0"
+    fallback_model: "omlx/Qwen3.5-9B-MLX-4bit"
     description: "Code quality and security reviewer"
-    tools: [file_read, git_diff, memory_read, channel_post, channel_read, escalate]
+    tools: [file_read, git_diff, memory_read, channel_post, channel_read, escalate, task_create]
 
   backend-architect:
-    model: "openrouter/qwen/qwen3-coder:free"
+    model: "omlx/Qwen3.5-9B-MLX-4bit"
     description: "Backend and API design"
-    tools: [file_read, file_write, bash_execute, git_status, git_add, git_commit, memory_read, memory_write, channel_post, channel_read]
+    tools: [file_read, file_write, bash_execute, git_status, git_add, git_commit, memory_read, memory_write, channel_post, channel_read, task_create]
 
   devops-automator:
-    model: "openrouter/qwen/qwen3-coder:free"
+    model: "omlx/Qwen3.5-9B-MLX-4bit"
     description: "CI/CD and deployment specialist"
-    tools: [file_read, file_write, bash_execute, git_status, git_add, git_commit, git_diff, deploy_preview, channel_post, channel_read]
+    tools: [file_read, file_write, bash_execute, git_status, git_add, git_commit, git_diff, deploy_preview, channel_post, channel_read, task_create]
 
   security-engineer:
-    model: "openrouter/qwen/qwen3-coder:free"
+    model: "omlx/Qwen3.5-9B-MLX-4bit"
     description: "Application security specialist"
-    tools: [file_read, bash_execute, git_diff, memory_read, channel_post, channel_read, escalate]
+    tools: [file_read, bash_execute, git_diff, memory_read, channel_post, channel_read, escalate, task_create]
 
   # Roblox
   roblox-systems-scripter:
-    model: "openrouter/qwen/qwen3-coder:free"
+    model: "omlx/Qwen3.5-9B-MLX-4bit"
     description: "Roblox Luau scripting specialist"
-    tools: [file_read, file_write, bash_execute, memory_read, memory_write, channel_post, channel_read]
+    tools: [file_read, file_write, bash_execute, memory_read, memory_write, channel_post, channel_read, task_create]
 
   roblox-experience-designer:
-    model: "openrouter/nvidia/nemotron-3-super-120b-a12b:free"
+    model: "omlx/Qwen3.5-9B-MLX-4bit"
     description: "Roblox engagement and monetization specialist"
-    tools: [file_read, file_write, memory_read, memory_write, channel_post, channel_read, escalate]
+    tools: [file_read, file_write, memory_read, memory_write, channel_post, channel_read, escalate, task_create]
 
   # Testing
   qa-engineer:
-    model: "openrouter/qwen/qwen3-coder:free"
-    description: "QA and testing specialist"
-    tools: [file_read, file_write, bash_execute, run_tests, memory_read, channel_post, channel_read, escalate]
+    model: "openai/gpt-5-2025-08-07"
+    fallback_model: "omlx/Qwen3.5-9B-MLX-4bit"
+    description: "QA and testing specialist (GPT-5 reality-check step)"
+    tools: [file_read, file_write, bash_execute, run_tests, memory_read, channel_post, channel_read, escalate, task_create]
 
   # Local model agents (when you want to save costs)
   local-assistant:
-    model: "omlx/qwen3.5-9b"
+    model: "omlx/Qwen3.5-9B-MLX-4bit"
     description: "General assistant running on local oMLX"
-    tools: [file_read, file_write, memory_read, memory_write, channel_post, channel_read]
+    tools: [file_read, file_write, memory_read, memory_write, channel_post, channel_read, task_create]

@@ -49,6 +49,7 @@ from src.models.proposals import (
     ProposalStatus,
     SingleDecision,
 )
+from src.iteration import cycle_state
 
 # --- Logging ---
 
@@ -798,8 +799,87 @@ async def _run_agent_task(instance, task_prompt: str, session_id: str = None):
         })
 
 
+async def _maybe_relaunch_cyclic(project_id: str, pipeline_specs: dict) -> None:
+    """For each cyclic pipeline whose terminal_step has just completed,
+    re-enqueue the first step for cycle n+1. Subject to the cycle_state
+    budget and halt_reason — if either trips, the loop silently stops.
+    """
+    all_tasks = task_queue.list_tasks(project_id=project_id)
+    for pname, pspec in pipeline_specs.items():
+        if not pspec.get("cyclic"):
+            continue
+        terminal_id = pspec.get("terminal_step")
+        steps = pspec.get("steps", []) or []
+        if not terminal_id or not steps:
+            continue
+        first_step = steps[0]
+        terminal_title = f"[{pname}] {terminal_id}"
+        first_title = f"[{pname}] {first_step['id']}"
+
+        completed_terminals = [
+            t for t in all_tasks
+            if t.title == terminal_title and t.status == TaskStatus.COMPLETED
+        ]
+        if not completed_terminals:
+            continue
+        latest = max(
+            completed_terminals,
+            key=lambda t: t.updated_at or t.created_at or datetime.min,
+        )
+        cycle_n = int((latest.metadata or {}).get("cycle_n") or 0)
+        if cycle_n <= 0:
+            cycle_n = cycle_state.get_cycle_n(project_id)
+        next_n = cycle_n + 1
+
+        already = any(
+            t.title == first_title
+            and int((t.metadata or {}).get("cycle_n") or 0) == next_n
+            for t in all_tasks
+        )
+        if already:
+            continue
+        if not cycle_state.should_relaunch(project_id):
+            continue
+
+        cycle_state.bump_cycle(project_id, next_n)
+        task_desc = (
+            first_step.get("task", "")
+            .replace("{{iteration_tag}}", f"v{next_n}")
+            .replace("{{cycle_n}}", str(next_n))
+        )
+        new_task = task_queue.create(TaskCreate(
+            project_id=project_id,
+            title=first_title,
+            description=task_desc,
+            created_by=f"pipeline:{pname}",
+            metadata={"iteration_tag": f"v{next_n}", "cycle_n": next_n},
+        ))
+        logger.info(
+            f"Relaunched cyclic pipeline '{pname}' for {project_id} cycle {next_n}"
+        )
+        await ws_manager.broadcast({
+            "type": "cycle_relaunched",
+            "data": {
+                "project_id": project_id,
+                "pipeline": pname,
+                "cycle_n": next_n,
+                "task_id": new_task.id,
+            },
+        })
+
+
 async def _advance_pipeline(project_id: str):
     """Spawn agents for any newly-ready pipeline tasks."""
+    pipeline_specs = _load_pipelines_yaml().get("pipelines", {}) or {}
+
+    # Cyclic pipelines relaunch their first step once their terminal step
+    # completes — do this BEFORE resolving ready tasks so the new first-step
+    # task lands in the same sweep.
+    try:
+        await _maybe_relaunch_cyclic(project_id, pipeline_specs)
+    except Exception as exc:
+        logger.warning(f"cyclic relaunch check failed for {project_id}: {exc}")
+
     try:
         ready = task_queue.get_ready_tasks(project_id)
     except Exception as exc:
@@ -808,8 +888,6 @@ async def _advance_pipeline(project_id: str):
 
     if not ready:
         return
-
-    pipeline_specs = _load_pipelines_yaml().get("pipelines", {}) or {}
 
     for task in ready:
         if task.assigned_to:
@@ -870,8 +948,16 @@ async def _advance_pipeline(project_id: str):
 # ==================== Tasks ====================
 
 @app.post("/api/pipelines/advance")
-async def advance_pipeline_endpoint(project_id: str):
-    """Manually trigger pipeline advancement for a project."""
+async def advance_pipeline_endpoint(project_id: str, force_phase: str | None = None):
+    """Manually trigger pipeline advancement for a project.
+
+    When `force_phase` is supplied, boot that pipeline via `run_pipeline` —
+    used by the dashboard's "Iterate" CTA to kick off iterate_artifact on a
+    project that already finished its phased-producer run.
+    """
+    if force_phase:
+        body = PipelineRunBody(project_id=project_id, input_text="")
+        return await run_pipeline(force_phase, body)
     await _advance_pipeline(project_id)
     return {"status": "ok", "project_id": project_id}
 
@@ -1125,12 +1211,35 @@ async def run_pipeline(pipeline_name: str, body: PipelineRunBody):
     gated = _project_requires_roster_approval(project_id)
     batch_id = f"batch-{uuid.uuid4().hex[:10]}" if gated else None
 
+    cyclic = bool(pipeline.get("cyclic"))
+    if cyclic:
+        # Flag the project as iterate-enabled and stamp cycle_n=1 in memory so
+        # _maybe_relaunch_cyclic has a baseline to compare against.
+        try:
+            with get_studio_db() as db:
+                db.execute(
+                    "UPDATE projects SET iterate_enabled = 1, updated_at = ? WHERE id = ?",
+                    (datetime.now(timezone.utc).isoformat(), project_id),
+                )
+        except Exception as exc:
+            logger.warning(f"iterate_enabled flag update failed: {exc}")
+        cycle_state.bump_cycle(project_id, 1)
+        cycle_state.clear_halt(project_id)
+
     # Create tasks for each step
     created_tasks = {}
     pending_proposals: list[str] = []
-    for step in pipeline["steps"]:
+    for idx, step in enumerate(pipeline["steps"]):
         step_id = step["id"]
         task_desc = step["task"].replace("{input}", input_text)
+        task_metadata: dict | None = None
+        if cyclic:
+            task_desc = task_desc.replace("{{iteration_tag}}", "v1").replace("{{cycle_n}}", "1")
+            # Only the first step gets the cycle metadata tag; downstream steps
+            # in the same cycle inherit via dependency order — the relaunch
+            # path writes the metadata afresh on the next cycle's first step.
+            if idx == 0:
+                task_metadata = {"iteration_tag": "v1", "cycle_n": 1}
 
         # Resolve dependencies to task IDs
         deps = []
@@ -1144,6 +1253,7 @@ async def run_pipeline(pipeline_name: str, body: PipelineRunBody):
             description=task_desc,
             depends_on=deps,
             created_by=f"pipeline:{pipeline_name}",
+            metadata=task_metadata,
         ))
         created_tasks[step_id] = task.id
 

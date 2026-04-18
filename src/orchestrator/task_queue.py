@@ -15,10 +15,14 @@ class TaskQueue:
         task_id = f"task-{uuid.uuid4().hex[:8]}"
         now = datetime.now(timezone.utc).isoformat()
 
+        metadata_json = (
+            json.dumps(task_input.metadata) if task_input.metadata else None
+        )
+
         with get_studio_db() as db:
             db.execute(
-                """INSERT INTO tasks (id, project_id, title, description, parent_task_id, criterion_id, assignee_type, priority, depends_on, created_by, model_override, status, created_at, updated_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)""",
+                """INSERT INTO tasks (id, project_id, title, description, parent_task_id, criterion_id, assignee_type, priority, depends_on, created_by, model_override, metadata, status, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)""",
                 (
                     task_id,
                     task_input.project_id,
@@ -31,6 +35,7 @@ class TaskQueue:
                     json.dumps(task_input.depends_on),
                     task_input.created_by,
                     task_input.model_override,
+                    metadata_json,
                     now,
                     now,
                 ),
@@ -48,6 +53,7 @@ class TaskQueue:
             depends_on=task_input.depends_on,
             created_by=task_input.created_by,
             model_override=task_input.model_override,
+            metadata=task_input.metadata,
             status=TaskStatus.PENDING,
             created_at=datetime.fromisoformat(now),
             updated_at=datetime.fromisoformat(now),
@@ -192,6 +198,13 @@ class TaskQueue:
             criterion_id = row["criterion_id"]
         except (IndexError, KeyError):
             pass
+        metadata = None
+        try:
+            raw_metadata = row["metadata"]
+            if raw_metadata:
+                metadata = json.loads(raw_metadata)
+        except (IndexError, KeyError, json.JSONDecodeError):
+            pass
         return Task(
             id=row["id"],
             project_id=row["project_id"],
@@ -206,6 +219,7 @@ class TaskQueue:
             depends_on=depends,
             created_by=row["created_by"] or "human",
             model_override=model_override,
+            metadata=metadata,
             result=result,
             created_at=datetime.fromisoformat(row["created_at"]) if row["created_at"] else None,
             updated_at=datetime.fromisoformat(row["updated_at"]) if row["updated_at"] else None,

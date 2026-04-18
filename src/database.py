@@ -262,6 +262,10 @@ def init_studio_db():
         _migrate_add_column(db, "tasks", "assignee_type", "TEXT")
         _migrate_add_column(db, "tasks", "model_override", "TEXT")
         _migrate_add_column(db, "tasks", "criterion_id", "TEXT")
+        # iterate_artifact pipeline support
+        _migrate_add_column(db, "projects", "iterate_enabled", "INTEGER DEFAULT 0")
+        _migrate_add_column(db, "projects", "auto_synthesis", "INTEGER DEFAULT 0")
+        _migrate_add_column(db, "tasks", "metadata", "TEXT")
 
 
 def _migrate_add_column(db, table: str, column: str, col_type: str):

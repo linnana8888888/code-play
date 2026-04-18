@@ -336,3 +336,147 @@ pipelines:
         depends_on: [script]
         task: "Review Luau scripts for security and performance"
         output: review
+
+  iterate_artifact:
+    name: "Iterate on an existing game (playtest → postmortem → propose → implement, looped)"
+    description: |
+      Cyclic pipeline. Each cycle plays the current build headlessly 5×, writes
+      a postmortem grounded in GOALS.md, fans out 4 parallel proposals, waits
+      for one human pick, implements it, and relaunches — capped by the
+      cycle_state budget (default 5) or a halt_reason flag.
+    cyclic: true
+    terminal_step: implement
+    steps:
+      - id: playtest
+        agent: qa-engineer
+        task: |
+          Run the playtest batch for iteration {{iteration_tag}} (cycle {{cycle_n}}).
+
+          You must call src.iteration.iterate_runner.run_playtest_batch(project_id,
+          repo_path, cycle_n=<cycle_n from task metadata>, runs=5, seconds_per_run=60).
+          The runner spawns `python3 -m http.server` on a free port, shells
+          `node playtest_bot.mjs --runs 5 --seconds 60 --tag {{iteration_tag}}`
+          against it, then aggregates every `<repo>/telemetry/*.json` whose
+          iteration_tag matches.
+
+          The runner persists the rollup to project memory as artifact
+          'telemetry_{{iteration_tag}}' and broadcasts `playtest_batch_complete`.
+          If node exits non-zero, surface its stdout_tail in the task result —
+          do NOT write a rollup that's missing runs.
+
+          Required memory output: artifact key 'telemetry_{{iteration_tag}}'.
+        output: telemetry
+
+      - id: postmortem
+        agent: support-analytics-reporter
+        depends_on: [playtest]
+        task: |
+          Write the cycle-{{cycle_n}} postmortem for iteration {{iteration_tag}}.
+
+          Read these memory keys verbatim: 'telemetry_{{iteration_tag}}' (just
+          written by the playtest step) and 'goals_md' (the project's GOALS.md).
+          If either is missing, fail the task — don't invent numbers.
+
+          Structure (≤ 600 words total):
+            - One-paragraph summary of what the batch did well vs. missed.
+            - Per §2/§3 of GOALS.md: for EACH §3 target, report observed value
+              and whether it's a hit/miss. Cite metric names verbatim from the
+              contract (see src/iteration/contract.METRIC_NAMES).
+            - Top 3 problems ranked by player-impact, each tied to a metric.
+            - 1-2 open questions for the proposal step (not solutions).
+
+          All metric names you mention must pass validate_goals_md — same
+          vocabulary as GOALS.md. Do not invent fps, drop_rate, etc.
+
+          Save to memory as artifact 'postmortem_{{iteration_tag}}'.
+        output: postmortem
+
+      # Four proposers fan out in parallel — deliberately no depends_on between
+      # them. Each reads the same postmortem and pitches one change.
+      - id: propose-designer
+        agent: game-designer
+        depends_on: [postmortem]
+        task: |
+          Read 'postmortem_{{iteration_tag}}' + 'goals_md' + 'mechanics_v1' from memory.
+          Propose ONE mechanics-level change for cycle {{cycle_n}}+1 that targets the
+          single most-impactful miss in the postmortem.
+
+          Format (≤ 300 words):
+            - Title (one line).
+            - Change (what, in code-change terms — file/system, new param, removed
+              behaviour, altered curve).
+            - Expected metric movement: name the §2 metric(s) this should move and
+              by how much (e.g. "accuracy: +0.05 on death runs").
+            - Risk: what could get worse (name a §2 metric).
+
+          Save to memory as artifact 'proposal_designer_{{iteration_tag}}'.
+        output: proposal_designer
+
+      - id: propose-ux
+        agent: ux-researcher
+        depends_on: [postmortem]
+        task: |
+          Read 'postmortem_{{iteration_tag}}' + 'goals_md' from memory. Propose ONE
+          UX / onboarding / legibility change (HUD, feedback, juice, tutorial
+          scaffolding) for cycle {{cycle_n}}+1 that addresses a miss in the
+          postmortem — not a mechanics change.
+
+          Format identical to propose-designer (Title, Change, Expected metric
+          movement, Risk). Cite §2 metrics.
+
+          Save as artifact 'proposal_ux_{{iteration_tag}}'.
+        output: proposal_ux
+
+      - id: propose-artist
+        agent: technical-artist
+        depends_on: [postmortem]
+        task: |
+          Read 'postmortem_{{iteration_tag}}' + 'goals_md' + 'laf_brief_v1' from
+          memory. Propose ONE art / feedback / readability change for cycle
+          {{cycle_n}}+1 — silhouette, palette, animation, or juice FX.
+
+          Format identical to propose-designer. Cite §2 metrics.
+
+          Save as artifact 'proposal_artist_{{iteration_tag}}'.
+        output: proposal_artist
+
+      - id: propose-proto
+        agent: frontend-developer
+        depends_on: [postmortem]
+        task: |
+          Read 'postmortem_{{iteration_tag}}' + 'goals_md' + 'game_html_v{{cycle_n}}'
+          from memory. Propose ONE code-level change (refactor, tuning, bug fix,
+          perf win) for cycle {{cycle_n}}+1 addressing a miss — not a design change.
+
+          Format identical to propose-designer. Cite §2 metrics.
+
+          Save as artifact 'proposal_proto_{{iteration_tag}}'.
+        output: proposal_proto
+
+      - id: synthesis_gate
+        type: human-gate
+        depends_on: [propose-designer, propose-ux, propose-artist, propose-proto]
+        review_of: propose-designer
+        task: |
+          Review all 4 proposals (propose-designer / propose-ux / propose-artist /
+          propose-proto) against 'postmortem_{{iteration_tag}}'. Pick ONE to
+          implement, request a revision on one, or reject all and halt the loop.
+          The gate's approval note is passed to the implement step as the brief.
+
+      - id: implement
+        agent: frontend-developer
+        depends_on: [synthesis_gate]
+        task: |
+          Implement the approved proposal from the synthesis_gate for cycle
+          {{cycle_n}}+1. Read these memory keys BEFORE editing: the chosen
+          'proposal_*_{{iteration_tag}}', 'game_html_v{{cycle_n}}', 'tech_plan_v1',
+          'laf_brief_v1'.
+
+          Apply the proposal — do not rebuild from scratch. Preserve window.__game
+          shape so the next playtest bot can still drive the game.
+
+          Save the new build to memory as artifact 'game_html_v{{cycle_n_plus_1}}'
+          AND commit to the project's artifact repo on its iteration branch. The
+          orchestrator will relaunch the playtest step for cycle {{cycle_n_plus_1}}
+          as soon as this task completes.
+        output: build

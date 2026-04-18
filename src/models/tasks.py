@@ -29,6 +29,7 @@ class Task(BaseModel):
     depends_on: list[str] = Field(default_factory=list)
     created_by: str = "human"
     model_override: str | None = None          # picks which LLM runs this task (overrides agent default)
+    metadata: dict | None = None               # free-form per-task context (e.g. iteration_tag, cycle_n)
     result: dict | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
@@ -45,6 +46,7 @@ class TaskCreate(BaseModel):
     depends_on: list[str] = Field(default_factory=list)
     created_by: str = "human"
     model_override: str | None = None          # if set, overrides the agent's default_model when spawned
+    metadata: dict | None = None               # free-form per-task context (e.g. iteration_tag, cycle_n)
 
 
 class TaskUpdate(BaseModel):

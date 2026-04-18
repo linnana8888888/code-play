@@ -12,7 +12,7 @@ export default function CreateProjectModal({ open, onClose, onCreate }: Props) {
   const [description, setDescription] = useState("");
   const [techStack, setTechStack] = useState("threejs");
   const [goal, setGoal] = useState("");
-  const [createRepo, setCreateRepo] = useState(true);
+  const [createRepo, setCreateRepo] = useState(false);
   const [rosterApproval, setRosterApproval] = useState(true);
   const [submitting, setSubmitting] = useState(false);
 
@@ -80,7 +80,7 @@ export default function CreateProjectModal({ open, onClose, onCreate }: Props) {
             onChange={(e) => setCreateRepo(e.target.checked)}
             className="rounded border-border"
           />
-          Create private GitHub repo (linnana8888888)
+          Create private GitHub repo now (linnana8888888) — usually leave off and use Publish later
         </label>
         <label className="flex items-center gap-2 text-sm text-text-muted">
           <input

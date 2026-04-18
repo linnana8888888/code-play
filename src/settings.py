@@ -33,6 +33,7 @@ class Settings(BaseSettings):
     host: str = "0.0.0.0"
     port: int = 8080
     debug: bool = False
+    environment: str = "development"  # development | test | production — suppresses external side effects when "test"
 
     # Paths
     agents_dir: str = "agents"

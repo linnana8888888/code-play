@@ -24,5 +24,5 @@ class ProjectCreate(BaseModel):
     description: str = ""
     goal: str = ""
     tech_stack: str = "threejs"
-    create_repo: bool = True
+    create_repo: bool = False
     require_roster_approval: bool = True  # new projects default ON; back-compat handled at migration level

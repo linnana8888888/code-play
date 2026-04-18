@@ -214,6 +214,9 @@ def _slugify(name: str) -> str:
 
 def _create_github_repo(name: str, description: str) -> tuple[str | None, str | None]:
     """Create a private GitHub repo under the authed user. Returns (repo_url, repo_name) or (None, None)."""
+    if settings.environment == "test":
+        logger.info("environment=test; skipping gh repo create for %r", name)
+        return None, None
     if not shutil.which("gh"):
         logger.warning("gh CLI not available; skipping repo creation")
         return None, None
@@ -227,11 +230,45 @@ def _create_github_repo(name: str, description: str) -> tuple[str | None, str | 
         if result.returncode != 0:
             logger.warning("gh repo create failed: %s", result.stderr.strip())
             return None, None
-        url = result.stdout.strip().splitlines()[-1] if result.stdout.strip() else f"https://github.com/linnana8888888/{slug}"
+        url = result.stdout.strip().splitlines()[-1] if result.stdout.strip() else f"https://github.com/{settings.github_owner}/{slug}"
         return url, slug
     except Exception as exc:
         logger.warning("gh repo create exception: %s", exc)
         return None, None
+
+
+def _publish_artifacts_to_repo(project_id: str, repo_name: str) -> tuple[bool, str]:
+    """Initialize git in the project's artifact directory and push to the GitHub repo.
+
+    Returns (success, message). Idempotent for an already-initialized artifact dir.
+    Only runs when the directory has at least one file to avoid pushing empty repos.
+    """
+    if settings.environment == "test":
+        return False, "environment=test; skipping publish"
+    artifact_dir = Path(settings.projects_dir) / project_id
+    if not artifact_dir.is_dir():
+        return False, f"artifact dir missing: {artifact_dir}"
+    has_content = any(p.is_file() for p in artifact_dir.rglob("*") if ".git" not in p.parts)
+    if not has_content:
+        return False, "no artifact files to push — publish blocked to prevent empty-repo leak"
+    remote = f"https://github.com/{settings.github_owner}/{repo_name}.git"
+    try:
+        def run(cmd: list[str]) -> subprocess.CompletedProcess:
+            return subprocess.run(cmd, cwd=artifact_dir, capture_output=True, text=True, timeout=60)
+        if not (artifact_dir / ".git").exists():
+            run(["git", "init", "-b", "main"])
+        run(["git", "remote", "remove", "origin"])  # ignore failure if missing
+        r = run(["git", "remote", "add", "origin", remote])
+        if r.returncode != 0 and "already exists" not in r.stderr:
+            return False, f"remote add failed: {r.stderr.strip()}"
+        run(["git", "add", "-A"])
+        run(["git", "commit", "-m", f"Publish {project_id} artifacts"])  # no-op if nothing to commit
+        r = run(["git", "push", "-u", "origin", "main"])
+        if r.returncode != 0:
+            return False, f"push failed: {r.stderr.strip()}"
+        return True, "pushed"
+    except Exception as exc:
+        return False, f"publish exception: {exc}"
 
 
 @app.post("/api/projects", response_model=Project)
@@ -276,6 +313,37 @@ def _project_row_to_dict(row) -> dict:
     if "require_roster_approval" in d:
         d["require_roster_approval"] = bool(d["require_roster_approval"])
     return d
+
+
+@app.post("/api/projects/{project_id}/publish")
+async def publish_project(project_id: str):
+    """Create a GitHub repo (if missing) and push current artifacts.
+
+    Preferred over `create_repo=True` at project-create time — defers the side
+    effect until there's something real to publish, preventing empty-repo leaks.
+    """
+    with get_studio_db() as db:
+        row = db.execute("SELECT id, name, description, repo_url, repo_name FROM projects WHERE id = ?", (project_id,)).fetchone()
+    if not row:
+        raise HTTPException(404, "Project not found")
+
+    repo_url = row["repo_url"]
+    repo_name = row["repo_name"]
+
+    if not repo_name:
+        repo_url, repo_name = await asyncio.to_thread(_create_github_repo, row["name"], row["description"])
+        if not repo_name:
+            raise HTTPException(502, "Failed to create GitHub repo — check gh auth and environment")
+        with get_studio_db() as db:
+            db.execute(
+                "UPDATE projects SET repo_url = ?, repo_name = ?, updated_at = ? WHERE id = ?",
+                (repo_url, repo_name, datetime.now(timezone.utc).isoformat(), project_id),
+            )
+
+    ok, msg = await asyncio.to_thread(_publish_artifacts_to_repo, project_id, repo_name)
+    if not ok:
+        raise HTTPException(409, f"Publish blocked: {msg}")
+    return {"repo_url": repo_url, "repo_name": repo_name, "status": "published", "detail": msg}
 
 
 @app.get("/api/projects")

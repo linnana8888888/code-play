@@ -17,6 +17,16 @@ import type {
   PipelineDef,
   ModelOption,
   HumanGate,
+  SuccessCriterion,
+  CriterionCreate,
+  CriterionUpdate,
+  DocumentMeta,
+  DocumentRead,
+  DocumentRevisionRow,
+  DocumentCreate,
+  DocumentRevise,
+  AgentProposal,
+  ProposalStatus,
 } from "../types/api";
 
 const BASE = "/api";
@@ -159,3 +169,87 @@ export const gamePreviewUrl = (projectId: string, key = "game_html_v1") =>
 export type AssetPreview = { path: string; url: string; bytes: number };
 export const getAssetPreviews = (projectId: string) =>
   req<AssetPreview[]>(`/projects/${projectId}/assets/previews`);
+
+/* ── Success criteria ── */
+export const getCriteria = (projectId: string) =>
+  req<SuccessCriterion[]>(`/projects/${projectId}/criteria`);
+export const createCriterion = (projectId: string, body: CriterionCreate) =>
+  req<SuccessCriterion>(`/projects/${projectId}/criteria`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+export const updateCriterion = (id: string, body: CriterionUpdate) =>
+  req<SuccessCriterion>(`/criteria/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify(body),
+  });
+export const deleteCriterion = (id: string) =>
+  req<{ status: string }>(`/criteria/${id}`, { method: "DELETE" });
+export const linkTaskCriterion = (taskId: string, criterionId: string | null) =>
+  req<{ status: string }>(`/tasks/${taskId}/link-criterion`, {
+    method: "POST",
+    body: JSON.stringify({ criterion_id: criterionId }),
+  });
+
+/* ── Documents (revisioned) ── */
+export const getDocs = (projectId: string, category?: string) =>
+  req<DocumentMeta[]>(
+    `/projects/${projectId}/docs${category ? `?category=${category}` : ""}`,
+  );
+export const createDoc = (projectId: string, body: DocumentCreate) =>
+  req<{ document_id: string; version: number }>(`/projects/${projectId}/docs`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+export const reviseDoc = (docId: string, body: DocumentRevise) =>
+  req<{ document_id: string; version: number }>(`/docs/${docId}/revisions`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+export const getDocLatest = (docId: string) => req<DocumentRead>(`/docs/${docId}`);
+export const getDocHistory = (docId: string) =>
+  req<DocumentRevisionRow[]>(`/docs/${docId}/revisions`);
+export const getDocVersion = (docId: string, version: number) =>
+  req<DocumentRead>(`/docs/${docId}/revisions/${version}`);
+
+/* ── Agent proposals ── */
+export const getProposals = (
+  projectId?: string,
+  status?: ProposalStatus,
+) => {
+  const p: Record<string, string | undefined> = {};
+  if (projectId) p.project_id = projectId;
+  if (status) p.status = status;
+  return req<AgentProposal[]>(`/governance/proposals${qs(p)}`);
+};
+export const approveProposalBatch = (
+  batchId: string,
+  body: { decided_by?: string; keep_proposal_ids?: string[]; reason?: string },
+) =>
+  req<{
+    status: string;
+    batch_id: string;
+    approved: string[];
+    spawned: string[];
+  }>(`/governance/proposals/batch/${batchId}/approve`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+export const rejectProposalBatch = (
+  batchId: string,
+  body: { decided_by?: string; reason?: string },
+) =>
+  req<{ status: string; batch_id: string; rejected: string[] }>(
+    `/governance/proposals/batch/${batchId}/reject`,
+    { method: "POST", body: JSON.stringify(body) },
+  );
+export const approveProposal = (id: string, body: { decided_by?: string; reason?: string }) =>
+  req<{ status: string; proposal_id: string; spawned: string | null }>(
+    `/governance/proposals/${id}/approve`,
+    { method: "POST", body: JSON.stringify(body) },
+  );
+export const rejectProposal = (id: string, body: { decided_by?: string; reason?: string }) =>
+  req<{ status: string; proposal_id: string }>(
+    `/governance/proposals/${id}/reject`,
+    { method: "POST", body: JSON.stringify(body) },
+  );

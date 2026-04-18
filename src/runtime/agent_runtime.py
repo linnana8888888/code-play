@@ -338,21 +338,45 @@ class AgentRuntime:
     # --- Goal ancestry ---
 
     def _build_goal_ancestry(self, project_id: str = None, task_id: str = None) -> str:
-        """Build a goal ancestry chain for agent context."""
+        """Build a goal ancestry chain for agent context.
+
+        Structure:
+          Studio Goal
+          Project: name
+          Project Goal: prose summary
+          Success Criteria:
+            • [status] title
+            ...
+          Parent Task: ...
+          Task: ... (satisfies → criterion title)
+        """
         if not project_id:
             return ""
 
         lines = ["[Goal Ancestry]", "Studio Goal: Build innovative web/3D games"]
 
-        # Get project goal
+        criterion_title_by_id: dict[str, str] = {}
         try:
             with get_studio_db() as db:
-                row = db.execute("SELECT name, goal FROM projects WHERE id = ?", (project_id,)).fetchone()
-            if row:
-                project_name = row["name"]
-                project_goal = row["goal"] or row["name"]
-                lines.append(f"Project: {project_name}")
-                lines.append(f"Project Goal: {project_goal}")
+                row = db.execute(
+                    "SELECT name, goal FROM projects WHERE id = ?", (project_id,)
+                ).fetchone()
+                if row:
+                    project_name = row["name"]
+                    project_goal = row["goal"] or row["name"]
+                    lines.append(f"Project: {project_name}")
+                    lines.append(f"Project Goal: {project_goal}")
+
+                criteria = db.execute(
+                    """SELECT id, title, status FROM success_criteria
+                       WHERE project_id = ? ORDER BY order_index, created_at""",
+                    (project_id,),
+                ).fetchall()
+            if criteria:
+                lines.append("Success Criteria:")
+                for c in criteria:
+                    criterion_title_by_id[c["id"]] = c["title"]
+                    lines.append(f"  • [{c['status']}] {c['title']}")
         except Exception:
             lines.append(f"Project ID: {project_id}")
 
@@ -360,12 +384,15 @@ class AgentRuntime:
         if task_id:
             task = task_queue.get(task_id)
             if task:
-                # Walk up to parent
                 if task.parent_task_id:
                     parent = task_queue.get(task.parent_task_id)
                     if parent:
                         lines.append(f"Parent Task: {parent.title}")
-                lines.append(f"Task: {task.title} — {task.description}")
+                crit_label = ""
+                criterion_id = getattr(task, "criterion_id", None)
+                if criterion_id and criterion_id in criterion_title_by_id:
+                    crit_label = f"  (satisfies → {criterion_title_by_id[criterion_id]})"
+                lines.append(f"Task: {task.title} — {task.description}{crit_label}")
 
         return "\n".join(lines)
 

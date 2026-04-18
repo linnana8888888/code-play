@@ -190,13 +190,78 @@ def init_studio_db():
                 cost_usd REAL DEFAULT 0.0,
                 created_at TEXT DEFAULT (datetime('now'))
             );
+
+            CREATE TABLE IF NOT EXISTS success_criteria (
+                id TEXT PRIMARY KEY,
+                project_id TEXT NOT NULL,
+                title TEXT NOT NULL,
+                description TEXT,
+                acceptance_test TEXT,
+                status TEXT DEFAULT 'pending',
+                order_index INTEGER DEFAULT 0,
+                created_by TEXT DEFAULT 'human',
+                created_at TEXT DEFAULT (datetime('now')),
+                updated_at TEXT DEFAULT (datetime('now')),
+                FOREIGN KEY (project_id) REFERENCES projects(id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_criteria_project ON success_criteria(project_id);
+
+            CREATE TABLE IF NOT EXISTS documents (
+                id TEXT PRIMARY KEY,
+                project_id TEXT NOT NULL,
+                category TEXT NOT NULL,
+                slug TEXT NOT NULL,
+                title TEXT NOT NULL,
+                current_version INTEGER DEFAULT 1,
+                status TEXT DEFAULT 'draft',
+                created_by TEXT,
+                created_at TEXT DEFAULT (datetime('now')),
+                updated_at TEXT DEFAULT (datetime('now')),
+                UNIQUE(project_id, category, slug),
+                FOREIGN KEY (project_id) REFERENCES projects(id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_documents_project ON documents(project_id);
+
+            CREATE TABLE IF NOT EXISTS document_revisions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                document_id TEXT NOT NULL,
+                version INTEGER NOT NULL,
+                content TEXT NOT NULL,
+                change_summary TEXT,
+                created_by TEXT,
+                created_at TEXT DEFAULT (datetime('now')),
+                FOREIGN KEY (document_id) REFERENCES documents(id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_revisions_doc ON document_revisions(document_id);
+
+            CREATE TABLE IF NOT EXISTS agent_proposals (
+                id TEXT PRIMARY KEY,
+                project_id TEXT NOT NULL,
+                batch_id TEXT NOT NULL,
+                agent_type TEXT NOT NULL,
+                rationale TEXT,
+                proposer TEXT,
+                phase TEXT NOT NULL,
+                status TEXT DEFAULT 'pending',
+                task_id TEXT,
+                model_override TEXT,
+                decided_by TEXT,
+                decided_at TEXT,
+                spawned_instance_id TEXT,
+                created_at TEXT DEFAULT (datetime('now')),
+                FOREIGN KEY (project_id) REFERENCES projects(id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_proposals_batch ON agent_proposals(batch_id);
+            CREATE INDEX IF NOT EXISTS idx_proposals_status ON agent_proposals(status);
         """)
 
         # Migrations for existing databases
         _migrate_add_column(db, "projects", "goal", "TEXT DEFAULT ''")
+        _migrate_add_column(db, "projects", "require_roster_approval", "INTEGER DEFAULT 0")
         _migrate_add_column(db, "tasks", "parent_task_id", "TEXT")
         _migrate_add_column(db, "tasks", "assignee_type", "TEXT")
         _migrate_add_column(db, "tasks", "model_override", "TEXT")
+        _migrate_add_column(db, "tasks", "criterion_id", "TEXT")
 
 
 def _migrate_add_column(db, table: str, column: str, col_type: str):

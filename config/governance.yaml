@@ -45,6 +45,11 @@ builtin:
   - asset_fetch
   # Headless browser for QA playtests
   - playwright_browser
+  # Success criteria + revisioned docs + roster proposals
+  - update_criterion_status
+  - document_write
+  - document_read
+  - propose_agent
 
 pre_approved:
   # User's existing Claude Code skills/plugins — allowed without prompt.

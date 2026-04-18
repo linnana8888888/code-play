@@ -1346,3 +1346,307 @@ def test_cleanup_older_than_days_filters(tmp_projects):
     assert resp.status_code == 200
     ids = {c["id"] for c in resp.json()["would_delete"]}
     assert fresh["id"] not in ids
+
+
+# ==================== Success Criteria ====================
+
+def test_criteria_crud(tmp_projects):
+    """Create, list, patch, delete a success criterion."""
+    pr = client.post("/api/projects", json={
+        "name": "crit-proj", "description": "", "tech_stack": "web",
+        "require_roster_approval": False,
+    }).json()
+    pid = pr["id"]
+
+    r = client.post(f"/api/projects/{pid}/criteria", json={
+        "title": "60fps on M1", "description": "steady framerate",
+        "acceptance_test": "perf probe reports ≥58 avg fps",
+    })
+    assert r.status_code == 200, r.text
+    c = r.json()
+    assert c["status"] == "pending"
+    cid = c["id"]
+
+    lst = client.get(f"/api/projects/{pid}/criteria").json()
+    assert any(x["id"] == cid for x in lst)
+
+    patched = client.patch(f"/api/criteria/{cid}", json={"status": "met"}).json()
+    assert patched["status"] == "met"
+
+    deleted = client.delete(f"/api/criteria/{cid}")
+    assert deleted.status_code == 200
+    assert client.get(f"/api/criteria/{cid}").status_code == 404
+
+
+def test_task_link_criterion_and_ancestry(tmp_projects):
+    """Linking a task to a criterion shows in the Goal Ancestry injection."""
+    from src.runtime.agent_runtime import agent_runtime
+    from src.models.tasks import TaskCreate
+    from src.orchestrator.task_queue import task_queue
+
+    pr = client.post("/api/projects", json={
+        "name": "anc-proj", "description": "", "tech_stack": "web", "goal": "ship a game",
+        "require_roster_approval": False,
+    }).json()
+    pid = pr["id"]
+
+    crit = client.post(f"/api/projects/{pid}/criteria", json={
+        "title": "Playable in 10 minutes"
+    }).json()
+
+    task = task_queue.create(TaskCreate(project_id=pid, title="polish sfx", description="audio"))
+    link = client.post(f"/api/tasks/{task.id}/link-criterion",
+                       json={"criterion_id": crit["id"]})
+    assert link.status_code == 200
+
+    ancestry = agent_runtime._build_goal_ancestry(pid, task.id)
+    assert "Goal Ancestry" in ancestry
+    assert "Playable in 10 minutes" in ancestry
+    assert "satisfies → Playable in 10 minutes" in ancestry
+
+
+def test_update_criterion_status_tool(tmp_projects):
+    """Agent tool flips a criterion's status."""
+    import asyncio
+    from src.runtime.tool_executor import tool_executor
+
+    pr = client.post("/api/projects", json={
+        "name": "tool-crit", "description": "", "tech_stack": "web",
+        "require_roster_approval": False,
+    }).json()
+    pid = pr["id"]
+    c = client.post(f"/api/projects/{pid}/criteria", json={"title": "fun"}).json()
+
+    async def run():
+        return await tool_executor.execute(
+            tool_name="update_criterion_status",
+            arguments={"criterion_id": c["id"], "status": "met", "note": "passed playtest"},
+            agent_instance_id="agent-test",
+            project_id=pid,
+        )
+    result = asyncio.run(run())
+    assert not result.is_error, result.content
+    assert "met" in result.content
+
+    refreshed = client.get(f"/api/criteria/{c['id']}").json()
+    assert refreshed["status"] == "met"
+
+
+# ==================== Revisioned Docs ====================
+
+def test_document_write_creates_and_revises(tmp_projects):
+    """First write → v1, second same slug → v2, history preserved."""
+    tmp_path = tmp_projects
+    pr = client.post("/api/projects", json={
+        "name": "doc-proj", "description": "", "tech_stack": "web",
+        "require_roster_approval": False,
+    }).json()
+    pid = pr["id"]
+
+    r1 = client.post(f"/api/projects/{pid}/docs", json={
+        "category": "design", "slug": "mvp-plan", "title": "MVP Plan",
+        "content": "# MVP\n\nv1 body", "change_summary": "initial draft",
+    }).json()
+    assert r1["version"] == 1
+    doc_id = r1["document_id"]
+
+    r2 = client.post(f"/api/docs/{doc_id}/revisions", json={
+        "content": "# MVP\n\nv2 body — expanded", "change_summary": "added verbs",
+    }).json()
+    assert r2["version"] == 2
+
+    hist = client.get(f"/api/docs/{doc_id}/revisions").json()
+    versions = sorted(h["version"] for h in hist)
+    assert versions == [1, 2]
+
+    v1 = client.get(f"/api/docs/{doc_id}/revisions/1").json()
+    assert "v1 body" in v1["content"]
+    v2 = client.get(f"/api/docs/{doc_id}/revisions/2").json()
+    assert "v2 body" in v2["content"]
+
+    listed = client.get(f"/api/projects/{pid}/docs").json()
+    assert len(listed) == 1
+    assert listed[0]["current_version"] == 2
+
+
+def test_document_tool_writes_file_and_row(tmp_projects):
+    """document_write tool creates both DB row and workspace file."""
+    import asyncio
+    from src.runtime.tool_executor import tool_executor
+
+    pr = client.post("/api/projects", json={
+        "name": "dt-proj", "description": "", "tech_stack": "web",
+        "require_roster_approval": False,
+    }).json()
+    pid = pr["id"]
+
+    # Project dir must exist for file mirror; tmp_projects monkeypatches projects_dir.
+    from pathlib import Path
+    from src.settings import settings
+    (Path(settings.projects_dir) / pid).mkdir(parents=True, exist_ok=True)
+
+    async def run():
+        return await tool_executor.execute(
+            tool_name="document_write",
+            arguments={
+                "category": "testing", "slug": "playtest-notes",
+                "title": "Playtest Notes", "content": "findings...",
+                "change_summary": "first round",
+            },
+            agent_instance_id="agent-qa",
+            project_id=pid,
+        )
+    result = asyncio.run(run())
+    assert not result.is_error, result.content
+
+    file_path = Path(settings.projects_dir) / pid / "docs" / "testing" / "playtest-notes.md"
+    assert file_path.exists()
+    assert "findings..." in file_path.read_text()
+
+    docs = client.get(f"/api/projects/{pid}/docs?category=testing").json()
+    assert any(d["slug"] == "playtest-notes" for d in docs)
+
+
+# ==================== Roster Approval ====================
+
+def test_legacy_project_bypasses_gate(tmp_projects):
+    """Existing projects (require_roster_approval=0) spawn immediately."""
+    pr = client.post("/api/projects", json={
+        "name": "legacy", "description": "", "tech_stack": "web",
+        "require_roster_approval": False,
+    }).json()
+    pid = pr["id"]
+
+    # Pick any agent type for spawn — we only care about the gate response shape.
+    types = [a["id"] for a in client.get("/api/agents/definitions").json()]
+    assert types, "agent catalog empty"
+    agent_type = types[0]
+
+    r = client.post(
+        "/api/agents/spawn",
+        params={"agent_type": agent_type, "project_id": pid},
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    # Legacy path returns instance dict, not pending_approval
+    assert body.get("status") != "pending_approval"
+    assert "id" in body
+
+
+def test_spawn_blocked_when_approval_required(tmp_projects):
+    """New project with gate on → direct spawn creates a proposal instead."""
+    pr = client.post("/api/projects", json={
+        "name": "gated", "description": "", "tech_stack": "web",
+        "require_roster_approval": True,
+    }).json()
+    pid = pr["id"]
+
+    types = [a["id"] for a in client.get("/api/agents/definitions").json()]
+    agent_type = types[0]
+
+    r = client.post(
+        "/api/agents/spawn",
+        params={"agent_type": agent_type, "project_id": pid},
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["status"] == "pending_approval"
+    assert body.get("proposal_id", "").startswith("prop-")
+
+    # No agent instance was created for this project
+    instances = client.get("/api/agents/instances", params={"project_id": pid}).json()
+    assert instances == []
+
+    # The proposal shows up in the governance list
+    props = client.get("/api/governance/proposals", params={"project_id": pid}).json()
+    assert any(p["id"] == body["proposal_id"] and p["phase"] == "in_flight" for p in props)
+
+
+def test_propose_agent_tool(tmp_projects):
+    """propose_agent tool (used by producer/lead) creates an in-flight proposal."""
+    import asyncio
+    from src.runtime.tool_executor import tool_executor
+
+    pr = client.post("/api/projects", json={
+        "name": "prop-tool", "description": "", "tech_stack": "web",
+        "require_roster_approval": True,
+    }).json()
+    pid = pr["id"]
+
+    async def run():
+        return await tool_executor.execute(
+            tool_name="propose_agent",
+            arguments={"agent_type": "frontend-developer",
+                       "rationale": "Need a UI polish pass"},
+            agent_instance_id="agent-producer",
+            project_id=pid,
+        )
+    result = asyncio.run(run())
+    assert not result.is_error, result.content
+
+    props = client.get("/api/governance/proposals", params={"project_id": pid}).json()
+    assert any(p["proposer"] == "agent-producer" for p in props)
+
+
+def test_batch_approve_subset_rejects_others(tmp_projects):
+    """Approving a batch with keep_proposal_ids approves subset, rejects rest."""
+    from src.memory import proposals_store
+    from src.models.proposals import AgentProposalCreate, ProposalPhase
+
+    pr = client.post("/api/projects", json={
+        "name": "batch", "description": "", "tech_stack": "web",
+        "require_roster_approval": True,
+    }).json()
+    pid = pr["id"]
+
+    # Manually create a batch with 2 kickoff proposals
+    p1 = proposals_store.create(AgentProposalCreate(
+        project_id=pid, agent_type="frontend-developer",
+        rationale="keep me", proposer="pipeline:test",
+        phase=ProposalPhase.KICKOFF, batch_id="batch-test1",
+    ))
+    p2 = proposals_store.create(AgentProposalCreate(
+        project_id=pid, agent_type="qa-engineer",
+        rationale="drop me", proposer="pipeline:test",
+        phase=ProposalPhase.KICKOFF, batch_id="batch-test1",
+    ))
+
+    r = client.post(
+        f"/api/governance/proposals/batch/batch-test1/approve",
+        json={"decided_by": "human", "keep_proposal_ids": [p1.id]},
+    )
+    assert r.status_code == 200, r.text
+
+    p1_fresh = client.get("/api/governance/proposals", params={"project_id": pid}).json()
+    by_id = {p["id"]: p for p in p1_fresh}
+    # p1 was kept → spawned (no real model call needed to mark it; agent may have failed
+    # to actually run but status should be 'approved' or 'spawned')
+    assert by_id[p1.id]["status"] in ("approved", "spawned")
+    # p2 was rejected
+    assert by_id[p2.id]["status"] == "rejected"
+
+
+def test_pipeline_creates_proposal_batch(tmp_projects):
+    """Gated project + pipeline run → returns pending_roster_approval, no agent spawned."""
+    pr = client.post("/api/projects", json={
+        "name": "pipeline-gate", "description": "", "tech_stack": "web",
+        "require_roster_approval": True,
+    }).json()
+    pid = pr["id"]
+
+    # Pick any pipeline — just need one with agent steps
+    pipelines = client.get("/api/pipelines").json()
+    assert pipelines, "no pipelines registered"
+    pipeline = pipelines[0]["id"]
+
+    r = client.post(f"/api/pipelines/{pipeline}/run",
+                    json={"project_id": pid, "input_text": "test game"})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body.get("status") == "pending_roster_approval"
+    assert body.get("batch_id", "").startswith("batch-")
+    assert len(body.get("proposals", [])) >= 1
+
+    # No agents spawned yet
+    instances = client.get("/api/agents/instances", params={"project_id": pid}).json()
+    assert instances == []

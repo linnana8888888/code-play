@@ -583,6 +583,79 @@ class ToolExecutor:
             },
         })
 
+        # update_criterion_status — qa/producer flip criteria as evidence accrues
+        self._register("update_criterion_status", self._tool_update_criterion_status, {
+            "name": "update_criterion_status",
+            "description": (
+                "Update a project success criterion's status. Use when evidence shows a criterion "
+                "is met, in progress, or failed. Criterion ids come from the Goal Ancestry block."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "criterion_id": {"type": "string", "description": "Criterion id (e.g. 'crit-abc123def0')"},
+                    "status": {"type": "string", "enum": ["pending", "in_progress", "met", "failed"]},
+                    "note": {"type": "string", "description": "Optional evidence / reasoning"},
+                },
+                "required": ["criterion_id", "status"],
+            },
+        })
+
+        # document_write — create or append a revision to a structured project doc
+        self._register("document_write", self._tool_document_write, {
+            "name": "document_write",
+            "description": (
+                "Write a structured project document (design/architecture/testing/analytics/notes). "
+                "Creates version 1 on first write, appends a new revision otherwise. Content is mirrored "
+                "to docs/{category}/{slug}.md inside the project workspace."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "category": {"type": "string", "enum": ["design", "architecture", "testing", "analytics", "notes"]},
+                    "slug": {"type": "string", "description": "Stable filename stem, e.g. 'mvp-plan'"},
+                    "title": {"type": "string", "description": "Human-readable title"},
+                    "content": {"type": "string", "description": "Full markdown body"},
+                    "change_summary": {"type": "string", "description": "Brief note describing this revision", "default": ""},
+                },
+                "required": ["category", "slug", "title", "content"],
+            },
+        })
+
+        # document_read — fetch latest or specific version of a structured doc
+        self._register("document_read", self._tool_document_read, {
+            "name": "document_read",
+            "description": "Read a project document by category + slug. Returns latest version by default.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "category": {"type": "string", "enum": ["design", "architecture", "testing", "analytics", "notes"]},
+                    "slug": {"type": "string"},
+                    "version": {"type": "integer", "description": "Optional specific version"},
+                },
+                "required": ["category", "slug"],
+            },
+        })
+
+        # propose_agent — lead/producer suggests adding an agent (human approves)
+        self._register("propose_agent", self._tool_propose_agent, {
+            "name": "propose_agent",
+            "description": (
+                "Propose adding an agent to this project. Creates an in-flight proposal that a human "
+                "must approve before the agent spawns. Use when the current roster is missing a "
+                "capability you need (e.g. 'sound designer for SFX pass')."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "agent_type": {"type": "string", "description": "Agent type id from the catalog"},
+                    "rationale": {"type": "string", "description": "Why this agent is needed now"},
+                    "model_override": {"type": "string", "description": "Optional non-default model"},
+                },
+                "required": ["agent_type", "rationale"],
+            },
+        })
+
         # asset_fetch — download an asset's preview or zip into the workspace
         self._register("asset_fetch", self._tool_asset_fetch, {
             "name": "asset_fetch",
@@ -1186,6 +1259,80 @@ const { chromium } = require('playwright');
         if len(body) > max_bytes:
             body = body[:max_bytes] + f"\n... (truncated, total {len(body)} chars)"
         return header + body
+
+    async def _tool_update_criterion_status(self, args: dict, **ctx) -> str:
+        from src.memory import criteria_store
+        from src.models.criteria import CriterionStatus, CriterionUpdate
+        try:
+            status = CriterionStatus(args["status"])
+        except ValueError:
+            return f"Error: invalid status '{args.get('status')}'"
+        c = criteria_store.update(args["criterion_id"], CriterionUpdate(status=status))
+        if not c:
+            return f"Error: criterion '{args['criterion_id']}' not found"
+        note = args.get("note", "")
+        suffix = f" — note: {note}" if note else ""
+        return f"Criterion '{c.title}' → {c.status.value}{suffix}"
+
+    async def _tool_document_write(self, args: dict, **ctx) -> str:
+        from src.memory import project_docs
+        project_id = ctx.get("project_id")
+        if not project_id:
+            return "Error: no project context."
+        try:
+            doc_id, version = project_docs.write(
+                project_id=project_id,
+                category=args["category"],
+                slug=args["slug"],
+                title=args["title"],
+                content=args["content"],
+                change_summary=args.get("change_summary", ""),
+                created_by=ctx.get("agent_instance_id", "agent"),
+            )
+        except ValueError as e:
+            return f"Error: {e}"
+        return f"Wrote {args['category']}/{args['slug']} v{version} (doc={doc_id})"
+
+    async def _tool_document_read(self, args: dict, **ctx) -> str:
+        from src.memory import project_docs
+        project_id = ctx.get("project_id")
+        if not project_id:
+            return "Error: no project context."
+        doc = project_docs.read(
+            project_id=project_id,
+            category=args["category"],
+            slug=args["slug"],
+            version=args.get("version"),
+        )
+        if not doc:
+            return f"No document found at {args['category']}/{args['slug']}"
+        header = f"# {doc['title']} (v{doc['version']})\n_category={doc['category']}, status={doc['status']}_\n\n"
+        return header + (doc.get("content") or "")
+
+    async def _tool_propose_agent(self, args: dict, **ctx) -> str:
+        from src.memory import proposals_store
+        from src.models.proposals import AgentProposalCreate, ProposalPhase
+        project_id = ctx.get("project_id")
+        if not project_id:
+            return "Error: no project context."
+        p = proposals_store.create(AgentProposalCreate(
+            project_id=project_id,
+            agent_type=args["agent_type"],
+            rationale=args.get("rationale", ""),
+            proposer=ctx.get("agent_instance_id", "agent"),
+            phase=ProposalPhase.IN_FLIGHT,
+            model_override=args.get("model_override"),
+        ))
+        # Broadcast if main app is up (non-fatal)
+        try:
+            import sys
+            main_mod = sys.modules.get("src.main")
+            ws_manager = getattr(main_mod, "ws_manager", None) if main_mod else None
+            if ws_manager is not None:
+                await ws_manager.broadcast({"type": "proposal_created", "data": p.model_dump(mode="json")})
+        except Exception:
+            pass
+        return f"Proposed agent '{p.agent_type}' (proposal={p.id}) — awaiting human approval."
 
     # --- Path safety ---
 

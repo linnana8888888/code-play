@@ -17,14 +17,15 @@ class TaskQueue:
 
         with get_studio_db() as db:
             db.execute(
-                """INSERT INTO tasks (id, project_id, title, description, parent_task_id, assignee_type, priority, depends_on, created_by, model_override, status, created_at, updated_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)""",
+                """INSERT INTO tasks (id, project_id, title, description, parent_task_id, criterion_id, assignee_type, priority, depends_on, created_by, model_override, status, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)""",
                 (
                     task_id,
                     task_input.project_id,
                     task_input.title,
                     task_input.description,
                     task_input.parent_task_id,
+                    task_input.criterion_id,
                     task_input.assignee_type,
                     task_input.priority,
                     json.dumps(task_input.depends_on),
@@ -41,6 +42,7 @@ class TaskQueue:
             title=task_input.title,
             description=task_input.description,
             parent_task_id=task_input.parent_task_id,
+            criterion_id=task_input.criterion_id,
             assignee_type=task_input.assignee_type,
             priority=task_input.priority,
             depends_on=task_input.depends_on,
@@ -173,6 +175,7 @@ class TaskQueue:
         parent_task_id = None
         assignee_type = None
         model_override = None
+        criterion_id = None
         try:
             parent_task_id = row["parent_task_id"]
         except (IndexError, KeyError):
@@ -185,6 +188,10 @@ class TaskQueue:
             model_override = row["model_override"]
         except (IndexError, KeyError):
             pass
+        try:
+            criterion_id = row["criterion_id"]
+        except (IndexError, KeyError):
+            pass
         return Task(
             id=row["id"],
             project_id=row["project_id"],
@@ -193,6 +200,7 @@ class TaskQueue:
             assigned_to=row["assigned_to"],
             assignee_type=assignee_type,
             parent_task_id=parent_task_id,
+            criterion_id=criterion_id,
             status=TaskStatus(row["status"]),
             priority=row["priority"] or 0,
             depends_on=depends,

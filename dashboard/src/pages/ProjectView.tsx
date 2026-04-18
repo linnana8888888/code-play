@@ -9,9 +9,11 @@ import CreateTaskModal from "../components/tasks/CreateTaskModal";
 import InstanceList from "../components/agents/InstanceList";
 import ChannelView from "../components/channels/ChannelView";
 import GatesPanel from "../components/gates/GatesPanel";
+import CriteriaPanel from "../components/project/CriteriaPanel";
+import DocsBrowser from "../components/docs/DocsBrowser";
 import type { Project } from "../types/api";
 
-type Section = "tasks" | "plan" | "agents" | "channels";
+type Section = "tasks" | "plan" | "docs" | "agents" | "channels";
 
 interface GateBannerEntry {
   task_id: string;
@@ -75,12 +77,20 @@ export default function ProjectView() {
         <div className="rounded-xl border border-border bg-bg-card p-4">
           <h1 className="text-xl font-semibold">{project.name}</h1>
           <p className="mt-1 text-sm text-text-muted">{project.description}</p>
-          <div className="mt-2 flex gap-3 text-xs text-text-muted">
+          <div className="mt-2 flex flex-wrap gap-3 text-xs text-text-muted">
             <span className="badge badge-running">{project.tech_stack}</span>
             {project.goal && <span>Goal: {project.goal}</span>}
+            {project.require_roster_approval && (
+              <span className="rounded border border-accent/40 bg-accent/10 px-1.5 py-0.5 text-[10px] font-medium text-accent">
+                roster approval required
+              </span>
+            )}
           </div>
         </div>
       )}
+
+      <CriteriaPanel projectId={id} />
+
 
       {gateBanner ? (
         <div className="flex items-center justify-between gap-3 rounded-xl border border-accent/60 bg-accent/10 p-3 text-sm">
@@ -111,7 +121,7 @@ export default function ProjectView() {
 
       {/* Section tabs */}
       <div className="flex gap-1 border-b border-border pb-px">
-        {(["tasks", "plan", "agents", "channels"] as Section[]).map((s) => (
+        {(["tasks", "plan", "docs", "agents", "channels"] as Section[]).map((s) => (
           <button
             key={s}
             onClick={() => {
@@ -147,6 +157,8 @@ export default function ProjectView() {
       {section === "plan" && (
         <GatesPanel projectId={id} initialExpandedId={expandedId} />
       )}
+
+      {section === "docs" && <DocsBrowser projectId={id} />}
 
       {section === "agents" && (
         <InstanceList instances={projectInstances} onTerminate={terminate} />

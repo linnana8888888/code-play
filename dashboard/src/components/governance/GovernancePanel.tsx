@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { useGovernance } from "../../hooks/useGovernance";
 import type { Skill, ToolCatalogEntry } from "../../types/api";
+import PendingRosters from "./PendingRosters";
 
 const TIER_ORDER: Array<ToolCatalogEntry["tier"]> = [
   "builtin",
@@ -71,6 +72,9 @@ export default function GovernancePanel() {
 
   return (
     <div className="space-y-6">
+      {/* Pending Rosters (agent roster approval) */}
+      <PendingRosters />
+
       {/* Tool Catalog */}
       <div>
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2">

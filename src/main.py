@@ -38,6 +38,17 @@ from src.runtime.claude_bridge import discover as discover_claude_plugins
 from src.runtime.mcp_bridge import mcp_bridge
 from src.communication.message_bus import message_bus
 from src.memory.project_memory import project_memory
+from src.memory import criteria_store
+from src.memory import project_docs
+from src.memory import proposals_store
+from src.models.criteria import CriterionCreate, CriterionUpdate
+from src.models.proposals import (
+    AgentProposalCreate,
+    BatchDecision,
+    ProposalPhase,
+    ProposalStatus,
+    SingleDecision,
+)
 
 # --- Logging ---
 
@@ -234,8 +245,9 @@ async def create_project(body: ProjectCreate):
 
     with get_studio_db() as db:
         db.execute(
-            "INSERT INTO projects (id, name, description, goal, tech_stack, repo_url, repo_name, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (project_id, body.name, body.description, body.goal, body.tech_stack, repo_url, repo_name, now, now),
+            "INSERT INTO projects (id, name, description, goal, tech_stack, repo_url, repo_name, require_roster_approval, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (project_id, body.name, body.description, body.goal, body.tech_stack, repo_url, repo_name,
+             1 if body.require_roster_approval else 0, now, now),
         )
 
     # Init project memory DB
@@ -250,6 +262,7 @@ async def create_project(body: ProjectCreate):
         status="active",
         repo_url=repo_url,
         repo_name=repo_name,
+        require_roster_approval=body.require_roster_approval,
         created_at=datetime.fromisoformat(now),
         updated_at=datetime.fromisoformat(now),
     )
@@ -258,11 +271,18 @@ async def create_project(body: ProjectCreate):
     return project
 
 
+def _project_row_to_dict(row) -> dict:
+    d = dict(row)
+    if "require_roster_approval" in d:
+        d["require_roster_approval"] = bool(d["require_roster_approval"])
+    return d
+
+
 @app.get("/api/projects")
 async def list_projects():
     with get_studio_db() as db:
         rows = db.execute("SELECT * FROM projects ORDER BY created_at DESC").fetchall()
-    return [dict(r) for r in rows]
+    return [_project_row_to_dict(r) for r in rows]
 
 
 @app.get("/api/projects/{project_id}")
@@ -271,7 +291,7 @@ async def get_project(project_id: str):
         row = db.execute("SELECT * FROM projects WHERE id = ?", (project_id,)).fetchone()
     if not row:
         raise HTTPException(404, "Project not found")
-    return dict(row)
+    return _project_row_to_dict(row)
 
 
 def _delete_project_cascade(project_id: str) -> dict:
@@ -282,7 +302,16 @@ def _delete_project_cascade(project_id: str) -> dict:
     with get_studio_db() as db:
         row = db.execute("SELECT id FROM projects WHERE id = ?", (project_id,)).fetchone()
         deleted["existed"] = bool(row)
-        for table in ("cost_log", "messages", "agent_instances", "tasks"):
+        # Clean document_revisions for this project first (no FK in schema)
+        doc_ids = [r["id"] for r in db.execute(
+            "SELECT id FROM documents WHERE project_id = ?", (project_id,)
+        ).fetchall()]
+        for did in doc_ids:
+            db.execute("DELETE FROM document_revisions WHERE document_id = ?", (did,))
+        for table in (
+            "cost_log", "messages", "agent_instances", "tasks",
+            "success_criteria", "documents", "agent_proposals",
+        ):
             cur = db.execute(f"DELETE FROM {table} WHERE project_id = ?", (project_id,))
             deleted[table] = cur.rowcount
         cur = db.execute("DELETE FROM projects WHERE id = ?", (project_id,))
@@ -452,6 +481,61 @@ async def list_agent_instances(project_id: str = None, status: str = None):
     return [_instance_dict(i) for i in instances]
 
 
+def _project_requires_roster_approval(project_id: str | None) -> bool:
+    if not project_id:
+        return False
+    try:
+        with get_studio_db() as db:
+            row = db.execute(
+                "SELECT require_roster_approval FROM projects WHERE id = ?",
+                (project_id,),
+            ).fetchone()
+        return bool(row and row["require_roster_approval"])
+    except Exception:
+        return False
+
+
+async def _spawn_from_approved_proposal(proposal_id: str, task_prompt: str | None = None):
+    """Spawn an agent for an approved proposal and start it.
+
+    Returns the spawned AgentInstance, or None if the proposal isn't approved.
+    """
+    p = proposals_store.get(proposal_id)
+    if not p or p.status.value != "approved":
+        return None
+    try:
+        instance = registry.spawn(
+            agent_type=p.agent_type,
+            project_id=p.project_id,
+            task_id=p.task_id,
+            model_override=p.model_override,
+        )
+    except ValueError:
+        return None
+
+    proposals_store.mark_spawned(proposal_id, instance.id)
+    await ws_manager.broadcast({
+        "type": "agent_spawned",
+        "data": {
+            "id": instance.id,
+            "agent_type": p.agent_type,
+            "model": instance.model,
+            "project_id": p.project_id,
+            "from_proposal": proposal_id,
+        },
+    })
+
+    prompt = task_prompt
+    if p.task_id and not prompt:
+        t = task_queue.get(p.task_id)
+        if t:
+            task_queue.checkout(p.task_id, instance.id)
+            prompt = t.description or t.title
+    if prompt:
+        asyncio.create_task(_run_agent_task(instance, prompt))
+    return instance
+
+
 @app.post("/api/agents/spawn")
 async def spawn_agent(
     agent_type: str,
@@ -459,7 +543,26 @@ async def spawn_agent(
     task_prompt: str = None,
     model_override: str = None,
 ):
-    """Spawn an agent instance and optionally start it on a task."""
+    """Spawn an agent instance and optionally start it on a task.
+
+    When the project has `require_roster_approval=1`, this creates an
+    in-flight proposal instead of spawning immediately.
+    """
+    if _project_requires_roster_approval(project_id):
+        p = proposals_store.create(AgentProposalCreate(
+            project_id=project_id,
+            agent_type=agent_type,
+            rationale="Direct spawn request via API",
+            proposer="human",
+            phase=ProposalPhase.IN_FLIGHT,
+            model_override=model_override,
+        ))
+        await ws_manager.broadcast({
+            "type": "proposal_created",
+            "data": {"id": p.id, "project_id": project_id, "batch_id": p.batch_id, "phase": p.phase.value},
+        })
+        return {"status": "pending_approval", "proposal_id": p.id, "batch_id": p.batch_id}
+
     try:
         instance = registry.spawn(
             agent_type=agent_type,
@@ -938,7 +1041,12 @@ class PipelineRunBody(BaseModel):
 
 @app.post("/api/pipelines/{pipeline_name}/run")
 async def run_pipeline(pipeline_name: str, body: PipelineRunBody):
-    """Launch a predefined pipeline for a project."""
+    """Launch a predefined pipeline for a project.
+
+    When project.require_roster_approval is on, every agent-backed step
+    becomes a kickoff proposal (one batch), and no agents spawn until the
+    batch is approved via `/api/governance/proposals/batch/{bid}/approve`.
+    """
     project_id = body.project_id
     input_text = body.input_text
     data = _load_pipelines_yaml()
@@ -946,8 +1054,12 @@ async def run_pipeline(pipeline_name: str, body: PipelineRunBody):
     if not pipeline:
         raise HTTPException(404, f"Pipeline '{pipeline_name}' not found")
 
+    gated = _project_requires_roster_approval(project_id)
+    batch_id = f"batch-{uuid.uuid4().hex[:10]}" if gated else None
+
     # Create tasks for each step
     created_tasks = {}
+    pending_proposals: list[str] = []
     for step in pipeline["steps"]:
         step_id = step["id"]
         task_desc = step["task"].replace("{input}", input_text)
@@ -967,21 +1079,56 @@ async def run_pipeline(pipeline_name: str, body: PipelineRunBody):
         ))
         created_tasks[step_id] = task.id
 
-        # If no dependencies, spawn agent immediately
-        if not deps and step.get("type") != "human-gate":
-            agent_type = step.get("agent")
-            if agent_type:
-                try:
-                    instance = registry.spawn(
-                        agent_type=agent_type,
-                        project_id=project_id,
-                        task_id=task.id,
-                        model_override=task.model_override,
-                    )
-                    task_queue.checkout(task.id, instance.id)
-                    asyncio.create_task(_run_agent_task(instance, task_desc))
-                except ValueError:
-                    logger.warning(f"Agent type '{agent_type}' not found, skipping")
+        agent_type = step.get("agent")
+        if step.get("type") == "human-gate" or not agent_type:
+            continue
+
+        if gated:
+            p = proposals_store.create(AgentProposalCreate(
+                project_id=project_id,
+                agent_type=agent_type,
+                rationale=f"Kickoff step `{step_id}` for pipeline `{pipeline_name}`",
+                proposer=f"pipeline:{pipeline_name}",
+                phase=ProposalPhase.KICKOFF,
+                batch_id=batch_id,
+                task_id=task.id,
+                model_override=task.model_override,
+            ))
+            pending_proposals.append(p.id)
+            continue
+
+        # Fast path: no gate, spawn immediately for ready tasks
+        if not deps:
+            try:
+                instance = registry.spawn(
+                    agent_type=agent_type,
+                    project_id=project_id,
+                    task_id=task.id,
+                    model_override=task.model_override,
+                )
+                task_queue.checkout(task.id, instance.id)
+                asyncio.create_task(_run_agent_task(instance, task_desc))
+            except ValueError:
+                logger.warning(f"Agent type '{agent_type}' not found, skipping")
+
+    if gated:
+        await ws_manager.broadcast({
+            "type": "roster_proposed",
+            "data": {
+                "pipeline": pipeline_name,
+                "project_id": project_id,
+                "batch_id": batch_id,
+                "proposal_count": len(pending_proposals),
+            },
+        })
+        return {
+            "status": "pending_roster_approval",
+            "pipeline": pipeline_name,
+            "project_id": project_id,
+            "batch_id": batch_id,
+            "tasks": created_tasks,
+            "proposals": pending_proposals,
+        }
 
     await ws_manager.broadcast({
         "type": "pipeline_started",
@@ -1257,6 +1404,212 @@ async def health():
 @app.get("/api/health/providers")
 async def provider_health():
     return router.get_health()
+
+
+# ==================== Success Criteria ====================
+
+@app.get("/api/projects/{project_id}/criteria")
+async def list_criteria(project_id: str):
+    return [c.model_dump() for c in criteria_store.list_for_project(project_id)]
+
+
+@app.post("/api/projects/{project_id}/criteria")
+async def create_criterion(project_id: str, body: CriterionCreate, created_by: str = "human"):
+    c = criteria_store.create(project_id, body, created_by=created_by)
+    await ws_manager.broadcast({"type": "criterion_created", "data": c.model_dump(mode="json")})
+    return c.model_dump()
+
+
+@app.get("/api/criteria/{criterion_id}")
+async def get_criterion(criterion_id: str):
+    c = criteria_store.get(criterion_id)
+    if not c:
+        raise HTTPException(404, "Criterion not found")
+    return c.model_dump()
+
+
+@app.patch("/api/criteria/{criterion_id}")
+async def update_criterion(criterion_id: str, body: CriterionUpdate):
+    c = criteria_store.update(criterion_id, body)
+    if not c:
+        raise HTTPException(404, "Criterion not found")
+    await ws_manager.broadcast({"type": "criterion_updated", "data": c.model_dump(mode="json")})
+    return c.model_dump()
+
+
+@app.delete("/api/criteria/{criterion_id}")
+async def delete_criterion(criterion_id: str):
+    ok = criteria_store.delete(criterion_id)
+    if not ok:
+        raise HTTPException(404, "Criterion not found")
+    await ws_manager.broadcast({"type": "criterion_deleted", "data": {"id": criterion_id}})
+    return {"status": "deleted"}
+
+
+class LinkCriterionBody(BaseModel):
+    criterion_id: str | None = None
+
+
+@app.post("/api/tasks/{task_id}/link-criterion")
+async def link_task_criterion(task_id: str, body: LinkCriterionBody):
+    ok = criteria_store.link_task(task_id, body.criterion_id)
+    if not ok:
+        raise HTTPException(404, "Task not found")
+    return {"status": "linked", "task_id": task_id, "criterion_id": body.criterion_id}
+
+
+# ==================== Documents (revisioned) ====================
+
+class DocumentCreateBody(BaseModel):
+    category: str
+    slug: str
+    title: str
+    content: str
+    change_summary: str = ""
+
+
+class DocumentReviseBody(BaseModel):
+    content: str
+    change_summary: str = ""
+    title: str | None = None
+
+
+class DocumentMetaBody(BaseModel):
+    title: str | None = None
+    status: str | None = None
+
+
+@app.get("/api/projects/{project_id}/docs")
+async def list_project_docs(project_id: str, category: str | None = None):
+    return project_docs.list_docs(project_id, category=category)
+
+
+@app.post("/api/projects/{project_id}/docs")
+async def create_project_doc(project_id: str, body: DocumentCreateBody, created_by: str = "human"):
+    try:
+        doc_id, version = project_docs.write(
+            project_id=project_id,
+            category=body.category,
+            slug=body.slug,
+            title=body.title,
+            content=body.content,
+            change_summary=body.change_summary,
+            created_by=created_by,
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    await ws_manager.broadcast({"type": "doc_written", "data": {"document_id": doc_id, "version": version, "project_id": project_id}})
+    return {"document_id": doc_id, "version": version}
+
+
+@app.post("/api/docs/{doc_id}/revisions")
+async def revise_doc(doc_id: str, body: DocumentReviseBody, created_by: str = "human"):
+    doc = project_docs.get_document(doc_id)
+    if not doc:
+        raise HTTPException(404, "Document not found")
+    doc_id2, version = project_docs.write(
+        project_id=doc["project_id"],
+        category=doc["category"],
+        slug=doc["slug"],
+        title=body.title or doc["title"],
+        content=body.content,
+        change_summary=body.change_summary,
+        created_by=created_by,
+    )
+    await ws_manager.broadcast({"type": "doc_revised", "data": {"document_id": doc_id2, "version": version}})
+    return {"document_id": doc_id2, "version": version}
+
+
+@app.get("/api/docs/{doc_id}")
+async def get_doc_latest(doc_id: str):
+    doc = project_docs.read_by_id(doc_id)
+    if not doc:
+        raise HTTPException(404, "Document not found")
+    return doc
+
+
+@app.get("/api/docs/{doc_id}/revisions")
+async def get_doc_history(doc_id: str):
+    return project_docs.history(doc_id)
+
+
+@app.get("/api/docs/{doc_id}/revisions/{version}")
+async def get_doc_version(doc_id: str, version: int):
+    doc = project_docs.read_by_id(doc_id, version=version)
+    if not doc:
+        raise HTTPException(404, "Document or version not found")
+    return doc
+
+
+@app.patch("/api/docs/{doc_id}")
+async def patch_doc_meta(doc_id: str, body: DocumentMetaBody):
+    doc = project_docs.update_meta(doc_id, title=body.title, status=body.status)
+    if not doc:
+        raise HTTPException(404, "Document not found")
+    return doc
+
+
+# ==================== Agent Proposals (roster approval) ====================
+
+@app.get("/api/governance/proposals")
+async def list_proposals(project_id: str | None = None, batch_id: str | None = None, status: str | None = None):
+    st = ProposalStatus(status) if status else None
+    return [p.model_dump(mode="json") for p in proposals_store.list_proposals(
+        project_id=project_id, batch_id=batch_id, status=st,
+    )]
+
+
+@app.post("/api/governance/proposals")
+async def create_proposal(body: AgentProposalCreate):
+    p = proposals_store.create(body)
+    await ws_manager.broadcast({"type": "proposal_created", "data": p.model_dump(mode="json")})
+    return p.model_dump(mode="json")
+
+
+@app.post("/api/governance/proposals/batch/{batch_id}/approve")
+async def approve_proposal_batch(batch_id: str, body: BatchDecision):
+    approved = proposals_store.approve_batch(
+        batch_id=batch_id,
+        decided_by=body.decided_by,
+        keep_proposal_ids=body.keep_proposal_ids,
+    )
+    spawned = []
+    for p in approved:
+        inst = await _spawn_from_approved_proposal(p.id)
+        if inst:
+            spawned.append(inst.id)
+    await ws_manager.broadcast({
+        "type": "roster_approved",
+        "data": {"batch_id": batch_id, "approved": [p.id for p in approved], "spawned": spawned},
+    })
+    return {"status": "approved", "batch_id": batch_id, "approved": [p.id for p in approved], "spawned": spawned}
+
+
+@app.post("/api/governance/proposals/batch/{batch_id}/reject")
+async def reject_proposal_batch(batch_id: str, body: SingleDecision):
+    rejected = proposals_store.reject_batch(batch_id=batch_id, decided_by=body.decided_by)
+    await ws_manager.broadcast({
+        "type": "roster_rejected",
+        "data": {"batch_id": batch_id, "rejected": [p.id for p in rejected], "reason": body.reason},
+    })
+    return {"status": "rejected", "batch_id": batch_id, "rejected": [p.id for p in rejected]}
+
+
+@app.post("/api/governance/proposals/{proposal_id}/approve")
+async def approve_single_proposal(proposal_id: str, body: SingleDecision):
+    p = proposals_store.approve(proposal_id, decided_by=body.decided_by)
+    if not p:
+        raise HTTPException(404, "Proposal not found or not pending")
+    inst = await _spawn_from_approved_proposal(proposal_id)
+    return {"status": "approved", "proposal_id": proposal_id, "spawned": inst.id if inst else None}
+
+
+@app.post("/api/governance/proposals/{proposal_id}/reject")
+async def reject_single_proposal(proposal_id: str, body: SingleDecision):
+    p = proposals_store.reject(proposal_id, decided_by=body.decided_by)
+    if not p:
+        raise HTTPException(404, "Proposal not found or not pending")
+    return {"status": "rejected", "proposal_id": proposal_id}
 
 
 # ==================== Dashboard Stats ====================

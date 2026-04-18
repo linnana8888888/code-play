@@ -44,6 +44,28 @@ export const getProjects = () => req<Project[]>("/projects");
 export const getProject = (id: string) => req<Project>(`/projects/${id}`);
 export const createProject = (p: ProjectCreate) =>
   req<Project>("/projects", { method: "POST", body: JSON.stringify(p) });
+export const deleteProject = (id: string) =>
+  req<{ status: string; project_id: string }>(`/projects/${id}`, { method: "DELETE" });
+export const cleanupProjects = (opts: {
+  dryRun?: boolean;
+  onlyEmpty?: boolean;
+  olderThanDays?: number;
+  keepIds?: string[];
+}) => {
+  const params = new URLSearchParams();
+  params.set("dry_run", String(opts.dryRun ?? true));
+  params.set("only_empty", String(opts.onlyEmpty ?? true));
+  if (opts.olderThanDays !== undefined)
+    params.set("older_than_days", String(opts.olderThanDays));
+  if (opts.keepIds && opts.keepIds.length > 0)
+    params.set("keep_ids", opts.keepIds.join(","));
+  return req<{
+    dry_run: boolean;
+    count: number;
+    would_delete?: Array<{ id: string; name: string; created_at: string }>;
+    deleted?: Array<{ project_id: string }>;
+  }>(`/projects/cleanup?${params.toString()}`, { method: "POST" });
+};
 
 /* ── Tasks ── */
 export const getTasks = (projectId?: string) =>

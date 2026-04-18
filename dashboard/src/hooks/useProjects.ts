@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { getProjects, createProject } from "../api/client";
+import { getProjects, createProject, deleteProject, cleanupProjects } from "../api/client";
 import type { Project, ProjectCreate } from "../types/api";
 
 export function useProjects() {
@@ -18,5 +18,19 @@ export function useProjects() {
     return p;
   };
 
-  return { projects, loading, refresh, create };
+  const remove = async (id: string) => {
+    await deleteProject(id);
+    setProjects((prev) => prev.filter((p) => p.id !== id));
+  };
+
+  const cleanup = async (opts: { dryRun?: boolean; onlyEmpty?: boolean; olderThanDays?: number } = {}) => {
+    const result = await cleanupProjects({ dryRun: false, onlyEmpty: true, ...opts });
+    refresh();
+    return result;
+  };
+
+  const previewCleanup = (opts: { onlyEmpty?: boolean; olderThanDays?: number } = {}) =>
+    cleanupProjects({ dryRun: true, onlyEmpty: true, ...opts });
+
+  return { projects, loading, refresh, create, remove, cleanup, previewCleanup };
 }

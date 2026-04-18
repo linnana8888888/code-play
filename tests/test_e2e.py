@@ -40,6 +40,35 @@ def setup():
 client = TestClient(app)
 
 
+@pytest.fixture(scope="module", autouse=True)
+def _sweep_test_projects():
+    """Record project IDs present before tests, sweep anything new after.
+
+    Keeps local dev DBs tidy — tests that create projects won't leak them into
+    the projects table and projects/ folder.
+    """
+    from src.database import get_studio_db
+
+    before: set[str] = set()
+    try:
+        with get_studio_db() as db:
+            before = {r["id"] for r in db.execute("SELECT id FROM projects").fetchall()}
+    except Exception:
+        pass
+    yield
+    try:
+        with get_studio_db() as db:
+            after = {r["id"] for r in db.execute("SELECT id FROM projects").fetchall()}
+        leaked = after - before
+    except Exception:
+        leaked = set()
+    for pid in leaked:
+        try:
+            client.delete(f"/api/projects/{pid}")
+        except Exception:
+            pass
+
+
 def test_health():
     resp = client.get("/api/health")
     assert resp.status_code == 200
@@ -1161,3 +1190,152 @@ def test_style_research_agent_category_is_research():
     defs = client.get("/api/agents/definitions").json()
     sr = next(d for d in defs if d["id"] == "style-researcher")
     assert sr.get("category") == "research"
+
+
+# ==================== #8 cleanup self-generated projects ====================
+
+
+def test_delete_project_cascades_db_and_filesystem(tmp_path, monkeypatch):
+    """DELETE /api/projects/{id} removes the project row, its tasks, messages,
+    memory, and nukes projects/{id}/ on disk."""
+    from src.settings import settings
+    from src.memory.project_memory import project_memory
+    monkeypatch.setattr(settings, "projects_dir", str(tmp_path))
+
+    project = client.post("/api/projects", json={
+        "name": "Delete Cascade",
+        "description": "",
+        "tech_stack": "web",
+    }).json()
+    pid = project["id"]
+
+    # Create some cascade surface: a task, a message, a memory artifact, a file.
+    client.post("/api/tasks", json={"project_id": pid, "title": "ghost task"})
+    client.post("/api/messages", params={
+        "project_id": pid, "channel": "general",
+        "sender": "test", "content": "hi",
+    })
+    project_memory.write(pid, mem_type="artifact", key="k",
+                         content="x", created_by="test")
+    (tmp_path / pid / "assets").mkdir(parents=True, exist_ok=True)
+    (tmp_path / pid / "assets" / "file.txt").write_text("keep me? no.")
+
+    # Sanity: it exists.
+    assert client.get(f"/api/projects/{pid}").status_code == 200
+    assert (tmp_path / pid).is_dir()
+
+    resp = client.delete(f"/api/projects/{pid}")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "deleted"
+    assert body["projects"] == 1
+    assert body["tasks"] >= 1
+    assert body["messages"] >= 1
+    assert body["fs_removed"] is True
+
+    # After delete: 404, no tasks, no directory.
+    assert client.get(f"/api/projects/{pid}").status_code == 404
+    assert not (tmp_path / pid).exists()
+
+
+def test_delete_project_404s_on_missing():
+    resp = client.delete("/api/projects/proj-does-not-exist-xyz")
+    assert resp.status_code == 404
+
+
+def test_cleanup_dry_run_does_not_delete(tmp_path, monkeypatch):
+    """POST /api/projects/cleanup?dry_run=true reports candidates but keeps them."""
+    from src.settings import settings
+    monkeypatch.setattr(settings, "projects_dir", str(tmp_path))
+
+    empty = client.post("/api/projects", json={
+        "name": "dry run empty", "description": "", "tech_stack": "web",
+    }).json()
+
+    # A separate project with a task — should NOT be in candidates.
+    kept = client.post("/api/projects", json={
+        "name": "dry run kept", "description": "", "tech_stack": "web",
+    }).json()
+    client.post("/api/tasks", json={"project_id": kept["id"], "title": "keep me"})
+
+    resp = client.post("/api/projects/cleanup?dry_run=true&only_empty=true")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["dry_run"] is True
+    ids = {c["id"] for c in data["would_delete"]}
+    assert empty["id"] in ids
+    assert kept["id"] not in ids
+
+    # Both projects still exist after dry run.
+    assert client.get(f"/api/projects/{empty['id']}").status_code == 200
+    assert client.get(f"/api/projects/{kept['id']}").status_code == 200
+
+
+def test_cleanup_actual_sweep_deletes_empty_only(tmp_path, monkeypatch):
+    """dry_run=false with only_empty=true deletes empty projects and leaves
+    projects with tasks/memory untouched."""
+    from src.settings import settings
+    from src.memory.project_memory import project_memory
+    monkeypatch.setattr(settings, "projects_dir", str(tmp_path))
+
+    empty = client.post("/api/projects", json={
+        "name": "sweep empty", "description": "", "tech_stack": "web",
+    }).json()
+    with_task = client.post("/api/projects", json={
+        "name": "sweep with task", "description": "", "tech_stack": "web",
+    }).json()
+    client.post("/api/tasks", json={"project_id": with_task["id"], "title": "real work"})
+    with_mem = client.post("/api/projects", json={
+        "name": "sweep with memory", "description": "", "tech_stack": "web",
+    }).json()
+    project_memory.write(with_mem["id"], mem_type="artifact", key="game_html_v1",
+                         content="<html/>", created_by="test")
+
+    resp = client.post("/api/projects/cleanup?dry_run=false&only_empty=true")
+    assert resp.status_code == 200
+    deleted_ids = {d["project_id"] for d in resp.json()["deleted"]}
+
+    assert empty["id"] in deleted_ids
+    assert with_task["id"] not in deleted_ids
+    assert with_mem["id"] not in deleted_ids
+
+    assert client.get(f"/api/projects/{empty['id']}").status_code == 404
+    assert client.get(f"/api/projects/{with_task['id']}").status_code == 200
+    assert client.get(f"/api/projects/{with_mem['id']}").status_code == 200
+
+
+def test_cleanup_respects_keep_ids(tmp_path, monkeypatch):
+    """keep_ids=a,b protects explicit projects even if they'd otherwise sweep."""
+    from src.settings import settings
+    monkeypatch.setattr(settings, "projects_dir", str(tmp_path))
+
+    keep = client.post("/api/projects", json={
+        "name": "keep me", "description": "", "tech_stack": "web",
+    }).json()
+    sweep = client.post("/api/projects", json={
+        "name": "sweep me", "description": "", "tech_stack": "web",
+    }).json()
+
+    resp = client.post(
+        f"/api/projects/cleanup?dry_run=false&only_empty=true&keep_ids={keep['id']}"
+    )
+    assert resp.status_code == 200
+    deleted_ids = {d["project_id"] for d in resp.json()["deleted"]}
+    assert keep["id"] not in deleted_ids
+    assert sweep["id"] in deleted_ids
+
+
+def test_cleanup_older_than_days_filters(tmp_path, monkeypatch):
+    """older_than_days=7 skips projects created in the last week."""
+    from src.settings import settings
+    monkeypatch.setattr(settings, "projects_dir", str(tmp_path))
+
+    fresh = client.post("/api/projects", json={
+        "name": "fresh", "description": "", "tech_stack": "web",
+    }).json()
+
+    # Fresh project was just created → older_than_days=30 should NOT sweep it.
+    resp = client.post("/api/projects/cleanup?dry_run=true&only_empty=true&older_than_days=30")
+    assert resp.status_code == 200
+    ids = {c["id"] for c in resp.json()["would_delete"]}
+    assert fresh["id"] not in ids

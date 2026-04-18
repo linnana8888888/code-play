@@ -24,7 +24,7 @@ export default function Dashboard() {
   const [spawnProjectId, setSpawnProjectId] = useState<string>("");
   const [taskFilter, setTaskFilter] = useState<string>("");
   const [newTaskOpen, setNewTaskOpen] = useState(false);
-  const { projects, create } = useProjects();
+  const { projects, create, remove, cleanup, previewCleanup } = useProjects();
   const { definitions, categories, instances, spawn, terminate } = useAgents();
   const { tasks, create: createNewTask } = useTasks(taskFilter || undefined);
 
@@ -57,7 +57,13 @@ export default function Dashboard() {
           <StatsOverview />
           <div className="grid gap-6 lg:grid-cols-3">
             <div className="lg:col-span-2">
-              <ProjectGrid projects={projects} onCreate={() => setCreateOpen(true)} />
+              <ProjectGrid
+                projects={projects}
+                onCreate={() => setCreateOpen(true)}
+                onDelete={remove}
+                onCleanup={cleanup}
+                onPreviewCleanup={previewCleanup}
+              />
             </div>
             <ActivityFeed />
           </div>

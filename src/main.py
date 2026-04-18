@@ -23,7 +23,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from src.settings import settings
-from src.database import init_studio_db, init_project_db, get_studio_db
+from src.database import init_studio_db, init_project_db, get_studio_db, get_project_db
 from src.models.projects import Project, ProjectCreate
 from src.models.tasks import TaskCreate, TaskStatus, TaskUpdate
 from src.models.agents import AgentStatus
@@ -272,6 +272,116 @@ async def get_project(project_id: str):
     if not row:
         raise HTTPException(404, "Project not found")
     return dict(row)
+
+
+def _delete_project_cascade(project_id: str) -> dict:
+    """Remove a project's DB rows across every studio table, then nuke the
+    projects/{id}/ directory. Idempotent — missing rows/files are not errors."""
+    import shutil
+    deleted = {"project_id": project_id}
+    with get_studio_db() as db:
+        row = db.execute("SELECT id FROM projects WHERE id = ?", (project_id,)).fetchone()
+        deleted["existed"] = bool(row)
+        for table in ("cost_log", "messages", "agent_instances", "tasks"):
+            cur = db.execute(f"DELETE FROM {table} WHERE project_id = ?", (project_id,))
+            deleted[table] = cur.rowcount
+        cur = db.execute("DELETE FROM projects WHERE id = ?", (project_id,))
+        deleted["projects"] = cur.rowcount
+
+    project_dir = Path(settings.projects_dir) / project_id
+    if project_dir.is_dir():
+        shutil.rmtree(project_dir, ignore_errors=True)
+        deleted["fs_removed"] = True
+    else:
+        deleted["fs_removed"] = False
+    return deleted
+
+
+def _project_is_empty(db, project_id: str) -> bool:
+    """A project is 'empty' if it has no tasks AND no memory rows.
+
+    Uses `get_project_db` so we hit the exact same path project_memory wrote to,
+    rather than reconstructing it from `settings.projects_dir`."""
+    task_count = db.execute(
+        "SELECT COUNT(*) as c FROM tasks WHERE project_id = ?", (project_id,)
+    ).fetchone()["c"]
+    if task_count > 0:
+        return False
+    try:
+        with get_project_db(project_id) as pdb:
+            mem_count = pdb.execute("SELECT COUNT(*) FROM memory").fetchone()[0]
+    except Exception:
+        mem_count = 0
+    return mem_count == 0
+
+
+@app.delete("/api/projects/{project_id}")
+async def delete_project(project_id: str):
+    """Hard-delete a single project and everything it owns (tasks, memory,
+    messages, worktrees, assets). Idempotent — deleting a missing id 404s."""
+    with get_studio_db() as db:
+        row = db.execute("SELECT id FROM projects WHERE id = ?", (project_id,)).fetchone()
+    if not row:
+        raise HTTPException(404, "Project not found")
+    result = _delete_project_cascade(project_id)
+    await ws_manager.broadcast({"type": "project_deleted", "data": {"project_id": project_id}})
+    return {"status": "deleted", **result}
+
+
+@app.post("/api/projects/cleanup")
+async def cleanup_projects(
+    dry_run: bool = True,
+    only_empty: bool = True,
+    older_than_days: int | None = None,
+    keep_ids: str = "",
+):
+    """Bulk-delete self-generated junk projects.
+
+    Defaults are safe (`dry_run=True`, `only_empty=True`) so humans can preview
+    what would be deleted. Set `dry_run=false` to actually delete.
+
+    - only_empty: only sweep projects that have no tasks and no memory artifacts
+    - older_than_days: skip projects newer than N days (None = no age filter)
+    - keep_ids: comma-separated allow-list of project ids to never delete
+    """
+    from datetime import datetime, timezone, timedelta
+    keep = {s.strip() for s in keep_ids.split(",") if s.strip()}
+
+    cutoff = None
+    if older_than_days is not None:
+        cutoff = datetime.now(timezone.utc) - timedelta(days=older_than_days)
+
+    with get_studio_db() as db:
+        rows = db.execute("SELECT id, name, created_at FROM projects").fetchall()
+        candidates: list[dict] = []
+        for r in rows:
+            pid = r["id"]
+            if pid in keep:
+                continue
+            if cutoff is not None:
+                try:
+                    created = datetime.fromisoformat(r["created_at"])
+                    if created.tzinfo is None:
+                        created = created.replace(tzinfo=timezone.utc)
+                    if created > cutoff:
+                        continue
+                except Exception:
+                    pass  # unparseable → fall through and consider it
+            if only_empty and not _project_is_empty(db, pid):
+                continue
+            candidates.append({"id": pid, "name": r["name"], "created_at": r["created_at"]})
+
+    if dry_run:
+        return {"dry_run": True, "would_delete": candidates, "count": len(candidates)}
+
+    deleted: list[dict] = []
+    for c in candidates:
+        deleted.append(_delete_project_cascade(c["id"]))
+    await ws_manager.broadcast({
+        "type": "projects_cleaned",
+        "data": {"count": len(deleted), "ids": [d["project_id"] for d in deleted]},
+    })
+    return {"dry_run": False, "deleted": deleted, "count": len(deleted)}
 
 
 # ==================== Agents ====================

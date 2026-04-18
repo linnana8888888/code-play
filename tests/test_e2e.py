@@ -40,6 +40,21 @@ def setup():
 client = TestClient(app)
 
 
+@pytest.fixture
+def tmp_projects(tmp_path, monkeypatch):
+    """Point `settings.projects_dir` at a tmpdir and init the studio DB in it.
+
+    Since `src.database` now reads `projects_dir` dynamically, a bare tmpdir
+    has no `studio.db` yet — tests that create projects via the API would
+    otherwise fail with `no such table: projects`."""
+    from src.settings import settings
+
+    monkeypatch.setattr(settings, "projects_dir", str(tmp_path))
+    from src.database import init_studio_db
+    init_studio_db()
+    return tmp_path
+
+
 @pytest.fixture(scope="module", autouse=True)
 def _sweep_test_projects():
     """Record project IDs present before tests, sweep anything new after.
@@ -764,10 +779,9 @@ def test_gate_ready_broadcast_on_pipeline_advance(monkeypatch):
 # ==================== #2 Inline asset previews ====================
 
 
-def test_asset_previews_empty_for_new_project(tmp_path, monkeypatch):
+def test_asset_previews_empty_for_new_project(tmp_projects):
     """List endpoint returns [] when no assets/ dir exists."""
-    from src.settings import settings
-    monkeypatch.setattr(settings, "projects_dir", str(tmp_path))
+    tmp_path = tmp_projects
 
     project = client.post("/api/projects", json={
         "name": "Asset Empty Project",
@@ -780,10 +794,9 @@ def test_asset_previews_empty_for_new_project(tmp_path, monkeypatch):
     assert resp.json() == []
 
 
-def test_asset_previews_lists_downloaded_images(tmp_path, monkeypatch):
+def test_asset_previews_lists_downloaded_images(tmp_projects):
     """Images placed in projects/{id}/assets/ are surfaced with url + bytes."""
-    from src.settings import settings
-    monkeypatch.setattr(settings, "projects_dir", str(tmp_path))
+    tmp_path = tmp_projects
 
     project = client.post("/api/projects", json={
         "name": "Asset List Project",
@@ -808,10 +821,9 @@ def test_asset_previews_lists_downloaded_images(tmp_path, monkeypatch):
         assert item["url"].startswith(f"/api/projects/{pid}/assets/file/")
 
 
-def test_asset_file_streams_content_and_blocks_traversal(tmp_path, monkeypatch):
+def test_asset_file_streams_content_and_blocks_traversal(tmp_projects):
     """Per-file endpoint returns bytes for valid paths and 404s on traversal."""
-    from src.settings import settings
-    monkeypatch.setattr(settings, "projects_dir", str(tmp_path))
+    tmp_path = tmp_projects
 
     project = client.post("/api/projects", json={
         "name": "Asset Stream Project",
@@ -1195,12 +1207,11 @@ def test_style_research_agent_category_is_research():
 # ==================== #8 cleanup self-generated projects ====================
 
 
-def test_delete_project_cascades_db_and_filesystem(tmp_path, monkeypatch):
+def test_delete_project_cascades_db_and_filesystem(tmp_projects):
     """DELETE /api/projects/{id} removes the project row, its tasks, messages,
     memory, and nukes projects/{id}/ on disk."""
-    from src.settings import settings
     from src.memory.project_memory import project_memory
-    monkeypatch.setattr(settings, "projects_dir", str(tmp_path))
+    tmp_path = tmp_projects
 
     project = client.post("/api/projects", json={
         "name": "Delete Cascade",
@@ -1243,10 +1254,9 @@ def test_delete_project_404s_on_missing():
     assert resp.status_code == 404
 
 
-def test_cleanup_dry_run_does_not_delete(tmp_path, monkeypatch):
+def test_cleanup_dry_run_does_not_delete(tmp_projects):
     """POST /api/projects/cleanup?dry_run=true reports candidates but keeps them."""
-    from src.settings import settings
-    monkeypatch.setattr(settings, "projects_dir", str(tmp_path))
+    tmp_path = tmp_projects
 
     empty = client.post("/api/projects", json={
         "name": "dry run empty", "description": "", "tech_stack": "web",
@@ -1271,12 +1281,11 @@ def test_cleanup_dry_run_does_not_delete(tmp_path, monkeypatch):
     assert client.get(f"/api/projects/{kept['id']}").status_code == 200
 
 
-def test_cleanup_actual_sweep_deletes_empty_only(tmp_path, monkeypatch):
+def test_cleanup_actual_sweep_deletes_empty_only(tmp_projects):
     """dry_run=false with only_empty=true deletes empty projects and leaves
     projects with tasks/memory untouched."""
-    from src.settings import settings
     from src.memory.project_memory import project_memory
-    monkeypatch.setattr(settings, "projects_dir", str(tmp_path))
+    tmp_path = tmp_projects
 
     empty = client.post("/api/projects", json={
         "name": "sweep empty", "description": "", "tech_stack": "web",
@@ -1304,10 +1313,9 @@ def test_cleanup_actual_sweep_deletes_empty_only(tmp_path, monkeypatch):
     assert client.get(f"/api/projects/{with_mem['id']}").status_code == 200
 
 
-def test_cleanup_respects_keep_ids(tmp_path, monkeypatch):
+def test_cleanup_respects_keep_ids(tmp_projects):
     """keep_ids=a,b protects explicit projects even if they'd otherwise sweep."""
-    from src.settings import settings
-    monkeypatch.setattr(settings, "projects_dir", str(tmp_path))
+    tmp_path = tmp_projects
 
     keep = client.post("/api/projects", json={
         "name": "keep me", "description": "", "tech_stack": "web",
@@ -1325,10 +1333,9 @@ def test_cleanup_respects_keep_ids(tmp_path, monkeypatch):
     assert sweep["id"] in deleted_ids
 
 
-def test_cleanup_older_than_days_filters(tmp_path, monkeypatch):
+def test_cleanup_older_than_days_filters(tmp_projects):
     """older_than_days=7 skips projects created in the last week."""
-    from src.settings import settings
-    monkeypatch.setattr(settings, "projects_dir", str(tmp_path))
+    tmp_path = tmp_projects
 
     fresh = client.post("/api/projects", json={
         "name": "fresh", "description": "", "tech_stack": "web",

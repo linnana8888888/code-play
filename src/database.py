@@ -6,19 +6,49 @@ from pathlib import Path
 from contextlib import contextmanager
 from datetime import datetime, timezone
 
+from src.settings import settings
 
-DB_DIR = Path("projects")
+
+def _db_dir() -> Path:
+    """Project root directory — read from settings each call so tests that
+    monkeypatch `settings.projects_dir` land in the same folder the rest of
+    the app uses (this was the source of orphan `projects/proj-xxx/` dirs:
+    tests pointed the cleanup path at a tmpdir while memory.db kept being
+    written to the hardcoded `projects/`)."""
+    return Path(settings.projects_dir)
 
 
 def _get_studio_db_path() -> Path:
-    DB_DIR.mkdir(parents=True, exist_ok=True)
-    return DB_DIR / "studio.db"
+    d = _db_dir()
+    d.mkdir(parents=True, exist_ok=True)
+    return d / "studio.db"
 
 
 def _get_project_db_path(project_id: str) -> Path:
-    project_dir = DB_DIR / project_id
+    project_dir = _db_dir() / project_id
     project_dir.mkdir(parents=True, exist_ok=True)
     return project_dir / "memory.db"
+
+
+class ProjectNotFoundError(Exception):
+    """Raised when a caller asks for a project_id that has no studio row."""
+
+
+def _project_exists(project_id: str) -> bool:
+    """Cheap existence check against the studio DB."""
+    db_path = _db_dir() / "studio.db"
+    if not db_path.exists():
+        return False
+    conn = sqlite3.connect(str(db_path))
+    try:
+        row = conn.execute(
+            "SELECT 1 FROM projects WHERE id = ? LIMIT 1", (project_id,)
+        ).fetchone()
+        return row is not None
+    except sqlite3.OperationalError:
+        return False
+    finally:
+        conn.close()
 
 
 @contextmanager
@@ -40,8 +70,18 @@ def get_studio_db():
 
 
 @contextmanager
-def get_project_db(project_id: str):
-    """Connection to a project-specific database (memory, artifacts)."""
+def get_project_db(project_id: str, *, require_exists: bool = True):
+    """Connection to a project-specific database (memory, artifacts).
+
+    Defaults to refusing unknown project_ids — that's what was generating
+    orphan `projects/proj-xxx/` folders when agents or tools fat-fingered
+    an id. Call with `require_exists=False` only during the very first
+    project-creation transaction (studio row inserted but folder not yet
+    materialized)."""
+    if require_exists and not _project_exists(project_id):
+        raise ProjectNotFoundError(
+            f"Project {project_id!r} has no studio row — refusing to create its folder"
+        )
     db_path = _get_project_db_path(project_id)
     conn = sqlite3.connect(str(db_path))
     conn.row_factory = sqlite3.Row

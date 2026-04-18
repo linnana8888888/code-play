@@ -315,14 +315,47 @@ class ToolExecutor:
             },
         })
 
-        # web_search
+        # web_search — classic keyword search via DuckDuckGo HTML (no key needed)
         self._register("web_search", self._tool_web_search, {
             "name": "web_search",
-            "description": "Search the web for information.",
+            "description": (
+                "Classic web search. Returns a list of result URLs + titles + snippets "
+                "via DuckDuckGo HTML (no key needed). Good when you want to pick which "
+                "pages to read yourself. For synthesized answers with citations use "
+                "`perplexity_research` instead."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "query": {"type": "string", "description": "Search query"},
+                    "query": {"type": "string", "description": "Search query (keywords or natural language)"},
+                    "limit": {"type": "integer", "description": "Max results (default 8, max 20)"},
+                },
+                "required": ["query"],
+            },
+        })
+
+        # perplexity_research — synthesized answer + citations via Perplexity Sonar
+        self._register("perplexity_research", self._tool_perplexity_research, {
+            "name": "perplexity_research",
+            "description": (
+                "Deep research via Perplexity Sonar. Returns a synthesized answer "
+                "with citation URLs. Best for multi-source questions like 'what are "
+                "top Roblox obbies by traction?' Requires PERPLEXITY_API_KEY."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Natural-language research question"},
+                    "depth": {
+                        "type": "string",
+                        "enum": ["quick", "standard", "deep"],
+                        "description": "quick=sonar, standard=sonar-pro, deep=sonar-reasoning",
+                    },
+                    "recency": {
+                        "type": "string",
+                        "enum": ["day", "week", "month", "year"],
+                        "description": "Bias toward recent content. Omit for unfiltered.",
+                    },
                 },
                 "required": ["query"],
             },
@@ -761,8 +794,152 @@ class ToolExecutor:
         return await self._tool_bash_execute({"command": f"git diff {flag}"}, **ctx)
 
     async def _tool_web_search(self, args: dict, **ctx) -> str:
-        # Placeholder — will integrate with a search API
-        return f"Web search not yet implemented. Query: {args['query']}"
+        """Classic web search via DuckDuckGo HTML (no key). Returns [{title,url,snippet}]."""
+        import html as _html, re as _re
+        import httpx as _httpx
+        query = args["query"]
+        limit = min(int(args.get("limit") or 8), 20)
+        try:
+            # DDG flags obvious bot UAs with a 202 "anomaly" interstitial.
+            # Use a real Chrome UA; POST with form body returns the full
+            # result__a/result__snippet markup our parser expects.
+            async with _httpx.AsyncClient(
+                timeout=30.0,
+                follow_redirects=True,
+                headers={
+                    "User-Agent": (
+                        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                        "AppleWebKit/537.36 (KHTML, like Gecko) "
+                        "Chrome/122.0.0.0 Safari/537.36"
+                    ),
+                    "Accept-Language": "en-US,en;q=0.9",
+                    "Referer": "https://duckduckgo.com/",
+                },
+            ) as client:
+                resp = await client.post(
+                    "https://html.duckduckgo.com/html/",
+                    data={"q": query},
+                )
+                resp.raise_for_status()
+                body = resp.text
+                if "anomaly-modal" in body or "anomaly_id" in body:
+                    return json.dumps({
+                        "status": "rate_limited",
+                        "query": query,
+                        "hint": "DuckDuckGo flagged the request; retry later or use perplexity_research.",
+                    })
+        except Exception as e:
+            return json.dumps({
+                "status": "error",
+                "error": f"{type(e).__name__}: {e}",
+                "query": query,
+            })
+
+        # Parse the DuckDuckGo HTML result blocks.
+        result_rx = _re.compile(
+            r'<a[^>]*class="result__a"[^>]*href="([^"]+)"[^>]*>(.*?)</a>.*?'
+            r'<a[^>]*class="result__snippet"[^>]*>(.*?)</a>',
+            _re.DOTALL,
+        )
+        def _strip(s: str) -> str:
+            s = _re.sub(r"<[^>]+>", "", s)
+            return _html.unescape(s).strip()
+
+        def _unwrap(url: str) -> str:
+            # DuckDuckGo wraps result URLs in /l/?uddg=<encoded>. Unwrap.
+            m = _re.search(r"uddg=([^&]+)", url)
+            if m:
+                from urllib.parse import unquote
+                return unquote(m.group(1))
+            return url
+
+        hits = []
+        for m in result_rx.finditer(body):
+            hits.append({
+                "title": _strip(m.group(2)),
+                "url": _unwrap(m.group(1)),
+                "snippet": _strip(m.group(3)),
+            })
+            if len(hits) >= limit:
+                break
+
+        return json.dumps({
+            "status": "ok",
+            "query": query,
+            "count": len(hits),
+            "results": hits,
+        })
+
+    async def _tool_perplexity_research(self, args: dict, **ctx) -> str:
+        """Perplexity Sonar-backed research. Returns synthesized answer + citations."""
+        import os as _os
+        key = _os.environ.get("PERPLEXITY_API_KEY")
+        if not key:
+            return json.dumps({
+                "status": "error",
+                "error": "PERPLEXITY_API_KEY not set — cannot run perplexity_research",
+                "query": args.get("query"),
+            })
+
+        depth = (args.get("depth") or "standard").lower()
+        model = {"quick": "sonar", "standard": "sonar-pro",
+                 "deep": "sonar-reasoning"}.get(depth, "sonar-pro")
+
+        body = {
+            "model": model,
+            "messages": [
+                {"role": "system", "content": (
+                    "You are a concise research assistant. Answer in under 400 words "
+                    "with clear citations. Prefer primary sources and recent data."
+                )},
+                {"role": "user", "content": args["query"]},
+            ],
+        }
+        recency = args.get("recency")
+        if recency:
+            body["search_recency_filter"] = recency
+
+        try:
+            import httpx as _httpx
+            async with _httpx.AsyncClient(timeout=90.0) as client:
+                resp = await client.post(
+                    "https://api.perplexity.ai/chat/completions",
+                    headers={"Authorization": f"Bearer {key}",
+                             "Content-Type": "application/json"},
+                    json=body,
+                )
+                if resp.status_code >= 400:
+                    return json.dumps({
+                        "status": "error",
+                        "error": f"Perplexity {resp.status_code}: {resp.text[:500]}",
+                        "query": args.get("query"),
+                    })
+                data = resp.json()
+        except Exception as e:
+            return json.dumps({
+                "status": "error",
+                "error": f"{type(e).__name__}: {e}",
+                "query": args.get("query"),
+            })
+
+        choice = (data.get("choices") or [{}])[0]
+        answer = (choice.get("message") or {}).get("content", "")
+        citations = data.get("citations") or data.get("search_results") or []
+        cites_out = []
+        for c in citations:
+            if isinstance(c, str):
+                cites_out.append({"url": c})
+            elif isinstance(c, dict):
+                cites_out.append({k: v for k, v in c.items() if k in ("url", "title")})
+        return json.dumps({
+            "status": "ok",
+            "query": args.get("query"),
+            "depth": depth,
+            "model": model,
+            "answer": answer,
+            "citations": cites_out,
+            "usage": data.get("usage"),
+        })
 
     async def _tool_channel_post(self, args: dict, **ctx) -> str:
         project_id = ctx.get("project_id")

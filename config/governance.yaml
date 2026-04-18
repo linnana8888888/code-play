@@ -26,7 +26,8 @@ builtin:
   - git_commit
   - git_diff
   # Web
-  - web_search
+  - web_search          # DuckDuckGo HTML (no key)
+  - perplexity_research # Perplexity Sonar (needs PERPLEXITY_API_KEY)
   - web_fetch
   # Collaboration
   - channel_post

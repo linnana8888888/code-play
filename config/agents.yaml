@@ -108,6 +108,12 @@ agents:
     description: "Research visual style references from live Roblox/web games"
     tools: [builtin]
 
+  mechanic-researcher:
+    model: "anthropic/anthropic.claude-opus-4-7"
+    fallback_model: "anthropic/anthropic.claude-sonnet-4-6"
+    description: "Teardown popular games → actionable mechanic steal-list for ideation before concept lock"
+    tools: [builtin]
+
   # Engineering leadership
   tech-lead:
     model: "openai/gpt-5-2025-08-07"

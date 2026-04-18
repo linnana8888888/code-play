@@ -126,12 +126,62 @@ class LLMRouter:
     # --- Anthropic (native format) ---
 
     async def _call_anthropic(self, model: str, request: LLMRequest) -> LLMResponse:
-        # Extract system message from messages list
+        # Extract system message, then translate the OpenAI-style conversation
+        # (role="assistant" + tool_calls, role="tool" with tool_call_id) into
+        # Anthropic's native tool_use / tool_result content blocks. Consecutive
+        # tool results must collapse into a single user message.
         system_msg = ""
-        user_messages = []
+        raw_messages: list[dict] = []
         for msg in request.messages:
             if msg["role"] == "system":
                 system_msg += msg["content"] + "\n"
+            else:
+                raw_messages.append(msg)
+
+        user_messages: list[dict] = []
+        for msg in raw_messages:
+            role = msg.get("role")
+            if role == "assistant":
+                content = msg.get("content", "")
+                tool_calls = msg.get("tool_calls") or []
+                if not tool_calls and isinstance(content, (str, list)):
+                    user_messages.append({"role": "assistant", "content": content})
+                    continue
+                blocks: list[dict] = []
+                if isinstance(content, str) and content:
+                    blocks.append({"type": "text", "text": content})
+                elif isinstance(content, list):
+                    blocks.extend(content)
+                for tc in tool_calls:
+                    fn = tc.get("function", {}) if "function" in tc else tc
+                    import json as _json
+                    args = fn.get("arguments", fn.get("input", {}))
+                    if isinstance(args, str):
+                        try:
+                            args = _json.loads(args or "{}")
+                        except Exception:
+                            args = {"_raw": args}
+                    blocks.append({
+                        "type": "tool_use",
+                        "id": tc.get("id"),
+                        "name": fn.get("name"),
+                        "input": args,
+                    })
+                user_messages.append({"role": "assistant", "content": blocks})
+            elif role == "tool":
+                block = {
+                    "type": "tool_result",
+                    "tool_use_id": msg.get("tool_call_id") or msg.get("tool_use_id"),
+                    "content": msg.get("content", ""),
+                }
+                if user_messages and user_messages[-1]["role"] == "user" \
+                        and isinstance(user_messages[-1].get("content"), list) \
+                        and user_messages[-1]["content"] \
+                        and isinstance(user_messages[-1]["content"][0], dict) \
+                        and user_messages[-1]["content"][0].get("type") == "tool_result":
+                    user_messages[-1]["content"].append(block)
+                else:
+                    user_messages.append({"role": "user", "content": [block]})
             else:
                 user_messages.append(msg)
 
@@ -162,6 +212,13 @@ class LLMRouter:
             json=payload,
             headers=headers,
         )
+        if resp.status_code >= 400:
+            import json as _json, logging, pathlib
+            dump = pathlib.Path("/tmp/anthropic_fail_payload.json")
+            dump.write_text(_json.dumps(payload, indent=2, default=str))
+            logging.getLogger(__name__).error(
+                "Anthropic proxy %s: %s (payload → %s)", resp.status_code, resp.text[:2000], dump,
+            )
         resp.raise_for_status()
         data = resp.json()
 

@@ -84,6 +84,7 @@ builtin_skills:
   - coding-standards
   - git-workflow
   - testing-patterns
+  - asset-sources   # 8-pool asset documentation (kenney, itch, polyhaven, ambientcg, quaternius, pixabay, freesound, oga)
 
 blocked:
   # Always denied.

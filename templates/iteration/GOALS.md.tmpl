@@ -1,0 +1,48 @@
+# GOALS — {{PROJECT_TITLE}} iteration targets
+
+Metric names are verbatim from `code-play/docs/iteration_contract.md` §2.
+Aggregates wrap those names in `median()`, `p25()`, `p75()`, or `rate()`.
+**Do not introduce names outside the contract** — flag them under "Open
+additions" instead. The postmortem agent will reject unknown names via
+`validate_goals_md()`.
+
+## How to compute over N runs
+
+The postmortem agent loads all `telemetry/*.json` with `iteration_tag`
+matching the current version, filters to `outcome in {"win","death","timeout"}`
+(drop `"quit"` — bot crash, not a play signal), and computes each aggregate
+across that filtered set. N ≥ 5 runs per tag before a target is considered
+meaningful; below that, report "insufficient sample" rather than pass/fail.
+
+## Targets
+
+1. **Session length (engagement)**
+   - Threshold: `median(session_duration_sec) >= 120`
+   - Rationale: a run under 2 minutes is over before the core loop develops
+     any texture; median anchors the typical experience against outliers.
+
+2. **Skill expression (accuracy band)**
+   - Threshold: `p25(accuracy) >= 0.20 AND p75(accuracy) <= 0.80`
+   - Rationale: a bottom quartile that can't clear 20% means the game punishes
+     misses too harshly; a top quartile above 80% means accuracy is trivially
+     solved. The band keeps input a skill.
+
+3. **Progression reach**
+   - Threshold: `rate(levels_reached >= 2) >= 0.35`
+   - Rationale: at least ~1/3 of runs should see the second stage, otherwise
+     content beyond the opener is dead weight no real player experiences.
+
+4. **Early hook (time to first kill)**
+   - Threshold: `median(time_to_first_kill_sec) <= 20 AND p75(time_to_first_kill_sec) <= 35`
+   - Rationale: the first dopamine hit must land fast; the p75 ceiling guards
+     against a long tail of silent openings.
+
+5. **Feature usage**
+   - Threshold: `median(dashes_used) >= 2`
+   - Rationale: a movement mechanic the median run never touches is UI noise.
+     Adjust the floor to match this game's controls; drop the target entirely
+     if there's no dash analog.
+
+## Open additions
+
+None. (If you need a new metric, edit the doctrine — do not add it here.)

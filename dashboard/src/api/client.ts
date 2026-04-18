@@ -153,6 +153,11 @@ export const runPipeline = (name: string, projectId: string, inputText = "") =>
     method: "POST",
     body: JSON.stringify({ project_id: projectId, input_text: inputText }),
   });
+export const advancePipeline = (projectId: string, forcePhase?: string) =>
+  req<{ status: string; project_id?: string }>(
+    `/pipelines/advance${qs({ project_id: projectId, force_phase: forcePhase })}`,
+    { method: "POST" },
+  );
 
 /* ── Stats ── */
 export const getStats = () => req<Stats>("/stats");

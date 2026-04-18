@@ -1,0 +1,34 @@
+# Iteration Contract — pointer
+
+This artifact follows the **code-play iteration doctrine**. The canonical
+schema, metric vocabulary, aggregate whitelist, and file-path conventions live
+in one place:
+
+> `code-play/docs/iteration_contract.md`
+
+**Project:** `{{PROJECT_TITLE}}`
+**Artifact repo:** `{{REPO_PATH}}`
+**Scaffolded at:** `{{SCAFFOLD_ISO}}` by `code-play/src/iteration/scaffolder.py`
+
+## What lives here vs. in the doctrine
+
+| Lives in doctrine                                  | Lives in this repo                          |
+|----------------------------------------------------|---------------------------------------------|
+| Telemetry schema (§1)                              | `telemetry/*.json` (produced at cycle time) |
+| Metric names (§2) + aggregate fns (§3)             | `GOALS.md` — threshold expressions only     |
+| File path conventions                              | `playtest_bot.mjs` — game-specific hooks    |
+
+Do **not** redefine the schema here. If a new metric is needed, propose it
+against the doctrine (edit `code-play/docs/iteration_contract.md` + re-run the
+contract test) — never branch the schema per game.
+
+## Validate before commit
+
+Before opening a proposal in an iterate_artifact cycle, run:
+
+```bash
+python3 -c "from src.iteration.contract import validate_goals_md; \
+            print(validate_goals_md(open('{{REPO_PATH}}/GOALS.md').read()))"
+```
+
+Zero issues means this artifact's GOALS.md is contract-clean.

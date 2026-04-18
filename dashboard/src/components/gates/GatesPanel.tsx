@@ -1,13 +1,16 @@
 import { useEffect, useState } from "react";
-import type { HumanGate } from "../../types/api";
+import type { HumanGate, Project } from "../../types/api";
 import {
   getGates,
   approveGate,
   reviseGate,
   gamePreviewUrl,
   getAssetPreviews,
+  getProject,
+  advancePipeline,
   type AssetPreview,
 } from "../../api/client";
+import SpecDiffGrid from "./SpecDiffGrid";
 
 interface Props {
   projectId: string;
@@ -47,19 +50,37 @@ export default function GatesPanel({ projectId, initialExpandedId }: Props) {
   const [assetPreviews, setAssetPreviews] = useState<AssetPreview[]>([]);
   const [expanded, setExpanded] = useState<string | null>(initialExpandedId ?? null);
   const [playOpen, setPlayOpen] = useState<string | null>(null);
+  const [project, setProject] = useState<Project | null>(null);
+  const [iterating, setIterating] = useState(false);
 
   async function refresh() {
     try {
-      const [g, a] = await Promise.all([
+      const [g, a, p] = await Promise.all([
         getGates(projectId),
         getAssetPreviews(projectId).catch(() => [] as AssetPreview[]),
+        getProject(projectId).catch(() => null as Project | null),
       ]);
       setGates(g);
       setAssetPreviews(a);
+      setProject(p);
     } catch (e) {
       console.error("getGates failed", e);
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function onIterate() {
+    if (!project) return;
+    setIterating(true);
+    try {
+      await advancePipeline(projectId, "iterate_artifact");
+      await refresh();
+    } catch (e) {
+      console.error("iterate_artifact launch failed", e);
+      alert(`Failed to launch iterate_artifact: ${e instanceof Error ? e.message : e}`);
+    } finally {
+      setIterating(false);
     }
   }
 
@@ -99,17 +120,43 @@ export default function GatesPanel({ projectId, initialExpandedId }: Props) {
     }
   }
 
+  const iterateEnabled = Boolean(project?.iterate_enabled);
+  const iterateHeader = iterateEnabled ? (
+    <div className="flex items-center justify-between rounded-xl border border-accent/40 bg-accent/10 p-3">
+      <div>
+        <p className="text-xs font-semibold uppercase tracking-wide text-accent">
+          Iterate on this artifact
+        </p>
+        <p className="text-[11px] text-text-muted">
+          Run the iterate_artifact pipeline: playtest → postmortem → propose ×4
+          → synthesis gate → implement. Loops up to the cycle budget (default 5).
+        </p>
+      </div>
+      <button
+        onClick={onIterate}
+        disabled={iterating}
+        className="rounded-lg bg-accent px-3 py-1.5 text-xs font-semibold text-bg hover:bg-accent/90 disabled:opacity-50"
+      >
+        {iterating ? "Launching…" : "▶ Iterate"}
+      </button>
+    </div>
+  ) : null;
+
   if (loading) return <p className="text-sm text-text-muted">Loading gates...</p>;
   if (gates.length === 0) {
     return (
-      <p className="text-sm text-text-muted">
-        No pending human gates. Launch the Phased Producer pipeline from the Dashboard to see them here.
-      </p>
+      <div className="space-y-4">
+        {iterateHeader}
+        <p className="text-sm text-text-muted">
+          No pending human gates. Launch the Phased Producer pipeline from the Dashboard to see them here.
+        </p>
+      </div>
     );
   }
 
   return (
     <div className="space-y-4">
+      {iterateHeader}
       {gates.map((gate) => {
         const summary = summariseResult(gate.preceding_result);
         const hexCodes = extractHexCodes(summary);
@@ -122,6 +169,32 @@ export default function GatesPanel({ projectId, initialExpandedId }: Props) {
         const isLafLike =
           gate.review_of === "look-and-feel" || gate.review_of === "style-research";
         const showPlayInline = playOpen === gate.task_id;
+        const isSynthesisGate =
+          gate.step_id === "synthesis_gate" ||
+          (gate.review_of?.startsWith("propose-") ?? false);
+
+        if (isSynthesisGate) {
+          return (
+            <div
+              key={gate.task_id}
+              className={`rounded-xl border p-4 ${
+                gate.ready ? "border-accent/50 bg-bg-card" : "border-border bg-bg-card opacity-70"
+              } ${isExpanded ? "ring-2 ring-accent" : ""}`}
+            >
+              <SpecDiffGrid
+                projectId={projectId}
+                gate={gate}
+                busy={busy === gate.task_id}
+                feedback={feedback[gate.task_id] ?? ""}
+                onFeedbackChange={(v) =>
+                  setFeedback((f) => ({ ...f, [gate.task_id]: v }))
+                }
+                onApprove={() => onApprove(gate)}
+                onRevise={() => onRevise(gate)}
+              />
+            </div>
+          );
+        }
 
         return (
           <div

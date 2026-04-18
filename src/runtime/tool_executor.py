@@ -540,17 +540,28 @@ class ToolExecutor:
         self._register("asset_search", self._tool_asset_search, {
             "name": "asset_search",
             "description": (
-                "Search shared asset pools for game art references: 'kenney' (CC0 packs) and 'itch' "
-                "(itch.io game-assets). Returns a list of {pool, asset_id, title, page_url, preview_url}. "
-                "Always call this during the look-and-feel phase BEFORE proposing a visual direction — "
-                "ground the aesthetic in real, reusable assets."
+                "Search shared asset pools for game art, audio, textures, and 3D models. "
+                "Pools: kenney (CC0 2D/audio), itch (mixed), polyhaven (CC0 HDRI/PBR/3D), "
+                "ambientcg (CC0 PBR), quaternius (CC0 3D), pixabay (photos/video/music, free-key), "
+                "freesound (SFX, free-key), oga (OpenGameArt CC0 filter). "
+                "Returns {pool, asset_id, title, page_url, preview_url, license, content_type, tags}. "
+                "'all' fans out across free/no-key pools. Always search BEFORE proposing a visual direction."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "query": {"type": "string", "description": "Keywords e.g. 'pixel platformer hero', 'low-poly forest'"},
-                    "pool": {"type": "string", "enum": ["kenney", "itch", "both"], "default": "both"},
+                    "pool": {
+                        "type": "string",
+                        "enum": ["kenney", "itch", "polyhaven", "ambientcg", "quaternius",
+                                 "pixabay", "freesound", "oga", "both", "all"],
+                        "default": "both",
+                    },
                     "limit": {"type": "integer", "description": "Max hits per pool (default 6)", "default": 6},
+                    "kind": {
+                        "type": "string",
+                        "description": "polyhaven/pixabay filter: 'hdris'|'textures'|'models'|'image'|'video'|'music'",
+                    },
                 },
                 "required": ["query"],
             },
@@ -661,16 +672,23 @@ class ToolExecutor:
             "name": "asset_fetch",
             "description": (
                 "Download an asset from a shared pool into the project workspace. "
-                "asset_id format is 'kenney:<slug>' or 'itch:<project_id>' (from asset_search). "
-                "kind='preview' grabs the thumbnail (small, fast). kind='zip' grabs the full pack "
-                "(kenney only; itch projects don't expose a direct zip). Returns the saved relative path."
+                "asset_id format is '<pool>:<slug>' (from asset_search). "
+                "kind='preview' grabs the thumbnail. kind='content' grabs the real asset "
+                "(zip for packs, image/hdr for polyhaven, audio MP3 for freesound, etc.). "
+                "Non-CC0 content requires accept_attribution=true; when set, a CREDITS.md line "
+                "is appended automatically. Returns the saved relative path."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "asset_id": {"type": "string", "description": "Asset id from asset_search"},
-                    "kind": {"type": "string", "enum": ["preview", "zip"], "default": "preview"},
+                    "asset_id": {"type": "string", "description": "Asset id from asset_search, e.g. polyhaven:rocky_terrain"},
+                    "kind": {"type": "string", "enum": ["preview", "zip", "content"], "default": "preview"},
                     "dest": {"type": "string", "description": "Destination directory relative to project root", "default": "assets/"},
+                    "resolution": {"type": "string", "description": "polyhaven/ambientcg resolution (e.g. '1k', '2k', '4k')", "default": "1k"},
+                    "format": {"type": "string", "description": "polyhaven/ambientcg format (jpg, png, hdr, exr)", "default": "jpg"},
+                    "accept_attribution": {"type": "boolean",
+                                           "description": "Acknowledge CC-BY / Pixabay attribution requirement; CREDITS.md will be appended.",
+                                           "default": False},
                 },
                 "required": ["asset_id"],
             },
@@ -1015,7 +1033,7 @@ class ToolExecutor:
         return "\n".join(rels) if rels else "No files matched."
 
     async def _tool_asset_search(self, args: dict, **ctx) -> str:
-        from src.runtime.asset_sources import search_kenney, search_itch
+        from src.runtime import asset_sources
         import httpx, json
 
         query = (args.get("query") or "").strip()
@@ -1023,89 +1041,230 @@ class ToolExecutor:
             raise ValueError("query is required")
         pool = args.get("pool", "both")
         limit = int(args.get("limit", 6))
+        kind = args.get("kind")
+
+        # "both" → kenney + itch (default, fast). "all" fans out across no-key pools.
+        if pool == "both":
+            pools = ("kenney", "itch")
+        elif pool == "all":
+            pools = ("kenney", "itch", "polyhaven", "ambientcg", "quaternius", "oga")
+        else:
+            pools = (pool,)
 
         hits: list = []
         async with httpx.AsyncClient(follow_redirects=True, timeout=20.0) as client:
-            if pool in ("kenney", "both"):
+            for p in pools:
+                fn = getattr(asset_sources, f"search_{p}", None)
+                if not fn:
+                    hits.append({"error": f"unknown pool: {p}"})
+                    continue
                 try:
-                    hits.extend(await search_kenney(query, limit, client=client))
+                    # Poly Haven + Pixabay accept a `kind` filter
+                    if p == "polyhaven" and kind:
+                        result = await fn(query, limit, kind=kind, client=client)
+                    elif p == "pixabay" and kind:
+                        result = await fn(query, limit, kind=kind, client=client)
+                    else:
+                        result = await fn(query, limit, client=client)
+                    hits.extend(result)
                 except Exception as e:
-                    hits.append({"error": f"kenney search failed: {e}"})
-            if pool in ("itch", "both"):
-                try:
-                    hits.extend(await search_itch(query, limit, client=client))
-                except Exception as e:
-                    hits.append({"error": f"itch search failed: {e}"})
+                    hits.append({"error": f"{p} search failed: {type(e).__name__}: {e}"})
 
         payload = [h.to_dict() if hasattr(h, "to_dict") else h for h in hits]
         return json.dumps({"query": query, "pool": pool, "hits": payload}, indent=2)
 
     async def _tool_asset_fetch(self, args: dict, **ctx) -> str:
-        from src.runtime.asset_sources import download, resolve_kenney_zip
+        from src.runtime import asset_sources
+        from src.runtime.asset_sources import download
         from pathlib import Path
         import httpx
 
         asset_id = (args.get("asset_id") or "").strip()
         if ":" not in asset_id:
-            return json.dumps({"status": "error", "error": "asset_id must be 'kenney:<slug>' or 'itch:<id>'"})
+            return json.dumps({"status": "error", "error": "asset_id must be '<pool>:<slug>'"})
         pool, ident = asset_id.split(":", 1)
         kind = args.get("kind", "preview")
         dest_rel = (args.get("dest") or "assets/").rstrip("/") + "/"
+        accept_attribution = bool(args.get("accept_attribution", False))
+        resolution = args.get("resolution", "1k")
+        fmt = args.get("format", "jpg")
 
-        # Compose a filename based on asset id + kind.
         safe_ident = re.sub(r"[^A-Za-z0-9_.-]", "_", ident)
 
         try:
             async with httpx.AsyncClient(follow_redirects=True, timeout=60.0) as client:
-                if pool == "kenney" and kind == "zip":
-                    zip_url = await resolve_kenney_zip(ident, client=client)
-                    if not zip_url:
-                        return json.dumps({
-                            "status": "error", "asset_id": asset_id, "kind": kind,
-                            "error": f"No zip download found for kenney:{ident}",
-                        })
-                    dest = self._safe_path(f"{dest_rel}{safe_ident}.zip", ctx.get("project_id"), ctx.get("agent_instance_id"))
-                    await download(zip_url, dest, client=client)
+                resolved = await self._resolve_asset(
+                    pool, ident, kind, resolution, fmt, client=client,
+                )
+                if "error" in resolved:
+                    return json.dumps({"status": "error", "asset_id": asset_id, **resolved})
+
+                # Quaternius etc. may return a human-in-the-loop download (Google Drive
+                # folders, etc.). Surface the URL to the agent instead of trying to stream.
+                if resolved.get("manual_download_required"):
                     return json.dumps({
-                        "status": "ok", "asset_id": asset_id, "kind": kind,
-                        "path": str(Path(dest_rel) / f"{safe_ident}.zip"),
-                        "source_url": zip_url,
+                        "status": "manual_download_required",
+                        "asset_id": asset_id,
+                        "download_url": resolved["download_url"],
+                        "note": resolved.get("note", ""),
+                        "license": resolved.get("license") or {"spdx_id": "Unknown"},
                     })
 
-                if pool == "kenney":
-                    resp = await client.get(
-                        f"https://kenney.nl/assets/{ident}",
-                        headers={"User-Agent": "code-play-agent/1.0"},
+                url = resolved["download_url"]
+                ext = resolved.get("ext") or (Path(url.split("?", 1)[0]).suffix.lstrip(".") or "bin")
+                lic = resolved.get("license") or {"spdx_id": "Unknown"}
+
+                # Policy: block non-CC0 content downloads unless the agent accepts attribution.
+                # Previews are always permitted because they're reference thumbnails.
+                if kind != "preview" and lic.get("spdx_id") != "CC0-1.0" and not accept_attribution:
+                    return json.dumps({
+                        "status": "needs_approval",
+                        "asset_id": asset_id,
+                        "reason": f"License {lic.get('spdx_id')} requires attribution — pass accept_attribution=true",
+                        "license": lic,
+                    })
+
+                dest = self._safe_path(
+                    f"{dest_rel}{safe_ident}.{ext}",
+                    ctx.get("project_id"), ctx.get("agent_instance_id"),
+                )
+                await download(url, dest, client=client)
+
+                # Emit CREDITS.md line for any non-CC0 content we just saved.
+                credits_line = None
+                if kind != "preview" and lic.get("spdx_id") != "CC0-1.0":
+                    credits_line = self._append_credits(
+                        dest_rel, asset_id, lic,
+                        ctx.get("project_id"), ctx.get("agent_instance_id"),
                     )
-                    m = re.search(r'<meta[^>]+property="og:image"[^>]+content="([^"]+)"', resp.text)
-                    preview_url = m.group(1) if m else None
-                elif pool == "itch":
-                    from src.runtime.asset_sources import search_itch
-                    results = await search_itch(ident, limit=8, client=client)
-                    match = next((r for r in results if r.asset_id == asset_id), None)
-                    preview_url = match.preview_url if match else None
-                else:
-                    return json.dumps({"status": "error", "asset_id": asset_id, "error": f"unknown pool: {pool}"})
 
-                if not preview_url:
-                    return json.dumps({
-                        "status": "error", "asset_id": asset_id, "kind": kind,
-                        "error": f"No preview URL resolved for {asset_id}",
-                    })
-
-                suffix = Path(preview_url.split("?", 1)[0]).suffix or ".png"
-                dest = self._safe_path(f"{dest_rel}{safe_ident}{suffix}", ctx.get("project_id"), ctx.get("agent_instance_id"))
-                await download(preview_url, dest, client=client)
                 return json.dumps({
-                    "status": "ok", "asset_id": asset_id, "kind": kind,
-                    "path": str(Path(dest_rel) / f"{safe_ident}{suffix}"),
-                    "source_url": preview_url,
+                    "status": "ok",
+                    "asset_id": asset_id,
+                    "kind": kind,
+                    "path": str(Path(dest_rel) / f"{safe_ident}.{ext}"),
+                    "source_url": url,
+                    "license": lic,
+                    "credits_appended": credits_line,
                 })
         except Exception as e:
             return json.dumps({
                 "status": "error", "asset_id": asset_id, "kind": kind,
                 "error": f"{type(e).__name__}: {e}",
             })
+
+    async def _resolve_asset(self, pool: str, ident: str, kind: str,
+                             resolution: str, fmt: str, *, client) -> dict:
+        """Dispatch per-pool resolver. Returns {download_url, ext?, license?} or {error}."""
+        from src.runtime import asset_sources
+        from src.runtime.asset_sources import (
+            resolve_kenney_zip, resolve_polyhaven, resolve_ambientcg,
+            resolve_quaternius_download, resolve_oga,
+        )
+
+        # --- preview path: fall back to search result's preview_url ---
+        if kind == "preview":
+            search_fn = asset_sources.SEARCH_REGISTRY.get(pool)
+            if not search_fn:
+                return {"error": f"unknown pool: {pool}"}
+            # For pools with JSON APIs, search-by-slug isn't the shape — we search with
+            # the ident and pick the exact match; worst case we return the first hit.
+            hits = await search_fn(ident, limit=8, client=client)
+            match = None
+            for h in hits:
+                if hasattr(h, "asset_id") and h.asset_id == f"{pool}:{ident}":
+                    match = h
+                    break
+            if not match and hits and hasattr(hits[0], "asset_id"):
+                match = hits[0]
+            if not match:
+                return {"error": f"No preview resolved for {pool}:{ident}"}
+            url = match.preview_url
+            if not url:
+                return {"error": f"Hit {match.asset_id} has no preview_url"}
+            ext = Path(url.split("?", 1)[0]).suffix.lstrip(".") or "png"
+            return {"download_url": url, "ext": ext, "license": match.license.to_dict()}
+
+        # --- content path: per-pool resolver ---
+        if pool == "kenney":
+            url = await resolve_kenney_zip(ident, client=client)
+            if not url:
+                return {"error": f"No zip for kenney:{ident}"}
+            return {"download_url": url, "ext": "zip",
+                    "license": asset_sources.CC0.to_dict()}
+
+        if pool == "polyhaven":
+            info = await resolve_polyhaven(ident, resolution=resolution, fmt=fmt, client=client)
+            return {**info, "license": asset_sources.CC0.to_dict()}
+
+        if pool == "ambientcg":
+            info = await resolve_ambientcg(ident, resolution=resolution.upper(), fmt=fmt, client=client)
+            return {**info, "license": asset_sources.CC0.to_dict()}
+
+        if pool == "quaternius":
+            info = await resolve_quaternius_download(ident, client=client)
+            if not info:
+                return {"error": f"No download link for quaternius:{ident}"}
+            if info.get("requires_manual"):
+                return {
+                    "manual_download_required": True,
+                    "download_url": info["download_url"],
+                    "note": info.get("note", ""),
+                    "license": asset_sources.CC0.to_dict(),
+                }
+            return {"download_url": info["download_url"],
+                    "ext": info.get("ext", "zip"),
+                    "license": asset_sources.CC0.to_dict()}
+
+        if pool == "oga":
+            info = await resolve_oga(ident, client=client)
+            if not info:
+                return {"error": f"oga:{ident} not CC0 or no download — refusing"}
+            return {**info, "license": asset_sources.CC0.to_dict()}
+
+        if pool == "pixabay":
+            # Pixabay: the search result already has download_url; re-search by id.
+            hits = await asset_sources.search_pixabay(ident, limit=8, client=client)
+            for h in hits:
+                if hasattr(h, "asset_id") and h.asset_id == f"pixabay:{ident}":
+                    return {"download_url": h.download_url,
+                            "ext": Path(h.download_url.split("?", 1)[0]).suffix.lstrip(".") or "jpg",
+                            "license": h.license.to_dict()}
+            return {"error": f"pixabay:{ident} not found in search"}
+
+        if pool == "freesound":
+            hits = await asset_sources.search_freesound(ident, limit=8, cc0_only=False, client=client)
+            for h in hits:
+                if hasattr(h, "asset_id") and h.asset_id == f"freesound:{ident}":
+                    return {"download_url": h.download_url, "ext": "mp3",
+                            "license": h.license.to_dict()}
+            return {"error": f"freesound:{ident} not found in search"}
+
+        if pool == "itch":
+            return {"error": "itch content downloads are not automated — "
+                             "open the page manually and confirm license first"}
+
+        return {"error": f"unknown pool: {pool}"}
+
+    def _append_credits(self, dest_rel: str, asset_id: str, lic: dict,
+                        project_id: str | None, agent_instance_id: str | None) -> str:
+        """Append a CREDITS.md entry at the project root. Returns the line written."""
+        line = (
+            f"- {asset_id} — {lic.get('spdx_id', 'Unknown')}"
+            + (f" — {lic.get('attribution_text')}" if lic.get("attribution_text") else "")
+            + (f" — {lic.get('attribution_url')}" if lic.get("attribution_url") else "")
+            + "\n"
+        )
+        try:
+            credits_path = self._safe_path("CREDITS.md", project_id, agent_instance_id)
+            if not credits_path.exists():
+                credits_path.write_text("# Credits\n\n", encoding="utf-8")
+            with credits_path.open("a", encoding="utf-8") as f:
+                f.write(line)
+        except Exception:
+            # Credits failure shouldn't break the fetch; return line for logs.
+            pass
+        return line.strip()
 
     async def _tool_playwright_browser(self, args: dict, **ctx) -> str:
         """Headless browser driver — small action set tuned for QA playtests.

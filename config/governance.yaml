@@ -40,7 +40,10 @@ builtin:
   - task_create
   # Claude Code skills
   - skill_invoke
-  # Shared asset pools — kenney.nl (CC0) + itch.io (game-assets)
+  # Shared asset pools — kenney, itch, polyhaven, ambientcg, quaternius,
+  # pixabay (key), freesound (key), oga (CC0-filter).
+  # Non-CC0 content downloads require accept_attribution=true and auto-append
+  # to CREDITS.md at the project root.
   - asset_search
   - asset_fetch
   # Headless browser for QA playtests

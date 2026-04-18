@@ -1,14 +1,56 @@
 ---
 name: Asset Sources
-description: Approved external art, audio, and game-asset sources agents can pull from. Use for technical-artist, game-audio-engineer, level-designer, frontend-developer, and roblox-* roles.
+description: Approved external art, audio, texture, 3D, and game-asset sources agents can pull from. Use for technical-artist, game-audio-engineer, level-designer, frontend-developer, and roblox-* roles.
 permission: standard
 ---
 
 # Asset Sources
 
-When a game needs visuals, audio, fonts, or ready-made assets, pull from these two sources first. Both are legally safe for studio use (commercial-friendly licenses) and ship in consumable formats (PNG/SVG/WAV/MP3).
+When a game needs visuals, audio, fonts, textures, HDRIs, or 3D models, use the `asset_search` and `asset_fetch` tools. They wrap eight vetted pools. Always record the asset's source URL, author, license, and game project ID in `projects/<proj-id>/assets/MANIFEST.md` when you add anything.
 
-Always record the asset's source URL, author, license, and game project ID in `projects/<proj-id>/assets/MANIFEST.md` when you add anything so the producer can audit provenance later.
+**License policy (enforced by `asset_fetch`):**
+- CC0 content → auto-approved, no credits required.
+- Non-CC0 content (CC-BY, Pixabay License, etc.) → the tool returns `status: needs_approval`. Re-invoke with `accept_attribution: true` and the tool will append a line to `CREDITS.md` automatically.
+- Previews (thumbnails) are always allowed regardless of license; use them for look-dev without commitment.
+
+## Pool cheat sheet
+
+| Pool | Type | License | Key needed | Best for |
+|---|---|---|---|---|
+| `kenney` | 2D sprites, UI, audio, fonts, some 3D | CC0 | no | Default for sprites, UI, SFX |
+| `itch` | Packs (mixed) | Unknown per-pack | no | Look-dev only; manual license check |
+| `polyhaven` | HDRIs, PBR textures, 3D models | CC0 | no | 3D scenes, lighting |
+| `ambientcg` | PBR textures, decals, HDRIs | CC0 | no | Material library |
+| `quaternius` | Low-poly 3D packs + animations | CC0 | no | 3D characters/props; Mixamo substitute |
+| `pixabay` | Photos, video, music, SFX | Pixabay License | `PIXABAY_API_KEY` | Stock photo, music beds |
+| `freesound` | SFX, field recordings | Mixed CC (CC0 filter available) | `FREESOUND_API_KEY` | Specific SFX search |
+| `oga` | OpenGameArt (CC0-only, strict filter) | CC0 | no | Niche 2D art Kenney lacks |
+
+## Decision tree
+
+```
+Need 2D sprites / UI / fonts?
+  └─ kenney first; oga if Kenney lacks the style
+Need SFX or music?
+  ├─ Quick jingle → kenney
+  ├─ Specific sound → freesound (needs key; filter cc0)
+  └─ Music bed → pixabay (needs key)
+Need 3D models?
+  ├─ Low-poly → quaternius
+  ├─ Realistic → polyhaven
+  └─ Character animations (humanoid) → quaternius Universal Animation Library (Mixamo is blocked — no API)
+Need textures / HDRIs?
+  ├─ PBR material → ambientcg or polyhaven
+  └─ Environment lighting → polyhaven hdris
+```
+
+## Agent workflow (look-dev phase)
+
+1. `asset_search` with `pool="all"` for broad exploration, or a specific pool for targeted work.
+2. Pick a hit, call `asset_fetch` with `kind="preview"` to pull a thumbnail for look-dev.
+3. When ready, `asset_fetch` with `kind="content"` (or `kind="zip"` for Kenney/Quaternius/OGA).
+4. For Poly Haven / ambientCG pass `resolution="1k"` + `format="jpg"` (default). Use `"2k"` / `"4k"` only when you have a reason — 8k HDRIs exceed the 100 MB cap.
+5. If `status: needs_approval` comes back, read the license, and if you accept the attribution, re-call with `accept_attribution=true`. A line is auto-appended to the project's `CREDITS.md`.
 
 ---
 
@@ -95,24 +137,50 @@ unzip -q "$PROJ_DIR/raw/kenney-$PACK.zip" -d "$PROJ_DIR/$PACK"
 
 ---
 
-## Decision tree
+## 3. Poly Haven — CC0 HDRIs, PBR textures, 3D models
 
-```
-Need 2D sprites or audio?
-  ├─ Quick + cohesive + no attribution → Kenney first
-  ├─ Pixel art / unusual style Kenney doesn't cover → itch.io (CC0 tag)
-  └─ Very specific theme → itch.io search, then license-check
+**Root:** https://polyhaven.com · **API:** https://api.polyhaven.com
 
-Need UI or fonts?
-  └─ Kenney UI Pack almost always has it.
+CC0, no attribution. Best for 3D scene lighting (HDRIs), realistic PBR materials, and high-quality 3D props. Default to 1k resolution (`"1k"`) for agent use — 4k/8k blow past the 100 MB download cap.
 
-Need 3D assets?
-  └─ Kenney has some (Space Kit, City Kit). itch.io coverage is thinner — ask producer.
+## 4. ambientCG — CC0 PBR textures, decals, HDRIs
 
-Need music loops?
-  ├─ Short jingles → Kenney Music Jingles
-  └─ Full background track → itch.io CC0 music
-```
+**Root:** https://ambientcg.com
+
+CC0, no attribution. Complements Poly Haven with a larger material library (3,000+ PBR materials). Use ambientcg for tiling textures, decals, and substance-style materials; use Poly Haven for HDRIs and curated 3D models.
+
+## 5. Quaternius — CC0 low-poly 3D + animations
+
+**Root:** https://quaternius.com
+
+CC0. Low-poly packs (nature, space, medieval, sci-fi) and the **Universal Animation Library** (humanoid animations, CC0). This is the Mixamo substitute — Mixamo itself is blocked because Adobe ToS forbids automated access.
+
+## 6. Pixabay — photos, video, music, SFX (key required)
+
+**Root:** https://pixabay.com · **API:** https://pixabay.com/api/
+
+Free API key (set `PIXABAY_API_KEY` env var). **Not CC0** — uses the Pixabay Content License: commercial OK, but selling unaltered copies is prohibited and identifiable people in sensitive contexts is forbidden. `asset_fetch` will require `accept_attribution=true` for this source.
+
+## 7. Freesound — SFX / music (key required)
+
+**Root:** https://freesound.org · **API:** https://freesound.org/apiv2/
+
+Free API key (set `FREESOUND_API_KEY` env var). Mixed CC (CC0, CC-BY, CC-BY-NC). By default `search_freesound` filters to CC0 only; pass `cc0_only=False` for broader search (then `asset_fetch` will gate CC-BY behind `accept_attribution`). The token tier returns preview MP3s — adequate for game-jam quality; full-quality WAV requires OAuth2 (not implemented).
+
+## 8. OpenGameArt — CC0 filter only
+
+**Root:** https://opengameart.org
+
+OpenGameArt allows mixed and OR-licensing, which is a compliance nightmare. Our scraper **only returns assets tagged purely CC0** — other licenses are dropped silently at search time, and `asset_fetch` double-checks the asset page before downloading.
+
+---
+
+## Do NOT use
+
+- **Mixamo** — Adobe ToS forbids automated access; raw-file redistribution is prohibited. Use Quaternius' Universal Animation Library instead.
+- **FreePD** — site permanently closed (2025).
+- **Incompetech** — CC-BY 4.0 requires per-track attribution; defer until a dedicated attribution subsystem exists.
+- **Poly Pizza** — API free but key is human-issued via contact form; revisit once a key is obtained and stored in env.
 
 ---
 

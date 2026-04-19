@@ -16,6 +16,14 @@ function shorten(s: string, n = 80) {
   return s.length > n ? s.slice(0, n) + "…" : s;
 }
 
+function fmtTime(ms: number) {
+  const d = new Date(ms);
+  const hh = String(d.getHours()).padStart(2, "0");
+  const mm = String(d.getMinutes()).padStart(2, "0");
+  const ss = String(d.getSeconds()).padStart(2, "0");
+  return `${hh}:${mm}:${ss}`;
+}
+
 function toRows(e: WsEvent): Row[] {
   const t = Date.now();
   const id = `${t}-${Math.random().toString(36).slice(2, 8)}`;
@@ -112,47 +120,122 @@ function toRows(e: WsEvent): Row[] {
 
 export default function ActivityFeed() {
   const [rows, setRows] = useState<Row[]>([]);
+  const [paused, setPaused] = useState(false);
+  const [filter, setFilter] = useState<string>("");
 
   useWebSocket((event) => {
+    if (paused) return;
     const newRows = toRows(event);
     if (newRows.length === 0) return;
-    setRows((prev) => [...newRows, ...prev].slice(0, 80));
+    setRows((prev) => [...newRows, ...prev].slice(0, 200));
   });
+
+  const visible = filter
+    ? rows.filter(
+        (r) =>
+          r.kind.includes(filter) ||
+          r.actor.toLowerCase().includes(filter.toLowerCase()) ||
+          r.detail.toLowerCase().includes(filter.toLowerCase()),
+      )
+    : rows;
 
   return (
     <div
       className="rounded-2xl border border-border bg-bg-card overflow-hidden"
       style={{ boxShadow: "rgba(0,0,0,0.03) 0px 2px 4px" }}
     >
-      <div className="flex items-center justify-between border-b border-border px-5 py-3.5">
+      <div className="flex flex-wrap items-center gap-3 border-b border-border px-5 py-3.5">
         <h2 className="text-[15px] font-semibold tight-heading">Live Activity</h2>
-        <span className="mono-label">{rows.length} events</span>
+        <span className="mono-label">
+          {visible.length}
+          {filter ? ` / ${rows.length}` : ""} events
+        </span>
+        <input
+          type="text"
+          value={filter}
+          onChange={(e) => setFilter(e.target.value)}
+          placeholder="Filter by kind, actor, or text…"
+          className="ml-auto min-w-[240px] flex-1 max-w-[360px] rounded-full border border-border-strong bg-white px-3 py-1 text-xs outline-none placeholder:text-text-subtle focus:border-accent"
+        />
+        <button
+          onClick={() => setPaused((p) => !p)}
+          className="btn-ghost"
+          style={{ padding: "4px 12px", fontSize: "12px" }}
+          title={paused ? "Resume streaming" : "Pause streaming"}
+        >
+          {paused ? "▶ Resume" : "⏸ Pause"}
+        </button>
+        <button
+          onClick={() => setRows([])}
+          className="btn-ghost"
+          style={{ padding: "4px 12px", fontSize: "12px" }}
+        >
+          Clear
+        </button>
       </div>
-      <div className="max-h-80 overflow-y-auto">
-        {rows.length === 0 ? (
-          <p className="p-5 text-sm text-text-muted">Waiting for events…</p>
+      <div className="max-h-[480px] overflow-y-auto">
+        {visible.length === 0 ? (
+          <p className="p-5 text-sm text-text-muted">
+            {rows.length === 0 ? "Waiting for events…" : "No events match filter."}
+          </p>
         ) : (
-          rows.map((r) => (
-            <div key={r.id} className="border-b border-border px-5 py-2.5 text-sm last:border-b-0">
-              <div className="flex items-center justify-between gap-3">
-                <span
-                  className={`${r.accent}`}
-                  style={{ fontFamily: "var(--font-mono)", fontSize: "11px", fontWeight: 500, letterSpacing: "0.6px", textTransform: "uppercase" }}
-                >
-                  {r.kind}
-                </span>
-                <span className="mono-label" style={{ fontSize: "10px" }}>
-                  {new Date(r.time).toLocaleTimeString()}
-                </span>
-              </div>
-              <p className="mt-1 text-text-muted truncate">
-                <span className="font-medium text-text" style={{ fontFamily: "var(--font-mono)", fontSize: "11px" }}>
-                  {r.actor.slice(0, 24)}
-                </span>{" "}
-                {r.detail}
-              </p>
-            </div>
-          ))
+          <table className="w-full table-fixed border-collapse text-sm">
+            <thead className="sticky top-0 bg-bg-card">
+              <tr className="border-b border-border">
+                <th className="w-[86px] px-5 py-2 text-left mono-label" style={{ fontSize: "10px" }}>
+                  time
+                </th>
+                <th className="w-[120px] px-3 py-2 text-left mono-label" style={{ fontSize: "10px" }}>
+                  kind
+                </th>
+                <th className="w-[200px] px-3 py-2 text-left mono-label" style={{ fontSize: "10px" }}>
+                  actor
+                </th>
+                <th className="px-3 py-2 text-left mono-label" style={{ fontSize: "10px" }}>
+                  detail
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {visible.map((r) => (
+                <tr key={r.id} className="border-b border-border last:border-b-0 hover:bg-bg-subtle">
+                  <td
+                    className="px-5 py-2 align-top text-text-muted"
+                    style={{ fontFamily: "var(--font-mono)", fontSize: "11px" }}
+                  >
+                    {fmtTime(r.time)}
+                  </td>
+                  <td className="px-3 py-2 align-top">
+                    <span
+                      className={r.accent}
+                      style={{
+                        fontFamily: "var(--font-mono)",
+                        fontSize: "11px",
+                        fontWeight: 500,
+                        letterSpacing: "0.6px",
+                        textTransform: "uppercase",
+                      }}
+                    >
+                      {r.kind}
+                    </span>
+                  </td>
+                  <td
+                    className="px-3 py-2 align-top text-text truncate"
+                    style={{ fontFamily: "var(--font-mono)", fontSize: "11px" }}
+                    title={r.actor}
+                  >
+                    {r.actor}
+                  </td>
+                  <td
+                    className="px-3 py-2 align-top text-text-muted"
+                    style={{ overflowWrap: "anywhere" }}
+                  >
+                    {r.detail}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         )}
       </div>
     </div>

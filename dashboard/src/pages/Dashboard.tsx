@@ -55,18 +55,14 @@ export default function Dashboard() {
       {activeTab === "overview" && (
         <>
           <StatsOverview />
-          <div className="grid gap-6 lg:grid-cols-3">
-            <div className="lg:col-span-2">
-              <ProjectGrid
-                projects={projects}
-                onCreate={() => setCreateOpen(true)}
-                onDelete={remove}
-                onCleanup={cleanup}
-                onPreviewCleanup={previewCleanup}
-              />
-            </div>
-            <ActivityFeed />
-          </div>
+          <ProjectGrid
+            projects={projects}
+            onCreate={() => setCreateOpen(true)}
+            onDelete={remove}
+            onCleanup={cleanup}
+            onPreviewCleanup={previewCleanup}
+          />
+          <ActivityFeed />
         </>
       )}
 

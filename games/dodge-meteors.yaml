@@ -1,0 +1,17 @@
+slug: dodge-meteors
+title: Dodge Meteors
+status: active
+source:
+  kind: internal
+  path: docs/dodge-meteors-v2
+versions:
+  - label: v2
+    ref: HEAD
+    entry: game_html_v1.html
+    status: qa-passing
+    released_at: null
+    notes: Lives inline in the code-play repo at docs/dodge-meteors-v2/. Pre-dates the external-repo convention.
+    published:
+      itch:     null
+      gh_pages: null
+      roblox:   null

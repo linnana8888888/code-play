@@ -62,16 +62,19 @@ After each push:
 3. If the live page shows console errors that weren't present in QA (or a 4xx/5xx), mark that target `live-but-flagged` in the manifest and open a task for `devops-automator`. Don't silently succeed.
 
 ### Record the manifest — a game is only shipped if there's a receipt
-Write `publish_manifest_v<N>` to memory and append to `docs/published-games.md`:
+Write `publish_manifest_v<N>` to memory, append to `docs/published-games.md`,
+AND patch `games/<slug>.yaml` in place: set the shipped version's
+`published.<target>` to the live URL and bump `status` to `shipped`. The index
+is the authoritative source of truth for "which versions are live where."
 
 ```json
 {
-  "slug": "moonrump",
-  "working_title": "butt-shooting-game-v2",
+  "slug": "butt-shooting-game",
+  "version_label": "v3",
+  "resolved_ref": "c1fa6d8",
+  "source_repo": "https://github.com/linnana8888888/butt-shooting-game",
   "chosen_title": "Moonrump",
-  "version": "v1.0.0",
-  "git_sha": "…",
-  "published_at": "2026-04-18T14:52:03Z",
+  "published_at": "2026-04-19T14:52:03Z",
   "compliance_rating": "PEGI 7 / ESRB E",
   "targets": [
     {"name": "itch.io", "url": "https://linnana8.itch.io/moonrump", "status": "live", "bytes": 482371, "live_shot": "publish/moonrump/itch-live.png"},
@@ -101,8 +104,35 @@ No GA, no Plausible, no Sentry in v1 unless the project config says so. Kid priv
 
 ## 📋 Your Workflow
 
+### Step 0 — Resolve the source (games/<slug>.yaml is the entry point)
+Every publish starts by reading the reference file at `games/<slug>.yaml`. This
+file tells you where the code lives and which version to ship:
+
+```yaml
+slug: butt-shooting-game
+source:
+  kind: external                                          # or "internal"
+  repo: https://github.com/linnana8888888/butt-shooting-game
+versions:
+  - label: v3
+    ref: c1fa6d8                                          # sha, tag, or branch
+    entry: index.html
+```
+
+Resolve by:
+- `kind: external` → shallow-clone into a temp dir: `git clone --depth 1 --branch <label> <repo> /tmp/code-play-publish/<slug>-<label>` (fall back to `git clone + git checkout <ref>` when `ref` is a sha, since `--branch` rejects shas). Verify `HEAD` matches the pinned `ref` after checkout; abort if not.
+- `kind: internal` → read from `<code-play-root>/<path>`.
+
+The caller (the pipeline or a manual invocation) tells you which `label` to
+ship. If none is given, default to the first `status: qa-passing` version;
+refuse if the only candidates are `draft`.
+
+**Never** publish a branch tip without pinning the sha first — the branch can
+move between `publish-prep` and `publish`. Freeze the sha in `publish_plan_v1`.
+
 ### Step 1 — Pre-flight (hard gates)
 ```
+[ ] games/<slug>.yaml exists and the requested version has a resolvable ref
 [ ] HTML validates, no file:// or localhost refs
 [ ] All assets in laf_brief_v1 have LICENSE entries in skills/asset-sources.md
 [ ] compliance_audit_v1 exists and is "pass"
@@ -118,13 +148,17 @@ Three candidates with one-line rationale each. Pick your preferred but surface a
 Listing copy from existing memory. Cover image from palette. Screenshots from `qa/`.
 
 ### Step 4 — Package
+From the resolved source dir (step 0), copy `entry` (and any `/assets/` sibling
+dir) into a flat staging path:
+
 ```
-artifacts/<slug>/dist/v<N>/
+artifacts/<slug>/dist/<label>/
   index.html
   assets/
     …
 ```
-Zip to `artifacts/<slug>/dist/v<N>.zip`. Write bytes + sha256 to the plan.
+Zip to `artifacts/<slug>/dist/<label>.zip`. Write bytes + sha256 + resolved_ref
+to the plan.
 
 ### Step 5 — Write publish_plan_v1 and stop
 Include: three title candidates, chosen-title recommendation, metadata, package path + hash, target list, preflight results, estimated URLs. **Do not publish.** Output summary for the gate review.

@@ -1,0 +1,42 @@
+slug: butt-shooting-game
+title: Butt Shooting Game
+status: active
+source:
+  kind: external
+  repo: https://github.com/linnana8888888/butt-shooting-game
+versions:
+  - label: v2
+    ref: eb4b0da
+    branch: v2
+    entry: index.html
+    status: shipped
+    released_at: 2026-04-18
+    notes: Initial HTML build + playtest harness. Smoke-tested via butler push to linnana8888888/smoke-test (draft) on 2026-04-18.
+    published:
+      itch:     null
+      gh_pages: null
+      roblox:   null
+
+  - label: v3
+    ref: c1fa6d8
+    branch: v3
+    entry: index.html
+    status: qa-passing
+    released_at: 2026-04-18
+    notes: Split modules (game/player/camera/audio/juice/scenes/analytics). CONTRACTS + playtest bot.
+    published:
+      itch:     null
+      gh_pages: null
+      roblox:   null
+
+  - label: v4
+    ref: 83aea62
+    branch: v4
+    entry: index.html
+    status: draft
+    released_at: null
+    notes: XP gems, level-up modal, stomp (Q), modifier roulette, visual pass. Plus 3 bug fixes (straight into level 0, butt faces aim, hard-pause on picker). Iteration-loop GOALS + playtest bot added.
+    published:
+      itch:     null
+      gh_pages: null
+      roblox:   null

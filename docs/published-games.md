@@ -5,7 +5,7 @@ Newest first. Each row corresponds to a `publish_manifest_v<N>` in project memor
 
 | Date | Title | Engineering codename | itch.io | GH Pages | Roblox | Version | Rating | Agents |
 |------|-------|----------------------|---------|----------|--------|---------|--------|--------|
-| _—_ | _no ships yet_ | | | | | | | |
+| 2026-04-19 | Cheekshot | butt-shooting-game | 🟢 [live](https://linnana8888888.itch.io/cheekshot) | ⚪ skipped at gate | ⚪ n/a | v3 (`c1fa6d8`) | waived (smoke test) | publisher |
 
 ## Column notes
 

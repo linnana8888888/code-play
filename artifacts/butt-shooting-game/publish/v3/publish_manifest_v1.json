@@ -1,0 +1,53 @@
+{
+  "slug": "butt-shooting-game",
+  "version_label": "v3",
+  "resolved_ref": "c1fa6d812a1f78c9ba8d5cb0e61c1a1f96607c5b",
+  "source_repo": "https://github.com/linnana8888888/butt-shooting-game",
+  "source_branch": "v3",
+  "chosen_title": "Cheekshot",
+  "published_at": "2026-04-19T13:01:00Z",
+  "compliance_rating": "WAIVED — compliance_audit_v1 not run; explicit gate waiver for mechanical smoke test",
+  "targets": [
+    {
+      "name": "itch.io",
+      "url": "https://linnana8888888.itch.io/cheekshot",
+      "channel": "html5",
+      "build_id": 1623215,
+      "upload_id": 17219102,
+      "user_version": "v3",
+      "status": "live",
+      "bytes": 28487,
+      "sha256": "d46c5220d49f825dd35044caf038ef65c9780c2bbf7f395ee3c83e5c85d3c1bb",
+      "live_shot": "artifacts/butt-shooting-game/publish/v3/itch-live.png",
+      "verified_at": "2026-04-19T13:01:00Z",
+      "http_status": 200,
+      "console_errors": []
+    }
+  ],
+  "targets_skipped": [
+    {
+      "name": "gh-pages",
+      "reason": "user picked itch.io-only at gate-publish"
+    }
+  ],
+  "assets_licensed": [
+    {
+      "id": "three.js@0.160.0",
+      "license": "MIT",
+      "source": "https://unpkg.com/three@0.160.0/build/three.module.js",
+      "evidence": "loaded via importmap in index.html; no bundled art or audio assets in this build"
+    }
+  ],
+  "package": {
+    "path": "artifacts/butt-shooting-game/dist/v3.zip",
+    "bytes": 28487,
+    "sha256": "d46c5220d49f825dd35044caf038ef65c9780c2bbf7f395ee3c83e5c85d3c1bb",
+    "contents": ["index.html", "game.mjs", "player.mjs", "camera.mjs", "audio.mjs", "juice.mjs", "scenes.mjs", "analytics.mjs"]
+  },
+  "gate_decisions": {
+    "title_chosen": "Cheekshot",
+    "compliance": "waived",
+    "targets_approved": ["itch.io"],
+    "itch_page_exists": true
+  }
+}

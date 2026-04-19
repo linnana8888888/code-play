@@ -145,6 +145,42 @@ class TaskQueue:
                     (status.value, datetime.now(timezone.utc).isoformat(), task_id),
                 )
 
+    def record_spawn_failure(
+        self, task_id: str, error: str, max_failures: int = 3
+    ) -> tuple[int, bool]:
+        """Record a spawn failure on task.result; block the task after max_failures.
+
+        Returns (total_failures, is_blocked). Used by `_advance_pipeline` so
+        drift between pipelines.yaml and the agent registry surfaces loudly
+        after a bounded number of retries instead of stalling the pipeline
+        forever.
+        """
+        task = self.get(task_id)
+        if not task:
+            return (0, False)
+
+        result = dict(task.result) if task.result else {}
+        failures = int(result.get("spawn_failures", 0)) + 1
+        errors = list(result.get("spawn_errors", []))
+        errors.append(error)
+        result["spawn_failures"] = failures
+        result["spawn_errors"] = errors[-5:]
+
+        should_block = failures >= max_failures
+        now = datetime.now(timezone.utc).isoformat()
+        with get_studio_db() as db:
+            if should_block:
+                db.execute(
+                    "UPDATE tasks SET status = ?, result = ?, updated_at = ? WHERE id = ?",
+                    (TaskStatus.BLOCKED.value, json.dumps(result), now, task_id),
+                )
+            else:
+                db.execute(
+                    "UPDATE tasks SET result = ?, updated_at = ? WHERE id = ?",
+                    (json.dumps(result), now, task_id),
+                )
+        return (failures, should_block)
+
     def get_ready_tasks(self, project_id: str) -> list[Task]:
         """Get pending tasks whose dependencies are all completed."""
         pending = self.list_tasks(project_id=project_id, status=TaskStatus.PENDING)

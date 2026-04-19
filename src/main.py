@@ -41,6 +41,7 @@ from src.memory.project_memory import project_memory
 from src.memory import criteria_store
 from src.memory import project_docs
 from src.memory import proposals_store
+from src.iteration.bootstrap import ensure_goals_md, GoalsBootstrapError
 from src.models.criteria import CriterionCreate, CriterionUpdate
 from src.models.proposals import (
     AgentProposalCreate,
@@ -942,7 +943,29 @@ async def _advance_pipeline(project_id: str):
             asyncio.create_task(_run_agent_task(instance, task.description))
             logger.info(f"Advanced pipeline: spawned {agent_type} for task {task.id}")
         except ValueError as exc:
-            logger.warning(f"Failed to spawn {agent_type} for task {task.id}: {exc}")
+            err = str(exc)
+            count, blocked = task_queue.record_spawn_failure(task.id, err)
+            if blocked:
+                logger.error(
+                    f"Task {task.id} BLOCKED after {count} failed spawns of "
+                    f"'{agent_type}': {err}"
+                )
+                await ws_manager.broadcast({
+                    "type": "spawn_failed",
+                    "data": {
+                        "task_id": task.id,
+                        "project_id": project_id,
+                        "agent_type": agent_type,
+                        "error": err,
+                        "failures": count,
+                        "hint": "Check pipelines.yaml agent reference against agents.yaml registry.",
+                    },
+                })
+            else:
+                logger.warning(
+                    f"Failed to spawn {agent_type} for task {task.id} "
+                    f"(attempt {count}/3): {err}"
+                )
 
 
 # ==================== Tasks ====================
@@ -1213,6 +1236,15 @@ async def run_pipeline(pipeline_name: str, body: PipelineRunBody):
 
     cyclic = bool(pipeline.get("cyclic"))
     if cyclic:
+        # Cyclic pipelines (iterate_artifact) cannot run without goals_md —
+        # postmortem + proposers cite §2 metrics from it. Bootstrap from
+        # <artifact_repo>/GOALS.md when memory is cold; fail loudly if neither
+        # memory nor a GOALS.md file exists.
+        try:
+            ensure_goals_md(project_id)
+        except GoalsBootstrapError as exc:
+            raise HTTPException(exc.status_code, str(exc))
+
         # Flag the project as iterate-enabled and stamp cycle_n=1 in memory so
         # _maybe_relaunch_cyclic has a baseline to compare against.
         try:
@@ -1286,8 +1318,31 @@ async def run_pipeline(pipeline_name: str, body: PipelineRunBody):
                 )
                 task_queue.checkout(task.id, instance.id)
                 asyncio.create_task(_run_agent_task(instance, task_desc))
-            except ValueError:
-                logger.warning(f"Agent type '{agent_type}' not found, skipping")
+            except ValueError as exc:
+                # First failure recorded here. _advance_pipeline handles
+                # subsequent retries (up to 3) before blocking + paging.
+                count, blocked = task_queue.record_spawn_failure(task.id, str(exc))
+                if blocked:
+                    logger.error(
+                        f"Task {task.id} BLOCKED after {count} failed spawns of "
+                        f"'{agent_type}': {exc}"
+                    )
+                    await ws_manager.broadcast({
+                        "type": "spawn_failed",
+                        "data": {
+                            "task_id": task.id,
+                            "project_id": project_id,
+                            "agent_type": agent_type,
+                            "error": str(exc),
+                            "failures": count,
+                            "hint": "Check pipelines.yaml agent reference against agents.yaml registry.",
+                        },
+                    })
+                else:
+                    logger.warning(
+                        f"Agent type '{agent_type}' not found for task {task.id} "
+                        f"(attempt {count}/3) — will retry via _advance_pipeline"
+                    )
 
     if gated:
         await ws_manager.broadcast({

@@ -33,6 +33,7 @@ from src.runtime.llm_router import router
 from src.runtime.tool_executor import tool_executor
 from src.runtime.agent_runtime import agent_runtime
 from src.runtime.session_store import session_store
+from src.runtime.task_validator import validate_outputs
 from src.runtime.skill_registry import skill_registry
 from src.runtime.claude_bridge import discover as discover_claude_plugins
 from src.runtime.mcp_bridge import mcp_bridge
@@ -840,6 +841,48 @@ async def _run_agent_task(instance, task_prompt: str, session_id: str = None):
                     },
                 })
                 # Do NOT advance the pipeline — the task is waiting on a human.
+                return
+            # Post-run output validation — catches silent-success runs where
+            # the agent returns cleanly without producing the deliverables
+            # declared in task.expected_outputs.
+            missing: list[str] = []
+            try:
+                current_task = task_queue.get(instance.task_id)
+                if current_task and current_task.expected_outputs:
+                    repo_dir = None
+                    if instance.project_id:
+                        candidate = Path(settings.projects_dir) / instance.project_id
+                        if candidate.exists():
+                            repo_dir = candidate
+                    missing = validate_outputs(current_task, project_memory, repo_dir)
+            except Exception as exc:
+                logger.warning(f"validate_outputs failed for {instance.task_id}: {exc}")
+
+            if missing:
+                result = {
+                    "failure_category": "no_output",
+                    "error": f"Agent returned cleanly but expected outputs missing: {'; '.join(missing[:5])}",
+                    "missing": missing,
+                    "summary": final_content[:4000],
+                    "agent_instance_id": instance.id,
+                    "tokens_used": instance.tokens_used,
+                    "hint": "Agent declared done without producing deliverables — retry from the task card or adjust expected_outputs.",
+                }
+                try:
+                    task_queue.update_status(instance.task_id, TaskStatus.BLOCKED, result=result)
+                except Exception as exc:
+                    logger.warning(f"Failed to mark task {instance.task_id} blocked-for-no-output: {exc}")
+                await ws_manager.broadcast({
+                    "type": "task_stalled",
+                    "data": {
+                        "task_id": instance.task_id,
+                        "project_id": instance.project_id,
+                        "failure_category": "no_output",
+                        "missing": missing,
+                        "tokens_used": instance.tokens_used,
+                        "hint": result["hint"],
+                    },
+                })
                 return
             try:
                 task_queue.update_status(
@@ -1852,6 +1895,20 @@ async def _apply_budget_decision(gate_task, ctx: dict, decision: dict) -> dict:
                 "est_tokens": est_tokens,
                 "agent_type": agent_type,
             }
+            # Declare the deliverable contract so validate_outputs can block
+            # silent-success runs (see src/runtime/task_validator.py).
+            expected_outputs = [
+                {
+                    "kind": "memory_key",
+                    "type": "artifact",
+                    "key": f"engineer_result_{engineer_id}_{iteration_tag}",
+                    "min_bytes": 40,
+                },
+                {
+                    "kind": "branch_commit",
+                    "branch": f"eng-{engineer_id}-cycle{cycle_n_plus_1}",
+                },
+            ]
             sub = task_queue.create(TaskCreate(
                 project_id=project_id,
                 title=f"[{pipeline_name}] implement-engineer-{engineer_id}",
@@ -1862,6 +1919,7 @@ async def _apply_budget_decision(gate_task, ctx: dict, decision: dict) -> dict:
                 depends_on=[prep_task_id] if prep_task_id else [],
                 created_by=f"pipeline:{pipeline_name}",
                 metadata=metadata,
+                expected_outputs=expected_outputs,
             ))
             eng_ids.append(sub.id)
 

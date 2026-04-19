@@ -18,11 +18,14 @@ class TaskQueue:
         metadata_json = (
             json.dumps(task_input.metadata) if task_input.metadata else None
         )
+        expected_json = (
+            json.dumps(task_input.expected_outputs) if task_input.expected_outputs else None
+        )
 
         with get_studio_db() as db:
             db.execute(
-                """INSERT INTO tasks (id, project_id, title, description, parent_task_id, criterion_id, assignee_type, priority, depends_on, created_by, model_override, metadata, status, created_at, updated_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)""",
+                """INSERT INTO tasks (id, project_id, title, description, parent_task_id, criterion_id, assignee_type, priority, depends_on, created_by, model_override, metadata, expected_outputs, status, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)""",
                 (
                     task_id,
                     task_input.project_id,
@@ -36,6 +39,7 @@ class TaskQueue:
                     task_input.created_by,
                     task_input.model_override,
                     metadata_json,
+                    expected_json,
                     now,
                     now,
                 ),
@@ -54,6 +58,7 @@ class TaskQueue:
             created_by=task_input.created_by,
             model_override=task_input.model_override,
             metadata=task_input.metadata,
+            expected_outputs=task_input.expected_outputs,
             status=TaskStatus.PENDING,
             created_at=datetime.fromisoformat(now),
             updated_at=datetime.fromisoformat(now),
@@ -333,6 +338,13 @@ class TaskQueue:
                 metadata = json.loads(raw_metadata)
         except (IndexError, KeyError, json.JSONDecodeError):
             pass
+        expected_outputs = None
+        try:
+            raw_expected = row["expected_outputs"]
+            if raw_expected:
+                expected_outputs = json.loads(raw_expected)
+        except (IndexError, KeyError, json.JSONDecodeError):
+            pass
         return Task(
             id=row["id"],
             project_id=row["project_id"],
@@ -348,6 +360,7 @@ class TaskQueue:
             created_by=row["created_by"] or "human",
             model_override=model_override,
             metadata=metadata,
+            expected_outputs=expected_outputs,
             result=result,
             created_at=datetime.fromisoformat(row["created_at"]) if row["created_at"] else None,
             updated_at=datetime.fromisoformat(row["updated_at"]) if row["updated_at"] else None,

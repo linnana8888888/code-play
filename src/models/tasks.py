@@ -30,6 +30,14 @@ class Task(BaseModel):
     created_by: str = "human"
     model_override: str | None = None          # picks which LLM runs this task (overrides agent default)
     metadata: dict | None = None               # free-form per-task context (e.g. iteration_tag, cycle_n)
+    # Post-run completion contract. Each entry is one of:
+    #   {"kind": "memory_key", "type": "artifact", "key": "engineer_result_eng-1_v2"}
+    #   {"kind": "branch_commit", "branch": "iteration/eng-1-v2"}
+    #   {"kind": "file_path", "path": "game.html", "min_bytes": 1024}
+    # Validator blocks the task with failure_category="no_output" if any entry
+    # isn't satisfied when the agent returns — catches silent-success runs
+    # where the LLM closes out without producing the deliverables.
+    expected_outputs: list[dict] | None = None
     result: dict | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
@@ -47,6 +55,7 @@ class TaskCreate(BaseModel):
     created_by: str = "human"
     model_override: str | None = None          # if set, overrides the agent's default_model when spawned
     metadata: dict | None = None               # free-form per-task context (e.g. iteration_tag, cycle_n)
+    expected_outputs: list[dict] | None = None # see Task.expected_outputs for shape
 
 
 class TaskUpdate(BaseModel):

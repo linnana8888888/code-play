@@ -914,96 +914,6 @@ def test_tech_plan_tasks_created_and_wired_in_launch():
 # ==================== #4 A/B race + winner promotion ====================
 
 
-def test_phased_producer_race_pipeline_shape():
-    """#4: phased-producer-race exposes parallel build-a/build-b + gate-build-pick + qa."""
-    pipelines = client.get("/api/pipelines").json()
-    ids = {p["id"] for p in pipelines}
-    assert "phased-producer-race" in ids
-
-    race = next(p for p in pipelines if p["id"] == "phased-producer-race")
-    step_ids = [s["id"] for s in race["steps"]]
-    for sid in ("build-a", "build-b", "gate-build-pick", "qa-playtest"):
-        assert sid in step_ids
-
-    pick = next(s for s in race["steps"] if s["id"] == "gate-build-pick")
-    assert pick.get("type") == "human-gate"
-
-
-def test_ab_pick_gate_promotes_winner_a_to_game_html_v1():
-    """Approving a pick gate with 'winner: a' feedback must copy
-    game_html_v1@a into game_html_v1."""
-    from src.orchestrator.task_queue import task_queue
-    from src.models.tasks import TaskStatus
-    from src.memory.project_memory import project_memory
-
-    project = client.post("/api/projects", json={
-        "name": "AB Race A Winner",
-        "description": "",
-        "tech_stack": "web",
-    }).json()
-    pid = project["id"]
-
-    # Seed A/B artifacts directly
-    project_memory.write(pid, mem_type="artifact", key="game_html_v1@a",
-                         content="<html>A WINS</html>", created_by="test")
-    project_memory.write(pid, mem_type="artifact", key="game_html_v1@b",
-                         content="<html>B LOSES</html>", created_by="test")
-
-    launch = client.post("/api/pipelines/phased-producer-race/run", json={
-        "project_id": pid,
-        "input_text": "pick-winner test",
-    }).json()
-    pick_task_id = launch["tasks"]["gate-build-pick"]
-
-    # Force the pick gate ready by completing its upstream build tasks.
-    for step in ("build-a", "build-b"):
-        task_queue.update_status(launch["tasks"][step], TaskStatus.COMPLETED,
-                                 result={"summary": f"{step} shipped"})
-
-    resp = client.post(f"/api/gates/{pick_task_id}/approve",
-                       json={"feedback": "winner: a — cleaner movement"})
-    assert resp.status_code == 200
-    assert resp.json().get("pick_winner") == "a"
-
-    promoted = project_memory.read(pid, "artifact", "game_html_v1")
-    assert promoted == "<html>A WINS</html>"
-
-
-def test_ab_pick_gate_promotes_winner_b_to_game_html_v1():
-    """Same as above but with 'winner: b'."""
-    from src.orchestrator.task_queue import task_queue
-    from src.models.tasks import TaskStatus
-    from src.memory.project_memory import project_memory
-
-    project = client.post("/api/projects", json={
-        "name": "AB Race B Winner",
-        "description": "",
-        "tech_stack": "web",
-    }).json()
-    pid = project["id"]
-
-    project_memory.write(pid, mem_type="artifact", key="game_html_v1@a",
-                         content="<html>A LOSES</html>", created_by="test")
-    project_memory.write(pid, mem_type="artifact", key="game_html_v1@b",
-                         content="<html>B WINS</html>", created_by="test")
-
-    launch = client.post("/api/pipelines/phased-producer-race/run", json={
-        "project_id": pid,
-        "input_text": "b-winner test",
-    }).json()
-    pick_task_id = launch["tasks"]["gate-build-pick"]
-
-    for step in ("build-a", "build-b"):
-        task_queue.update_status(launch["tasks"][step], TaskStatus.COMPLETED,
-                                 result={"summary": f"{step} shipped"})
-
-    resp = client.post(f"/api/gates/{pick_task_id}/approve",
-                       json={"feedback": "pick: b, the physics feels better"})
-    assert resp.status_code == 200
-    assert resp.json().get("pick_winner") == "b"
-    assert project_memory.read(pid, "artifact", "game_html_v1") == "<html>B WINS</html>"
-
-
 def test_non_pick_gate_approval_does_not_touch_game_html():
     """Approving a regular gate (not a pick gate) must not mutate game_html_v1."""
     from src.orchestrator.task_queue import task_queue
@@ -1030,9 +940,8 @@ def test_non_pick_gate_approval_does_not_touch_game_html():
     task_queue.update_status(concept_id, TaskStatus.COMPLETED, result={"summary": "ok"})
 
     resp = client.post(f"/api/gates/{concept_gate_id}/approve",
-                       json={"feedback": "winner: a"})  # the keyword must be ignored
+                       json={"feedback": "approved"})
     assert resp.status_code == 200
-    assert resp.json().get("pick_winner") in (None,)
 
     assert project_memory.read(pid, "artifact", "game_html_v1") == "<html>ORIGINAL</html>"
 
@@ -1067,13 +976,12 @@ def test_qa_engineer_agent_registered():
 
 
 def test_phased_producer_has_qa_playtest_step():
-    """Both phased pipelines must include a qa-playtest step assigned to qa-engineer."""
+    """phased-producer must include a qa-playtest step assigned to qa-engineer."""
     pipelines = client.get("/api/pipelines").json()
-    for pid in ("phased-producer", "phased-producer-race"):
-        pl = next(p for p in pipelines if p["id"] == pid)
-        step_ids = {s["id"]: s for s in pl["steps"]}
-        assert "qa-playtest" in step_ids, f"{pid} missing qa-playtest"
-        assert step_ids["qa-playtest"].get("agent") == "qa-engineer"
+    pl = next(p for p in pipelines if p["id"] == "phased-producer")
+    step_ids = {s["id"]: s for s in pl["steps"]}
+    assert "qa-playtest" in step_ids, "phased-producer missing qa-playtest"
+    assert step_ids["qa-playtest"].get("agent") == "qa-engineer"
 
 
 # ==================== #6 Play button + game preview endpoint ====================
@@ -1112,29 +1020,22 @@ def test_game_preview_serves_default_artifact():
     assert resp.text == html
 
 
-def test_game_preview_honors_key_param_for_ab_builds():
-    """The ?key= param lets the dashboard preview A and B builds side-by-side
-    before the pick gate has been resolved."""
+def test_game_preview_honors_key_param():
+    """The ?key= param lets the dashboard preview alternate artifact keys."""
     from src.memory.project_memory import project_memory
 
     project = client.post("/api/projects", json={
-        "name": "Preview AB Project",
+        "name": "Preview Alt Key Project",
         "description": "",
         "tech_stack": "web",
     }).json()
     pid = project["id"]
-    project_memory.write(pid, mem_type="artifact", key="game_html_v1@a",
-                         content="<html>A BUILD</html>", created_by="test")
-    project_memory.write(pid, mem_type="artifact", key="game_html_v1@b",
-                         content="<html>B BUILD</html>", created_by="test")
+    project_memory.write(pid, mem_type="artifact", key="game_html_v2",
+                         content="<html>V2 BUILD</html>", created_by="test")
 
-    resp_a = client.get(f"/api/projects/{pid}/game/preview?key=game_html_v1@a")
-    assert resp_a.status_code == 200
-    assert resp_a.text == "<html>A BUILD</html>"
-
-    resp_b = client.get(f"/api/projects/{pid}/game/preview?key=game_html_v1@b")
-    assert resp_b.status_code == 200
-    assert resp_b.text == "<html>B BUILD</html>"
+    resp = client.get(f"/api/projects/{pid}/game/preview?key=game_html_v2")
+    assert resp.status_code == 200
+    assert resp.text == "<html>V2 BUILD</html>"
 
     # No default artifact yet, so the key-less call 404s.
     resp_default = client.get(f"/api/projects/{pid}/game/preview")
@@ -1155,17 +1056,16 @@ def test_style_research_step_and_agent_registered():
     inst = registry.spawn("style-researcher", project_id="proj-style-test", task_id="t-style")
     assert inst.agent_type == "style-researcher"
 
-    # Present in both phased pipelines, before look-and-feel
+    # Present in phased-producer before look-and-feel
     pipelines = client.get("/api/pipelines").json()
-    for pid in ("phased-producer", "phased-producer-race"):
-        pl = next(p for p in pipelines if p["id"] == pid)
-        step_ids = [s["id"] for s in pl["steps"]]
-        assert "style-research" in step_ids, f"{pid} missing style-research"
-        assert "look-and-feel" in step_ids, f"{pid} missing look-and-feel"
-        assert step_ids.index("style-research") < step_ids.index("look-and-feel")
+    pl = next(p for p in pipelines if p["id"] == "phased-producer")
+    step_ids = [s["id"] for s in pl["steps"]]
+    assert "style-research" in step_ids, "phased-producer missing style-research"
+    assert "look-and-feel" in step_ids, "phased-producer missing look-and-feel"
+    assert step_ids.index("style-research") < step_ids.index("look-and-feel")
 
-        sr_step = next(s for s in pl["steps"] if s["id"] == "style-research")
-        assert sr_step.get("agent") == "style-researcher"
+    sr_step = next(s for s in pl["steps"] if s["id"] == "style-research")
+    assert sr_step.get("agent") == "style-researcher"
 
 
 def test_style_research_wired_into_task_graph():

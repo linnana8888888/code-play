@@ -1453,53 +1453,6 @@ class GateDecisionBody(BaseModel):
     feedback: str = ""
 
 
-def _promote_pick(task, feedback: str) -> str | None:
-    """If this is an A/B build pick gate, promote the chosen artifact.
-
-    Looks for a `winner: a` or `winner: b` hint in the feedback (case-insensitive,
-    also accepts standalone 'a'/'b'), reads `game_html_v1@<winner>` from project
-    memory, and rewrites it as `game_html_v1` so downstream QA consumes the pick.
-    Returns the winner letter on success, None otherwise.
-    """
-    ctx = _gate_context(task)
-    if not ctx:
-        return None
-    step_id = ctx.get("step_id") or ""
-    if "pick" not in step_id and "build-pick" not in step_id:
-        return None
-
-    hint = (feedback or "").strip().lower()
-    winner = None
-    for marker in ("winner:a", "winner: a", "pick:a", "pick: a", "build-a", "build a", " a ", "\na\n"):
-        if marker in f"\n{hint}\n":
-            winner = "a"
-            break
-    if not winner:
-        for marker in ("winner:b", "winner: b", "pick:b", "pick: b", "build-b", "build b", " b ", "\nb\n"):
-            if marker in f"\n{hint}\n":
-                winner = "b"
-                break
-    if not winner and hint in ("a", "b"):
-        winner = hint
-    if not winner:
-        return None
-
-    source_key = f"game_html_v1@{winner}"
-    html = project_memory.read(task.project_id, "artifact", source_key)
-    if not html:
-        logger.warning(f"Pick gate {task.id}: artifact {source_key} not in memory")
-        return None
-    project_memory.write(
-        task.project_id,
-        mem_type="artifact",
-        key="game_html_v1",
-        content=html,
-        created_by=f"gate:{task.id}",
-    )
-    logger.info(f"Pick gate {task.id}: promoted {source_key} -> game_html_v1 ({len(html)} chars)")
-    return winner
-
-
 @app.post("/api/gates/{task_id}/approve")
 async def approve_gate(task_id: str, body: GateDecisionBody | None = None):
     task = task_queue.get(task_id)
@@ -1509,14 +1462,10 @@ async def approve_gate(task_id: str, body: GateDecisionBody | None = None):
     if not ctx:
         raise HTTPException(400, "Task is not a human gate")
     feedback = (body.feedback if body else "") or "approved"
-    winner = _promote_pick(task, feedback)
-    result: dict = {"decision": "approved", "feedback": feedback}
-    if winner:
-        result["pick_winner"] = winner
-    task_queue.update_status(task.id, TaskStatus.COMPLETED, result=result)
-    await ws_manager.broadcast({"type": "gate_approved", "data": {"task_id": task.id, "pick_winner": winner}})
+    task_queue.update_status(task.id, TaskStatus.COMPLETED, result={"decision": "approved", "feedback": feedback})
+    await ws_manager.broadcast({"type": "gate_approved", "data": {"task_id": task.id}})
     await _advance_pipeline(task.project_id)
-    return {"status": "approved", "task_id": task.id, "pick_winner": winner}
+    return {"status": "approved", "task_id": task.id}
 
 
 @app.post("/api/gates/{task_id}/revise")

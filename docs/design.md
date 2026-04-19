@@ -114,8 +114,11 @@ agents/
     code-reviewer.md
     tech-lead.md
     rapid-prototyper.md
-    data-engineer.md
-    database-optimizer.md
+  analytics/                        # rewritten as game-analytics team (2026-04-19)
+    telemetry-engineer.md           # instrumentation → telemetry_spec_v1/_diff_v1
+    metrics-dashboard-builder.md    # sqlite + 4-chart dashboard → metrics_store_spec_v1 + dashboard_html_v1
+    analytics-reporter.md           # 4-section postmortem + trend_v1 + publish_blurb → postmortem_{tag}
+    player-feedback-synthesizer.md  # itch/GH/Roblox comment digest → player_feedback_v{N}
   design/                           # narrowed to kid-game scope (2026-04-19)
     hud-designer.md                 # 6-screen HUD + menu layout → hud_spec_v1
     screen-flow-designer.md         # 5-state machine + transitions → screen_flow_v1

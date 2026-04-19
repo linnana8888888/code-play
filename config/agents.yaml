@@ -55,8 +55,9 @@ agents:
   #   code-reviewer       → shippability + kid-safety review (absorbed security checklist)
   #   tech-lead           → engineering plan before build (see below)
   # Pruned: backend-architect, security-engineer, devops-automator (enterprise personas, not
-  # useful for a web+Roblox kid-game studio). data-engineer covers analytics backend;
-  # publisher covers deploy to itch/GH/Roblox (platforms run their own compliance review).
+  # useful for a web+Roblox kid-game studio). Analytics tier (telemetry-engineer + metrics-
+  # dashboard-builder) owns the data backend; publisher covers deploy to itch/GH/Roblox
+  # (platforms run their own compliance review).
   frontend-developer:
     model: "openai/gpt-5-2025-08-07"
     fallback_model: "anthropic/anthropic.claude-sonnet-4-6"
@@ -134,12 +135,9 @@ agents:
     description: "General assistant running on local oMLX"
     tools: [builtin]
 
-  # Stealth/experimental — OpenRouter cloaked models for benchmarking
-  stealth-experiment:
-    model: "openrouter/openrouter/elephant-alpha"
-    fallback_model: "omlx/Qwen3.5-9B-MLX-4bit"
-    description: "Stealth model (elephant-alpha) for experiments and benchmarking"
-    tools: [builtin]
+  # Stealth/experimental tier removed 2026-04-19 — OpenRouter was retired from the
+  # router on 2026-04-17 so stealth-experiment had no working backend. local-assistant
+  # above is kept as the cheap Qwen slot for ad-hoc dev work.
 
   # Design (2026-04-19 audit — narrowed to kid web/Roblox game scope):
   #   hud-designer          → HUD + menu layout (6 screens) — produces hud_spec_v1
@@ -208,28 +206,34 @@ agents:
   # pruned rather than rewritten. License audit still lives in publisher's
   # pre-flight via skills/asset-sources.md.
 
-  # Analytics competency (imported from agency-agents — 2026-04-18)
-  # Purpose: close the NPS loop — ingest events, surface insight, feed product.
-  data-engineer:
+  # Analytics (2026-04-19 audit — rewritten as a cohesive game-analytics team):
+  #   telemetry-engineer           → instruments the build, fewest-events-that-explain-a-quit; produces telemetry_spec_v1/_diff_v1
+  #   metrics-dashboard-builder    → sqlite store + 4-chart single-HTML dashboard; produces metrics_store_spec_v1 + dashboard_html_v1
+  #   analytics-reporter           → 4-section postmortem, goal hit/miss table, trend_v1, publish_blurb_v{N}
+  #   player-feedback-synthesizer  → scrapes itch/GH/Roblox comments + studio DMs; produces player_feedback_v{N} with 3-5 quoted themes
+  # Renamed from data-engineer, database-optimizer, support-analytics-reporter,
+  # product-feedback-synthesizer. Enterprise scope (Snowflake, Spark, dbt, Redshift,
+  # Tableau, PostgreSQL tuning) stripped — kid-game studio scale is sqlite + fetch().
+  telemetry-engineer:
     model: "anthropic/anthropic.claude-sonnet-4-6"
     fallback_model: "omlx/Qwen3.5-9B-MLX-4bit"
-    description: "Event pipelines, warehouse schemas, ETL/ELT — raw play-events to analytics-ready tables"
+    description: "Instruments game_html + Roblox ServerScripts with the 8-event default catalogue; produces telemetry_spec_v1/_diff_v1; kid-safe, no PII, ≤2 events/sec"
     tools: [builtin]
 
-  database-optimizer:
+  metrics-dashboard-builder:
     model: "anthropic/anthropic.claude-sonnet-4-6"
     fallback_model: "omlx/Qwen3.5-9B-MLX-4bit"
-    description: "Schema design, indexing, query plans — leaderboards and telemetry stores that scale"
+    description: "Owns metrics.sqlite (events + sessions rollup) and dashboard.html (4 charts, ≤1s cold load); produces metrics_store_spec_v1 + dashboard_html_v1"
     tools: [builtin]
 
-  support-analytics-reporter:
+  analytics-reporter:
     model: "openai/gpt-5-2025-08-07"
     fallback_model: "anthropic/anthropic.claude-sonnet-4-6"
-    description: "KPI dashboards, NPS driver analysis, cohort/retention reports, weekly studio readouts"
+    description: "Writes the 4-section iteration postmortem + goal hit/miss table + trend_v1 + publish_blurb_v{N}; numbers-driven, ≤600 words"
     tools: [builtin]
 
-  product-feedback-synthesizer:
+  player-feedback-synthesizer:
     model: "anthropic/anthropic.claude-sonnet-4-6"
     fallback_model: "omlx/Qwen3.5-9B-MLX-4bit"
-    description: "Synthesizes qualitative feedback (support tickets, reviews, playtests) into prioritized product insight"
-    tools: [builtin]
+    description: "Digests itch.io/GH Pages/Roblox comments + studio DMs into 3-5 themes with ≥3 backing quotes each; produces player_feedback_v{N}"
+    tools: [builtin, playwright_browser]

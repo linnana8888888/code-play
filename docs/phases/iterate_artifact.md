@@ -25,7 +25,7 @@ playtest  →  postmortem  →  ┌─ propose-designer ─┐
    - Aggregates `<repo>/telemetry/*.json` whose `iteration_tag` matches, drops
      `outcome == "quit"` rows (bot-crash, not a play signal), writes rollup to
      project memory as `telemetry_v{n}`, broadcasts `playtest_batch_complete`.
-2. **`postmortem`** (support-analytics-reporter) — reads `telemetry_v{n}` +
+2. **`postmortem`** (analytics-reporter) — reads `telemetry_v{n}` +
    `goals_md`, writes `postmortem_v{n}` tying §2 metrics to §3 targets. All
    metric names must pass `validate_goals_md()` — no `fps`, no `drop_rate`.
 3. **`propose-designer` / `propose-ux` / `propose-artist` / `propose-proto`** —
@@ -47,7 +47,7 @@ playtest  →  postmortem  →  ┌─ propose-designer ─┐
 | Project registered with `iterate_enabled=1` | dashboard or `/api/pipelines/advance?force_phase=iterate_artifact` | `run_pipeline`     |
 | `cycle_state(n)` bumped to 1                | `run_pipeline` (cyclic=true)       | relaunch check        |
 | `telemetry_v{n}` written                    | `iterate_runner`                    | postmortem, dashboard |
-| `postmortem_v{n}` written                   | support-analytics-reporter          | all 4 proposers       |
+| `postmortem_v{n}` written                   | analytics-reporter                  | all 4 proposers       |
 | `proposal_*_v{n}` (x4) written              | 4 proposers in parallel             | synthesis_gate        |
 | `game_html_v{n+1}` written                  | frontend-developer                  | next cycle's playtest |
 | `cycle_state(n)` bumped to n+1              | `_maybe_relaunch_cyclic`            | next relaunch check   |

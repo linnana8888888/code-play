@@ -585,7 +585,7 @@ pipelines:
         output: telemetry
 
       - id: postmortem
-        agent: support-analytics-reporter
+        agent: analytics-reporter
         depends_on: [playtest]
         task: |
           Write the cycle-{{cycle_n}} postmortem for iteration {{iteration_tag}}.

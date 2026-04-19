@@ -178,6 +178,77 @@ pipelines:
           as memory artifact key 'iteration_scaffold_v1'.
         output: iteration_scaffold
 
+      - id: publish-prep
+        agent: publisher
+        depends_on: [scaffold-iteration]
+        task: |
+          Ship-gate preparation. Read from memory: concept_options_v1, mechanics_v1,
+          laf_brief_v1, qa_report_v1, game_html_v1, and (if present) compliance_audit_v1.
+
+          Run the pre-flight checklist:
+            1. HTML validates; no file:// or localhost references.
+            2. Every asset_id referenced in laf_brief_v1 maps to an entry in
+               skills/asset-sources.md with a compatible license (CC0 / CC-BY / Kenney).
+            3. compliance_audit_v1 exists and is "pass" (if missing, block and route to
+               compliance-auditor).
+            4. qa_report_v1 verdict is "pass".
+            5. QA screenshots exist under assets/qa/ or artifacts/<slug>/qa/.
+
+          Then generate THREE twisted title candidates. The working slug from the repo
+          is the engineering codename, not the ship name — bend it into something
+          memorable (pun, metaphor, cute noun pairing). ≤ 22 characters each. Respect
+          kids-audience tone. Write a one-line rationale per candidate and mark your
+          preferred pick.
+
+          Synthesize listing metadata (tagline ≤ 60 chars, short desc ≤ 140, long desc
+          ≤ 4000 markdown, 5-10 tags, cover image spec, screenshot references from
+          qa/). Generate a flat itch-compatible package at
+          artifacts/<slug>/dist/v<N>/ and zip it to artifacts/<slug>/dist/v<N>.zip.
+
+          Targets for v1: ["itch.io", "gh-pages"]. Roblox target is accepted only if
+          project tech_stack includes Roblox and a .rbxl is produced.
+
+          Save publish_plan_v1 to memory with:
+            { slug_options: [...], chosen_slug, metadata, package_path, package_sha256,
+              package_bytes, targets, preflight_results, estimated_urls }.
+
+          DO NOT PUBLISH. Stop here and wait for gate-publish.
+        output: publish_plan
+
+      - id: gate-publish
+        type: human-gate
+        depends_on: [publish-prep]
+        review_of: publish-prep
+        task: |
+          Ship gate. Review publish_plan_v1:
+            - Pick one of the three twisted title candidates (or reject and ask for
+              three new ones).
+            - Review metadata, cover mock, screenshots.
+            - Confirm target list (defaults: itch.io + gh-pages).
+            - Confirm version number.
+          Approve to publish, skip a specific target, or request changes. This is the
+          moment when a public URL is created with your handle on it.
+
+      - id: publish
+        agent: publisher
+        depends_on: [gate-publish]
+        task: |
+          Execute publish_plan_v1 with the approved title. Push to each approved target
+          in parallel:
+            - itch.io via itchio_publish (butler push + butler status).
+            - gh-pages via gh_pages_publish (commit docs/<slug>/ on gh-pages branch).
+            - roblox via roblox_publish (Open Cloud PATCH place — only if approved).
+          For each target: HEAD the URL until 200, Playwright-load it headless, take a
+          live screenshot under assets/publish/<slug>/, note any console errors.
+
+          Write publish_manifest_v1 to memory with slug, chosen_title, version, git_sha,
+          published_at, targets (name/url/status/bytes/live_shot), compliance_rating,
+          assets_licensed. Append a row to docs/published-games.md.
+
+          Post ONE message to the project channel: "🎪 Shipped: <title> — <primary_url>
+          — <live_screenshot>". Nothing else.
+        output: manifest
+
   phased-producer-race:
     name: "Phased Producer (A/B build race)"
     description: "Same as phased-producer but fans out the build step to two parallel agents on different models with a pick gate."
@@ -290,6 +361,53 @@ pipelines:
           with `validate_goals_md()` (must return []). Commit. Save one-line note
           as memory key 'iteration_scaffold_v1'.
         output: iteration_scaffold
+
+      - id: publish-prep
+        agent: publisher
+        depends_on: [scaffold-iteration]
+        task: |
+          Ship-gate preparation. Read from memory: concept_options_v1, mechanics_v1,
+          laf_brief_v1, qa_report_v1, game_html_v1, and (if present) compliance_audit_v1.
+
+          Run the pre-flight checklist:
+            1. HTML validates; no file:// or localhost references.
+            2. Every asset_id referenced in laf_brief_v1 maps to an entry in
+               skills/asset-sources.md with a compatible license (CC0 / CC-BY / Kenney).
+            3. compliance_audit_v1 exists and is "pass" (if missing, block and route to
+               compliance-auditor).
+            4. qa_report_v1 verdict is "pass".
+            5. QA screenshots exist under assets/qa/ or artifacts/<slug>/qa/.
+
+          Then generate THREE twisted title candidates (≤ 22 chars each, kids-safe,
+          searchable, no emoji). Mark your preferred pick with a one-line rationale
+          per candidate. Synthesize listing metadata (tagline ≤ 60, short ≤ 140, long
+          ≤ 4000 md, 5-10 tags, cover spec, screenshots from qa/). Package flat at
+          artifacts/<slug>/dist/v<N>/ and zip to artifacts/<slug>/dist/v<N>.zip.
+
+          Targets for v1: ["itch.io", "gh-pages"]. Roblox only if a .rbxl exists.
+
+          Save publish_plan_v1 to memory. DO NOT PUBLISH. Wait for gate-publish.
+        output: publish_plan
+
+      - id: gate-publish
+        type: human-gate
+        depends_on: [publish-prep]
+        review_of: publish-prep
+        task: |
+          Ship gate. Pick one of the three twisted titles (or reject and request
+          three new ones). Review metadata, cover, screenshots. Confirm target list
+          and version. Approve to publish, skip a target, or request changes.
+
+      - id: publish
+        agent: publisher
+        depends_on: [gate-publish]
+        task: |
+          Execute publish_plan_v1 with approved title. Push to each approved target in
+          parallel via itchio_publish / gh_pages_publish / roblox_publish. For each:
+          HEAD until 200, Playwright-load headless, live screenshot, note console
+          errors. Write publish_manifest_v1 to memory and append row to
+          docs/published-games.md. Post ONE announce line with title + primary URL.
+        output: manifest
 
   new-game:
     name: "New Game Production"

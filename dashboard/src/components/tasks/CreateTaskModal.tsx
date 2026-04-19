@@ -39,22 +39,27 @@ export default function CreateTaskModal({ open, projectId, onClose, onCreate }: 
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={onClose}>
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center"
+      style={{ background: "rgba(13,13,13,0.4)", backdropFilter: "blur(4px)" }}
+      onClick={onClose}
+    >
       <form
         onClick={(e) => e.stopPropagation()}
         onSubmit={handleSubmit}
-        className="w-full max-w-md rounded-xl border border-border bg-bg-card p-6 space-y-4"
+        className="w-full max-w-md space-y-4 rounded-3xl border border-border bg-bg-card p-8"
+        style={{ boxShadow: "rgba(0,0,0,0.08) 0px 8px 24px" }}
       >
-        <h2 className="text-lg font-semibold">New Task</h2>
+        <h2 className="text-[22px] font-semibold tight-heading">New Task</h2>
         <input
-          className="w-full rounded-lg border border-border bg-bg px-3 py-2 text-sm text-text outline-none focus:border-accent"
+          className="w-full rounded-2xl border border-border-strong bg-white px-4 py-2 text-sm text-text outline-none placeholder:text-text-subtle focus:border-accent"
           placeholder="Task title"
           value={title}
           onChange={(e) => setTitle(e.target.value)}
           required
         />
         <textarea
-          className="w-full rounded-lg border border-border bg-bg px-3 py-2 text-sm text-text outline-none focus:border-accent"
+          className="w-full rounded-2xl border border-border-strong bg-white px-4 py-2 text-sm text-text outline-none placeholder:text-text-subtle focus:border-accent"
           placeholder="Description"
           rows={3}
           value={description}
@@ -65,7 +70,7 @@ export default function CreateTaskModal({ open, projectId, onClose, onCreate }: 
           <input
             type="number"
             min={1} max={10}
-            className="w-16 rounded-lg border border-border bg-bg px-2 py-1 text-sm text-text outline-none"
+            className="w-16 rounded-xl border border-border-strong bg-white px-2 py-1 text-sm text-text outline-none"
             value={priority}
             onChange={(e) => setPriority(Number(e.target.value))}
           />
@@ -75,7 +80,7 @@ export default function CreateTaskModal({ open, projectId, onClose, onCreate }: 
           <select
             value={modelOverride}
             onChange={(e) => setModelOverride(e.target.value)}
-            className="w-full rounded-lg border border-border bg-bg px-3 py-2 text-sm text-text outline-none focus:border-accent"
+            className="w-full rounded-2xl border border-border-strong bg-white px-4 py-2 text-sm text-text outline-none focus:border-accent"
           >
             <option value="">agent default</option>
             {models.map((m) => (
@@ -86,16 +91,12 @@ export default function CreateTaskModal({ open, projectId, onClose, onCreate }: 
             ))}
           </select>
         </label>
-        <div className="flex justify-end gap-2">
-          <button type="button" onClick={onClose} className="rounded-lg px-3 py-1.5 text-sm text-text-muted hover:text-text">
+        <div className="flex justify-end gap-2 pt-2">
+          <button type="button" onClick={onClose} className="btn-ghost">
             Cancel
           </button>
-          <button
-            type="submit"
-            disabled={!title || submitting}
-            className="rounded-lg bg-accent px-4 py-1.5 text-sm font-medium text-white hover:bg-accent-hover disabled:opacity-50"
-          >
-            {submitting ? "Creating..." : "Create"}
+          <button type="submit" disabled={!title || submitting} className="btn-primary">
+            {submitting ? "Creating…" : "Create"}
           </button>
         </div>
       </form>

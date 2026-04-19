@@ -35,22 +35,27 @@ export default function CreateProjectModal({ open, onClose, onCreate }: Props) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={onClose}>
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center"
+      style={{ background: "rgba(13,13,13,0.4)", backdropFilter: "blur(4px)" }}
+      onClick={onClose}
+    >
       <form
         onClick={(e) => e.stopPropagation()}
         onSubmit={handleSubmit}
-        className="w-full max-w-md rounded-xl border border-border bg-bg-card p-6 space-y-4"
+        className="w-full max-w-md rounded-3xl border border-border bg-bg-card p-8 space-y-4"
+        style={{ boxShadow: "rgba(0,0,0,0.08) 0px 8px 24px" }}
       >
-        <h2 className="text-lg font-semibold">New Project</h2>
+        <h2 className="text-[22px] font-semibold tight-heading">New Project</h2>
         <input
-          className="w-full rounded-lg border border-border bg-bg px-3 py-2 text-sm text-text outline-none focus:border-accent"
+          className="w-full rounded-2xl border border-border-strong bg-white px-4 py-2 text-sm text-text outline-none placeholder:text-text-subtle focus:border-accent"
           placeholder="Project name"
           value={name}
           onChange={(e) => setName(e.target.value)}
           required
         />
         <textarea
-          className="w-full rounded-lg border border-border bg-bg px-3 py-2 text-sm text-text outline-none focus:border-accent"
+          className="w-full rounded-2xl border border-border-strong bg-white px-4 py-2 text-sm text-text outline-none placeholder:text-text-subtle focus:border-accent"
           placeholder="Description"
           rows={2}
           value={description}
@@ -68,7 +73,7 @@ export default function CreateProjectModal({ open, onClose, onCreate }: Props) {
           <option value="web">Web (HTML/CSS/JS)</option>
         </select>
         <input
-          className="w-full rounded-lg border border-border bg-bg px-3 py-2 text-sm text-text outline-none focus:border-accent"
+          className="w-full rounded-2xl border border-border-strong bg-white px-4 py-2 text-sm text-text outline-none placeholder:text-text-subtle focus:border-accent"
           placeholder="Goal (optional)"
           value={goal}
           onChange={(e) => setGoal(e.target.value)}
@@ -91,16 +96,12 @@ export default function CreateProjectModal({ open, onClose, onCreate }: Props) {
           />
           Require human approval for agent roster
         </label>
-        <div className="flex justify-end gap-2">
-          <button type="button" onClick={onClose} className="rounded-lg px-3 py-1.5 text-sm text-text-muted hover:text-text">
+        <div className="flex justify-end gap-2 pt-2">
+          <button type="button" onClick={onClose} className="btn-ghost">
             Cancel
           </button>
-          <button
-            type="submit"
-            disabled={!name || submitting}
-            className="rounded-lg bg-accent px-4 py-1.5 text-sm font-medium text-white hover:bg-accent-hover disabled:opacity-50"
-          >
-            {submitting ? "Creating..." : "Create"}
+          <button type="submit" disabled={!name || submitting} className="btn-primary">
+            {submitting ? "Creating…" : "Create project"}
           </button>
         </div>
       </form>

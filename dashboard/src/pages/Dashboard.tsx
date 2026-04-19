@@ -34,16 +34,16 @@ export default function Dashboard() {
   };
 
   return (
-    <div className="space-y-6">
-      {/* Tab bar */}
-      <div className="flex gap-1 border-b border-border pb-px">
+    <div className="mx-auto max-w-[1200px] space-y-8">
+      {/* Tab bar — pill segmented control */}
+      <div className="inline-flex gap-1 rounded-full border border-border-strong bg-white p-1">
         {tabs.map((t) => (
           <button
             key={t}
             onClick={() => setTab(t)}
-            className={`rounded-t-lg px-4 py-2 text-sm font-medium capitalize transition-colors ${
+            className={`rounded-full px-4 py-1.5 text-[13px] font-medium capitalize transition-colors ${
               activeTab === t
-                ? "border-b-2 border-accent text-accent"
+                ? "bg-[#0d0d0d] text-white"
                 : "text-text-muted hover:text-text"
             }`}
           >

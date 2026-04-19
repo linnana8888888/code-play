@@ -122,21 +122,20 @@ export default function GatesPanel({ projectId, initialExpandedId }: Props) {
 
   const iterateEnabled = Boolean(project?.iterate_enabled);
   const iterateHeader = iterateEnabled ? (
-    <div className="flex items-center justify-between rounded-xl border border-accent/40 bg-accent/10 p-3">
+    <div
+      className="flex items-center justify-between rounded-2xl border p-4"
+      style={{ borderColor: "var(--color-accent)", background: "var(--color-accent-tint)" }}
+    >
       <div>
-        <p className="text-xs font-semibold uppercase tracking-wide text-accent">
+        <p className="mono-label" style={{ color: "var(--color-accent-hover)" }}>
           Iterate on this artifact
         </p>
-        <p className="text-[11px] text-text-muted">
+        <p className="mt-1 text-xs text-text-muted">
           Run the iterate_artifact pipeline: playtest → postmortem → propose ×4
           → synthesis gate → implement. Loops up to the cycle budget (default 5).
         </p>
       </div>
-      <button
-        onClick={onIterate}
-        disabled={iterating}
-        className="rounded-lg bg-accent px-3 py-1.5 text-xs font-semibold text-bg hover:bg-accent/90 disabled:opacity-50"
-      >
+      <button onClick={onIterate} disabled={iterating} className="btn-accent">
         {iterating ? "Launching…" : "▶ Iterate"}
       </button>
     </div>
@@ -177,9 +176,10 @@ export default function GatesPanel({ projectId, initialExpandedId }: Props) {
           return (
             <div
               key={gate.task_id}
-              className={`rounded-xl border p-4 ${
-                gate.ready ? "border-accent/50 bg-bg-card" : "border-border bg-bg-card opacity-70"
-              } ${isExpanded ? "ring-2 ring-accent" : ""}`}
+              className={`rounded-2xl border p-5 ${
+                gate.ready ? "border-accent bg-bg-card" : "border-border bg-bg-card opacity-70"
+              } ${isExpanded ? "ring-1 ring-accent" : ""}`}
+              style={{ boxShadow: "rgba(0,0,0,0.03) 0px 2px 4px" }}
             >
               <SpecDiffGrid
                 projectId={projectId}
@@ -199,9 +199,10 @@ export default function GatesPanel({ projectId, initialExpandedId }: Props) {
         return (
           <div
             key={gate.task_id}
-            className={`rounded-xl border p-4 ${
-              gate.ready ? "border-accent/50 bg-bg-card" : "border-border bg-bg-card opacity-70"
-            } ${isExpanded ? "ring-2 ring-accent" : ""}`}
+            className={`rounded-2xl border p-5 ${
+              gate.ready ? "border-accent bg-bg-card" : "border-border bg-bg-card opacity-70"
+            } ${isExpanded ? "ring-1 ring-accent" : ""}`}
+            style={{ boxShadow: "rgba(0,0,0,0.03) 0px 2px 4px" }}
           >
             <div className="flex items-start justify-between gap-3">
               <div>
@@ -218,12 +219,8 @@ export default function GatesPanel({ projectId, initialExpandedId }: Props) {
                 </h3>
                 <p className="mt-1 text-xs text-text-muted">{gate.prompt}</p>
               </div>
-              <span
-                className={`rounded px-2 py-0.5 text-[10px] font-medium ${
-                  gate.ready ? "bg-success/20 text-success" : "bg-warning/20 text-warning"
-                }`}
-              >
-                {gate.ready ? "ready for review" : "waiting on upstream"}
+              <span className={`badge ${gate.ready ? "badge-running" : "badge-pending"}`}>
+                {gate.ready ? "ready" : "waiting"}
               </span>
             </div>
 
@@ -288,13 +285,13 @@ export default function GatesPanel({ projectId, initialExpandedId }: Props) {
                   href={gamePreviewUrl(projectId)}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="rounded-lg bg-accent/20 px-3 py-1.5 text-xs font-medium text-accent hover:bg-accent/30"
+                  className="btn-accent"
                 >
                   ▶ Play build (new tab)
                 </a>
                 <button
                   onClick={() => setPlayOpen(showPlayInline ? null : gate.task_id)}
-                  className="rounded-lg bg-bg-hover px-3 py-1.5 text-xs font-medium text-text-muted hover:bg-bg"
+                  className="btn-ghost"
                 >
                   {showPlayInline ? "Hide inline preview" : "Play inline"}
                 </button>
@@ -306,7 +303,7 @@ export default function GatesPanel({ projectId, initialExpandedId }: Props) {
                 key={`${gate.task_id}-iframe`}
                 src={gamePreviewUrl(projectId)}
                 sandbox="allow-scripts allow-same-origin"
-                className="mt-3 h-96 w-full rounded border border-border bg-black"
+                className="mt-3 h-96 w-full rounded-2xl border border-border bg-black"
                 title="Game preview"
               />
             ) : null}
@@ -318,23 +315,23 @@ export default function GatesPanel({ projectId, initialExpandedId }: Props) {
                 setFeedback((f) => ({ ...f, [gate.task_id]: e.target.value }))
               }
               placeholder="Optional notes on approval, or required changes for revise..."
-              className="mt-3 w-full rounded-lg border border-border bg-bg px-3 py-2 text-sm text-text outline-none focus:border-accent"
+              className="mt-3 w-full rounded-2xl border border-border-strong bg-white px-4 py-2 text-sm text-text outline-none focus:border-accent"
             />
 
             <div className="mt-3 flex gap-2">
               <button
                 disabled={!gate.ready || busy === gate.task_id}
                 onClick={() => onApprove(gate)}
-                className="rounded-lg bg-success/20 px-3 py-1.5 text-xs font-medium text-success hover:bg-success/30 disabled:opacity-50"
+                className="btn-primary"
               >
-                {busy === gate.task_id ? "..." : "Approve"}
+                {busy === gate.task_id ? "…" : "Approve"}
               </button>
               <button
                 disabled={!gate.ready || busy === gate.task_id || !(feedback[gate.task_id] ?? "").trim()}
                 onClick={() => onRevise(gate)}
-                className="rounded-lg bg-warning/20 px-3 py-1.5 text-xs font-medium text-warning hover:bg-warning/30 disabled:opacity-50"
+                className="btn-ghost"
               >
-                {busy === gate.task_id ? "..." : "Request changes"}
+                {busy === gate.task_id ? "…" : "Request changes"}
               </button>
             </div>
           </div>

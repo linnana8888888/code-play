@@ -1,54 +1,168 @@
 @import "tailwindcss";
 
-/* ── Dark game-studio theme ── */
+/* ── Mintlify-inspired light theme ── */
 @theme {
-  --color-bg: #0b0f19;
-  --color-bg-card: #111827;
-  --color-bg-sidebar: #0f1629;
-  --color-bg-hover: #1e293b;
-  --color-border: #1e293b;
-  --color-text: #e2e8f0;
-  --color-text-muted: #94a3b8;
-  --color-accent: #6366f1;
-  --color-accent-hover: #818cf8;
-  --color-success: #22c55e;
-  --color-warning: #eab308;
-  --color-danger: #ef4444;
-  --color-info: #3b82f6;
+  --color-bg: #ffffff;
+  --color-bg-card: #ffffff;
+  --color-bg-sidebar: #ffffff;
+  --color-bg-hover: #f5f5f5;
+  --color-bg-subtle: #fafafa;
+  --color-border: rgba(0, 0, 0, 0.05);
+  --color-border-strong: rgba(0, 0, 0, 0.08);
+  --color-text: #0d0d0d;
+  --color-text-muted: #666666;
+  --color-text-subtle: #888888;
+  --color-accent: #18e299;
+  --color-accent-hover: #0fa76e;
+  --color-accent-tint: #d4fae8;
+  --color-success: #0fa76e;
+  --color-warning: #c37d0d;
+  --color-danger: #d45656;
+  --color-info: #3772cf;
+  --font-sans: "Inter", "Inter Fallback", system-ui, -apple-system, sans-serif;
+  --font-mono: "Geist Mono", ui-monospace, SFMono-Regular, monospace;
 }
 
 html {
-  color-scheme: dark;
+  color-scheme: light;
 }
 
 body {
   margin: 0;
   background: var(--color-bg);
   color: var(--color-text);
-  font-family: "Inter", system-ui, -apple-system, sans-serif;
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
-/* ── Status badges ── */
+/* ── Typography helpers ── */
+.mono-label {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  color: var(--color-text-subtle);
+}
+.tight-display {
+  letter-spacing: -0.8px;
+}
+.tight-heading {
+  letter-spacing: -0.2px;
+}
+
+/* ── Buttons (Mintlify pill style) ── */
+.btn-primary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border-radius: 9999px;
+  padding: 8px 20px;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.3;
+  background: #0d0d0d;
+  color: #ffffff;
+  box-shadow: rgba(0, 0, 0, 0.06) 0px 1px 2px;
+  transition: opacity 150ms ease;
+}
+.btn-primary:hover {
+  opacity: 0.88;
+}
+.btn-primary:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.btn-ghost {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border-radius: 9999px;
+  padding: 7px 18px;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.3;
+  background: #ffffff;
+  color: #0d0d0d;
+  border: 1px solid var(--color-border-strong);
+  transition: border-color 150ms ease, color 150ms ease;
+}
+.btn-ghost:hover {
+  border-color: var(--color-accent);
+  color: var(--color-accent-hover);
+}
+.btn-ghost:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.btn-accent {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border-radius: 9999px;
+  padding: 8px 20px;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.3;
+  background: var(--color-accent);
+  color: #0d0d0d;
+  transition: opacity 150ms ease;
+}
+.btn-accent:hover {
+  opacity: 0.88;
+}
+.btn-accent:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.card {
+  background: #ffffff;
+  border: 1px solid var(--color-border);
+  border-radius: 16px;
+  padding: 24px;
+  box-shadow: rgba(0, 0, 0, 0.03) 0px 2px 4px;
+}
+
+/* ── Status badges (Mintlify pill style) ── */
 .badge {
   @apply inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium;
+  font-family: var(--font-mono);
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
 }
 .badge-pending {
-  @apply bg-yellow-900/40 text-yellow-400;
+  background: #fef3c7;
+  color: #92400e;
 }
 .badge-assigned {
-  @apply bg-blue-900/40 text-blue-400;
+  background: #dbeafe;
+  color: #1e40af;
 }
 .badge-running {
-  @apply bg-indigo-900/40 text-indigo-400;
+  background: var(--color-accent-tint);
+  color: var(--color-accent-hover);
 }
 .badge-done {
-  @apply bg-green-900/40 text-green-400;
+  background: var(--color-accent-tint);
+  color: var(--color-accent-hover);
 }
 .badge-terminated {
-  @apply bg-red-900/40 text-red-400;
+  background: #fee2e2;
+  color: #991b1b;
 }
 .badge-blocked {
-  @apply bg-gray-700/40 text-gray-400;
+  background: #f5f5f5;
+  color: #666666;
+}
+
+/* ── Focus ring ── */
+*:focus-visible {
+  outline: 1px solid var(--color-accent);
+  outline-offset: 2px;
 }
 
 /* ── Scrollbar ── */
@@ -57,9 +171,12 @@ body {
   height: 6px;
 }
 ::-webkit-scrollbar-track {
-  background: var(--color-bg);
+  background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: var(--color-border);
-  border-radius: 3px;
+  background: rgba(0, 0, 0, 0.12);
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.2);
 }

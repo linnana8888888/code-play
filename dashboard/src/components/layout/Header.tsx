@@ -12,23 +12,42 @@ export default function Header() {
   }, []);
 
   return (
-    <header className="flex h-14 shrink-0 items-center justify-between border-b border-border bg-bg-card px-6">
-      <div className="text-sm text-text-muted">
+    <header
+      className="sticky top-0 z-10 flex h-16 shrink-0 items-center justify-between border-b border-border bg-white/80 px-8"
+      style={{ backdropFilter: "blur(12px)", WebkitBackdropFilter: "blur(12px)" }}
+    >
+      <div className="flex items-center gap-5 text-[13px]">
         {stats ? (
-          <span className="flex gap-4">
-            <span>{stats.projects} projects</span>
-            <span className="text-border">|</span>
-            <span>{stats.agents.definitions} agents</span>
-            <span className="text-border">|</span>
-            <span className="text-success">{stats.agents.running} running</span>
-          </span>
+          <>
+            <span className="flex items-baseline gap-1.5">
+              <span className="font-semibold text-text tight-heading">{stats.projects}</span>
+              <span className="mono-label">Projects</span>
+            </span>
+            <span className="h-3 w-px bg-border-strong" />
+            <span className="flex items-baseline gap-1.5">
+              <span className="font-semibold text-text tight-heading">{stats.agents.definitions}</span>
+              <span className="mono-label">Agents</span>
+            </span>
+            <span className="h-3 w-px bg-border-strong" />
+            <span className="flex items-baseline gap-1.5">
+              <span className="font-semibold tight-heading" style={{ color: "var(--color-accent-hover)" }}>
+                {stats.agents.running}
+              </span>
+              <span className="mono-label">Running</span>
+            </span>
+          </>
         ) : (
-          "Loading..."
+          <span className="mono-label">Loading…</span>
         )}
       </div>
-      <div className="flex items-center gap-2">
-        <span className="inline-flex h-2 w-2 rounded-full bg-success animate-pulse" />
-        <span className="text-xs text-text-muted">Live</span>
+      <div
+        className="flex items-center gap-2 rounded-full border border-border-strong px-3 py-1"
+      >
+        <span
+          className="inline-flex h-1.5 w-1.5 rounded-full animate-pulse"
+          style={{ background: "var(--color-accent)" }}
+        />
+        <span className="mono-label" style={{ color: "var(--color-text)" }}>Live</span>
       </div>
     </header>
   );

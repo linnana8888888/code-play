@@ -9,30 +9,36 @@ const links = [
 
 export default function Sidebar() {
   return (
-    <aside className="flex w-56 flex-col border-r border-border bg-bg-sidebar">
+    <aside className="flex w-60 flex-col border-r border-border bg-bg-sidebar">
       {/* Logo */}
-      <div className="flex h-14 items-center gap-2 border-b border-border px-4">
-        <div className="h-7 w-7 rounded-lg bg-accent flex items-center justify-center text-sm font-bold text-white">
+      <div className="flex h-16 items-center gap-2.5 px-5">
+        <div
+          className="flex h-8 w-8 items-center justify-center rounded-xl text-sm font-semibold text-[#0d0d0d]"
+          style={{ background: "linear-gradient(135deg, #18e299 0%, #d4fae8 100%)" }}
+        >
           P
         </div>
-        <span className="text-lg font-semibold tracking-tight">Code PLAY</span>
+        <span className="text-[15px] font-semibold tracking-tight">Code PLAY</span>
       </div>
 
       {/* Nav */}
-      <nav className="flex-1 space-y-1 p-3">
+      <div className="px-5 pt-4">
+        <p className="mono-label">Workspace</p>
+      </div>
+      <nav className="flex-1 space-y-1 px-3 pt-2">
         {links.map((l) => (
           <NavLink
             key={l.label}
             to={l.to}
             className={({ isActive }) =>
-              `flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors ${
+              `flex items-center gap-3 rounded-full px-3 py-2 text-sm transition-colors ${
                 isActive
-                  ? "bg-accent/15 text-accent-hover font-medium"
+                  ? "bg-[#0d0d0d] text-white font-medium"
                   : "text-text-muted hover:bg-bg-hover hover:text-text"
               }`
             }
           >
-            <svg className="h-5 w-5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+            <svg className="h-[18px] w-[18px] shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
               <path strokeLinecap="round" strokeLinejoin="round" d={l.icon} />
             </svg>
             {l.label}
@@ -41,8 +47,9 @@ export default function Sidebar() {
       </nav>
 
       {/* Footer */}
-      <div className="border-t border-border p-3 text-xs text-text-muted">
-        Multi-Agent Game Studio
+      <div className="border-t border-border p-5 text-[13px] text-text-muted">
+        <p className="mono-label mb-1">Studio</p>
+        <p>Multi-Agent Game Studio</p>
       </div>
     </aside>
   );

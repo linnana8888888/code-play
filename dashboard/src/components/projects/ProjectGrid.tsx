@@ -65,22 +65,19 @@ export default function ProjectGrid({
   return (
     <div>
       <div className="mb-4 flex items-center justify-between">
-        <h2 className="text-lg font-semibold">Projects</h2>
+        <h2 className="text-[20px] font-semibold tight-heading">Projects</h2>
         <div className="flex items-center gap-2">
           {onCleanup && (
             <button
               onClick={handleCleanup}
               disabled={cleaning}
-              className="rounded-lg border border-border px-3 py-1.5 text-sm font-medium text-text-muted hover:border-accent/40 hover:text-text transition-colors disabled:opacity-50"
+              className="btn-ghost"
               title="Delete all empty projects (no tasks, no memory)"
             >
               {cleaning ? "Cleaning…" : "Clean up empty"}
             </button>
           )}
-          <button
-            onClick={onCreate}
-            className="rounded-lg bg-accent px-3 py-1.5 text-sm font-medium text-white hover:bg-accent-hover transition-colors"
-          >
+          <button onClick={onCreate} className="btn-primary">
             + New Project
           </button>
         </div>
@@ -89,7 +86,8 @@ export default function ProjectGrid({
         {projects.map((p) => (
           <div
             key={p.id}
-            className="group relative rounded-xl border border-border bg-bg-card p-4 transition-colors hover:border-accent/40"
+            className="group relative rounded-2xl border border-border bg-bg-card p-5 transition-colors hover:border-border-strong"
+            style={{ boxShadow: "rgba(0,0,0,0.03) 0px 2px 4px" }}
           >
             {onDelete && (
               <button

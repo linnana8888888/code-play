@@ -98,16 +98,17 @@ export default function ProjectView() {
       </div>
 
       {project && (
-        <div className="rounded-xl border border-border bg-bg-card p-4">
-          <h1 className="text-xl font-semibold">{project.name}</h1>
-          <p className="mt-1 text-sm text-text-muted">{project.description}</p>
-          <div className="mt-2 flex flex-wrap gap-3 text-xs text-text-muted">
+        <div
+          className="rounded-2xl border border-border bg-bg-card p-6"
+          style={{ boxShadow: "rgba(0,0,0,0.03) 0px 2px 4px" }}
+        >
+          <h1 className="text-[28px] font-semibold tight-display">{project.name}</h1>
+          <p className="mt-1.5 text-sm text-text-muted">{project.description}</p>
+          <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-text-muted">
             <span className="badge badge-running">{project.tech_stack}</span>
             {project.goal && <span>Goal: {project.goal}</span>}
             {project.require_roster_approval && (
-              <span className="rounded border border-accent/40 bg-accent/10 px-1.5 py-0.5 text-[10px] font-medium text-accent">
-                roster approval required
-              </span>
+              <span className="badge badge-assigned">roster approval</span>
             )}
           </div>
         </div>
@@ -121,14 +122,15 @@ export default function ProjectView() {
           {spawnFailures.map((f) => (
             <div
               key={f.task_id}
-              className="flex items-start justify-between gap-3 rounded-xl border border-red-500/60 bg-red-500/10 p-3 text-sm"
+              className="flex items-start justify-between gap-3 rounded-2xl border p-4 text-sm"
+              style={{ borderColor: "var(--color-danger)", background: "#fee2e2" }}
             >
               <div className="min-w-0">
-                <p className="font-semibold text-red-400">
+                <p className="mono-label" style={{ color: "#991b1b" }}>
                   Task blocked — agent spawn failed
                 </p>
-                <p className="mt-0.5 truncate text-xs text-text">
-                  <span className="font-mono">{f.agent_type}</span>
+                <p className="mt-1 truncate text-xs text-text">
+                  <span style={{ fontFamily: "var(--font-mono)" }}>{f.agent_type}</span>
                   <span className="text-text-muted">
                     {" "}· task {f.task_id} · {f.failures} attempts
                   </span>
@@ -146,7 +148,7 @@ export default function ProjectView() {
                 onClick={() =>
                   setSpawnFailures((prev) => prev.filter((p) => p.task_id !== f.task_id))
                 }
-                className="shrink-0 rounded-lg bg-bg-hover px-3 py-1.5 text-xs text-text-muted hover:text-text"
+                className="btn-ghost shrink-0"
               >
                 Dismiss
               </button>
@@ -156,26 +158,25 @@ export default function ProjectView() {
       )}
 
       {gateBanner ? (
-        <div className="flex items-center justify-between gap-3 rounded-xl border border-accent/60 bg-accent/10 p-3 text-sm">
+        <div
+          className="flex items-center justify-between gap-3 rounded-2xl border p-4 text-sm"
+          style={{ borderColor: "var(--color-accent)", background: "var(--color-accent-tint)" }}
+        >
           <div>
-            <p className="font-medium text-accent">Human review needed</p>
-            <p className="text-xs text-text-muted">
+            <p className="mono-label" style={{ color: "var(--color-accent-hover)" }}>
+              Human review needed
+            </p>
+            <p className="mt-1 text-xs text-text-muted">
               {gateBanner.review_of
                 ? `Gate for ${gateBanner.review_of}`
                 : gateBanner.title || "Pipeline gate is ready"}
             </p>
           </div>
           <div className="flex gap-2">
-            <button
-              onClick={() => openGate(gateBanner)}
-              className="rounded-lg bg-accent px-3 py-1.5 text-xs font-semibold text-bg hover:opacity-90"
-            >
+            <button onClick={() => openGate(gateBanner)} className="btn-primary">
               Open
             </button>
-            <button
-              onClick={() => setGateBanner(null)}
-              className="rounded-lg bg-bg-hover px-3 py-1.5 text-xs text-text-muted hover:text-text"
-            >
+            <button onClick={() => setGateBanner(null)} className="btn-ghost">
               Dismiss
             </button>
           </div>
@@ -183,7 +184,10 @@ export default function ProjectView() {
       ) : null}
 
       {/* Section tabs */}
-      <div className="flex gap-1 border-b border-border pb-px">
+      <div
+        className="inline-flex rounded-full border border-border-strong bg-white p-1"
+        style={{ boxShadow: "rgba(0,0,0,0.03) 0px 1px 2px" }}
+      >
         {(["tasks", "plan", "docs", "agents", "channels"] as Section[]).map((s) => (
           <button
             key={s}
@@ -194,9 +198,9 @@ export default function ProjectView() {
                 setSearchParams(searchParams);
               }
             }}
-            className={`rounded-t-lg px-4 py-2 text-sm font-medium capitalize transition-colors ${
+            className={`rounded-full px-4 py-1.5 text-sm font-medium capitalize transition-colors ${
               section === s
-                ? "border-b-2 border-accent text-accent"
+                ? "bg-[#0d0d0d] text-white"
                 : "text-text-muted hover:text-text"
             }`}
           >

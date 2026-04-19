@@ -87,6 +87,14 @@ export const createTask = (t: TaskCreate) =>
   req<Task>("/tasks", { method: "POST", body: JSON.stringify(t) });
 export const patchTask = (id: string, patch: { model_override?: string | null }) =>
   req<Task>(`/tasks/${id}`, { method: "PATCH", body: JSON.stringify(patch) });
+export const retryTask = (
+  id: string,
+  body: { budget_max_tokens_override?: number } = {},
+) =>
+  req<{ status: string; task_id: string; new_cap?: number | null }>(
+    `/tasks/${id}/retry`,
+    { method: "POST", body: JSON.stringify(body) },
+  );
 
 /* ── Models ── */
 export const getAvailableModels = () => req<ModelOption[]>("/models/available");

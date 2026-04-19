@@ -24,6 +24,28 @@ export interface ProjectCreate {
   require_roster_approval?: boolean;
 }
 
+export type FailureCategory =
+  | "budget_exhausted"
+  | "transient"
+  | "permanent"
+  | "spawn";
+
+export interface TaskResult {
+  summary?: string;
+  error?: string;
+  failure_category?: FailureCategory;
+  stall_reason?: string;
+  stall_hint?: string;
+  tokens_used?: number;
+  prev_cap?: number;
+  suggested_cap?: number;
+  spawn_failures?: number;
+  spawn_errors?: string[];
+  agent_instance_id?: string;
+  retry_history?: Array<Record<string, unknown>>;
+  [k: string]: unknown;
+}
+
 export interface Task {
   id: string;
   project_id: string;
@@ -38,6 +60,8 @@ export interface Task {
   created_by: string;
   created_at: string;
   updated_at: string;
+  result?: TaskResult | null;
+  metadata?: Record<string, unknown> | null;
 }
 
 export interface TaskCreate {
@@ -64,6 +88,8 @@ export interface HumanGate {
   preceding_result: Record<string, unknown> | null;
   cycle_n: number | null;
   iteration_tag: string | null;
+  upstream_blocked?: boolean;
+  upstream_blocked_ids?: string[];
 }
 
 export interface ModelOption {

@@ -32,6 +32,10 @@ export function useTasks(projectId?: string) {
       setTasks((prev) =>
         prev.map((x) => (x.id === id ? ({ ...x, ...d, id: x.id } as Task) : x))
       );
+    } else if (event.type === "task_stalled") {
+      // Backend broadcast when a task enters BLOCKED with a failure_category.
+      // Re-fetch so we see the updated `result` payload (suggested_cap etc.).
+      refresh();
     }
   });
 

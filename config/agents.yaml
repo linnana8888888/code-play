@@ -59,8 +59,13 @@ agents:
   # dashboard-builder) owns the data backend; publisher covers deploy to itch/GH/Roblox
   # (platforms run their own compliance review).
   frontend-developer:
-    model: "openai/gpt-5-2025-08-07"
-    fallback_model: "anthropic/anthropic.claude-sonnet-4-6"
+    # 2026-04-19: GPT-5 route on LEGO proxy was 503'ing; Sonnet 4.6 route on the
+    # same proxy is healthy. Switched primary to Sonnet and kept GPT-5 as fallback
+    # for when the openai/ route recovers. Tried openrouter/elephant-alpha earlier
+    # but the stealth model thrashed on filesystem discovery and hit budget cap
+    # without producing game_html_v1 — not tool-use compliant.
+    model: "anthropic/anthropic.claude-sonnet-4-6"
+    fallback_model: "openai/gpt-5-2025-08-07"
     description: "Web game implementer — builds game_html_v1 per tech_plan_v1 (Three.js/canvas + DOM UI)"
     tools: [builtin, external_repo_commit]
 

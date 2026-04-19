@@ -9,6 +9,7 @@ import InstanceList from "../components/agents/InstanceList";
 import GovernancePanel from "../components/governance/GovernancePanel";
 import TaskBoard from "../components/tasks/TaskBoard";
 import CreateTaskModal from "../components/tasks/CreateTaskModal";
+import NeedsAttention from "../components/tasks/NeedsAttention";
 import { useProjects } from "../hooks/useProjects";
 import { useAgents } from "../hooks/useAgents";
 import { useTasks } from "../hooks/useTasks";
@@ -26,7 +27,7 @@ export default function Dashboard() {
   const [newTaskOpen, setNewTaskOpen] = useState(false);
   const { projects, create, remove, cleanup, previewCleanup } = useProjects();
   const { definitions, categories, instances, spawn, terminate } = useAgents();
-  const { tasks, create: createNewTask } = useTasks(taskFilter || undefined);
+  const { tasks, create: createNewTask, refresh: refreshTasks } = useTasks(taskFilter || undefined);
 
   const setTab = (t: Tab) => {
     if (t === "overview") setSearchParams({});
@@ -54,6 +55,7 @@ export default function Dashboard() {
 
       {activeTab === "overview" && (
         <>
+          <NeedsAttention tasks={tasks} onRetried={refreshTasks} />
           <StatsOverview />
           <ProjectGrid
             projects={projects}
@@ -113,7 +115,12 @@ export default function Dashboard() {
               {tasks.length} task{tasks.length === 1 ? "" : "s"}
             </span>
           </div>
-          <TaskBoard tasks={tasks} onCreate={() => setNewTaskOpen(true)} />
+          <NeedsAttention tasks={tasks} onRetried={refreshTasks} />
+          <TaskBoard
+            tasks={tasks}
+            onCreate={() => setNewTaskOpen(true)}
+            onRetried={refreshTasks}
+          />
           <CreateTaskModal
             open={newTaskOpen}
             projectId={taskFilter || (projects[0]?.id ?? "")}

@@ -6,6 +6,7 @@ import { useAgents } from "../hooks/useAgents";
 import { useWebSocket } from "../api/websocket";
 import TaskBoard from "../components/tasks/TaskBoard";
 import CreateTaskModal from "../components/tasks/CreateTaskModal";
+import NeedsAttention from "../components/tasks/NeedsAttention";
 import InstanceList from "../components/agents/InstanceList";
 import ChannelView from "../components/channels/ChannelView";
 import GatesPanel from "../components/gates/GatesPanel";
@@ -44,7 +45,7 @@ export default function ProjectView() {
   const [relaunchInput, setRelaunchInput] = useState("");
   const [relaunching, setRelaunching] = useState(false);
   const [relaunchMsg, setRelaunchMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
-  const { tasks, create: createTask } = useTasks(id);
+  const { tasks, create: createTask, refresh: refreshTasks } = useTasks(id);
   const { instances, terminate } = useAgents();
   const expandedId = searchParams.get("expanded") ?? undefined;
 
@@ -272,7 +273,12 @@ export default function ProjectView() {
 
       {section === "tasks" && (
         <>
-          <TaskBoard tasks={tasks} onCreate={() => setCreateTaskOpen(true)} />
+          <NeedsAttention tasks={tasks} onRetried={refreshTasks} />
+          <TaskBoard
+            tasks={tasks}
+            onCreate={() => setCreateTaskOpen(true)}
+            onRetried={refreshTasks}
+          />
           <CreateTaskModal
             open={createTaskOpen}
             projectId={id}

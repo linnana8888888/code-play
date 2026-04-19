@@ -52,6 +52,35 @@ from src.models.proposals import (
 )
 from src.iteration import cycle_state
 
+# --- Failure classification -------------------------------------------------
+
+# Retryable transient signals from LLM providers or the network. These map to
+# `failure_category = "transient"` so the dashboard shows a plain retry button
+# without extra input, and the automatic retry loop will try again.
+_TRANSIENT_MARKERS = (
+    "503", "502", "504", "429",
+    "service unavailable", "bad gateway", "gateway timeout",
+    "timeout", "timed out", "connection reset", "connection aborted",
+    "temporarily unavailable", "rate limit", "try again",
+)
+
+
+def _classify_failure(err_text: str, *, terminated_for_budget: bool = False) -> str:
+    """Return `budget_exhausted` | `transient` | `permanent` for a failure.
+
+    Used by `_run_agent_task` and `_advance_pipeline` to tag `task.result`
+    so the dashboard can render the right affordance (lift cap, retry,
+    or "permanent — fix config").
+    """
+    if terminated_for_budget:
+        return "budget_exhausted"
+    low = (err_text or "").lower()
+    for m in _TRANSIENT_MARKERS:
+        if m in low:
+            return "transient"
+    return "permanent"
+
+
 # --- Logging ---
 
 logging.basicConfig(
@@ -771,8 +800,47 @@ async def _run_agent_task(instance, task_prompt: str, session_id: str = None):
             except Exception as exc:
                 logger.warning(f"Failed to rescue HTML: {exc}")
 
-        # Mark the task completed and try to advance the pipeline
+        # Detect budget-exhausted termination — the runtime emits a final
+        # "[TERMINATED] Budget exceeded" assistant turn and flips the agent
+        # instance to TERMINATED. Surface this as a BLOCKED task with a
+        # `budget_exhausted` category so the dashboard can prompt the human
+        # to lift the cap and retry instead of silently marking success.
+        terminated_for_budget = (
+            instance.status == AgentStatus.TERMINATED
+            and isinstance(final_content, str)
+            and final_content.startswith("[TERMINATED] Budget exceeded")
+        )
+
         if instance.task_id:
+            if terminated_for_budget:
+                prev_cap = instance.budget_max_tokens or 0
+                suggested_cap = max(prev_cap * 2, prev_cap + 100_000) if prev_cap else 300_000
+                result = {
+                    "failure_category": "budget_exhausted",
+                    "error": final_content[:400],
+                    "tokens_used": instance.tokens_used,
+                    "prev_cap": prev_cap,
+                    "suggested_cap": suggested_cap,
+                    "agent_instance_id": instance.id,
+                }
+                try:
+                    task_queue.update_status(instance.task_id, TaskStatus.BLOCKED, result=result)
+                except Exception as exc:
+                    logger.warning(f"Failed to mark task {instance.task_id} blocked-for-budget: {exc}")
+                await ws_manager.broadcast({
+                    "type": "task_stalled",
+                    "data": {
+                        "task_id": instance.task_id,
+                        "project_id": instance.project_id,
+                        "failure_category": "budget_exhausted",
+                        "tokens_used": instance.tokens_used,
+                        "prev_cap": prev_cap,
+                        "suggested_cap": suggested_cap,
+                        "hint": "Budget cap hit — open the task and Lift cap to retry, or close it if the agent spiralled.",
+                    },
+                })
+                # Do NOT advance the pipeline — the task is waiting on a human.
+                return
             try:
                 task_queue.update_status(
                     instance.task_id,
@@ -788,15 +856,39 @@ async def _run_agent_task(instance, task_prompt: str, session_id: str = None):
         if instance.project_id:
             await _advance_pipeline(instance.project_id)
     except Exception as e:
-        logger.error(f"Agent {instance.id} failed: {e}")
+        err_text = str(e)
+        category = _classify_failure(err_text)
+        logger.error(f"Agent {instance.id} failed ({category}): {err_text}")
         if instance.task_id:
             try:
-                task_queue.update_status(instance.task_id, TaskStatus.BLOCKED, result={"error": str(e)})
+                task_queue.update_status(
+                    instance.task_id,
+                    TaskStatus.BLOCKED,
+                    result={"error": err_text, "failure_category": category},
+                )
             except Exception:
                 pass
+            await ws_manager.broadcast({
+                "type": "task_stalled",
+                "data": {
+                    "task_id": instance.task_id,
+                    "project_id": instance.project_id,
+                    "failure_category": category,
+                    "error": err_text[:400],
+                    "hint": (
+                        "Transient provider error — safe to retry from the task card."
+                        if category == "transient"
+                        else "Permanent agent crash — inspect logs before retrying."
+                    ),
+                },
+            })
         await ws_manager.broadcast({
             "type": "agent_error",
-            "data": {"instance_id": instance.id, "error": str(e)},
+            "data": {
+                "instance_id": instance.id,
+                "error": err_text,
+                "failure_category": category,
+            },
         })
 
 
@@ -913,6 +1005,20 @@ async def _advance_pipeline(project_id: str):
     if not ready:
         return
 
+    async def _stall(task, reason: str, hint: str | None = None):
+        """One-shot stall: block the task + broadcast so the UI can prompt."""
+        task_queue.stall_task(task.id, reason, hint=hint)
+        await ws_manager.broadcast({
+            "type": "task_stalled",
+            "data": {
+                "task_id": task.id,
+                "project_id": task.project_id,
+                "failure_category": "permanent",
+                "stall_reason": reason,
+                "hint": hint,
+            },
+        })
+
     for task in ready:
         if task.assigned_to:
             continue
@@ -926,33 +1032,55 @@ async def _advance_pipeline(project_id: str):
             pipeline_name = created_by.split(":", 1)[1]
             pipeline = pipeline_specs.get(pipeline_name)
             if not pipeline:
+                await _stall(
+                    task,
+                    f"Pipeline '{pipeline_name}' referenced by task.created_by not found in pipelines.yaml.",
+                    "Check pipelines.yaml — the pipeline may have been renamed or removed.",
+                )
                 continue
 
             step_id = task.title.replace(f"[{pipeline_name}] ", "").strip()
             step = next((s for s in pipeline.get("steps", []) if s.get("id") == step_id), None)
-            if not step:
-                continue
-            if step.get("type") == "human-gate":
-                # Surface the gate in the UI banner — the dashboard watches
-                # for this event and raises a toast/CTA that opens GatesPanel.
-                await ws_manager.broadcast({
-                    "type": "gate_ready",
-                    "data": {
-                        "task_id": task.id,
-                        "project_id": project_id,
-                        "pipeline": pipeline_name,
-                        "step_id": step_id,
-                        "review_of": step.get("review_of"),
-                        "title": task.title,
-                    },
-                })
-                continue
-            agent_type = step.get("agent")
+            if step is None:
+                # Dynamic fan-out sub-tasks (e.g. implement-engineer-eng-1)
+                # carry `pipeline:` provenance but aren't in the yaml. Fall
+                # back to the task's assignee_type so they still spawn.
+                if task.assignee_type:
+                    agent_type = task.assignee_type
+                else:
+                    await _stall(
+                        task,
+                        f"No yaml step '{step_id}' in pipeline '{pipeline_name}' and task has no assignee_type.",
+                        "Either add the step to pipelines.yaml or set assignee_type on the task.",
+                    )
+                    continue
+            else:
+                if step.get("type") == "human-gate":
+                    # Surface the gate in the UI banner — the dashboard watches
+                    # for this event and raises a toast/CTA that opens GatesPanel.
+                    await ws_manager.broadcast({
+                        "type": "gate_ready",
+                        "data": {
+                            "task_id": task.id,
+                            "project_id": project_id,
+                            "pipeline": pipeline_name,
+                            "step_id": step_id,
+                            "review_of": step.get("review_of"),
+                            "title": task.title,
+                        },
+                    })
+                    continue
+                agent_type = step.get("agent")
         elif task.assignee_type:
             # Human- or agent-created task with an explicit agent-type hint
             agent_type = task.assignee_type
 
         if not agent_type:
+            await _stall(
+                task,
+                "Task is ready but has no agent_type to spawn (no pipeline step, no assignee_type).",
+                "Set assignee_type on the task, or attach it to a pipeline with an `agent:` field.",
+            )
             continue
 
         budget_override = None
@@ -1005,6 +1133,50 @@ async def _advance_pipeline(project_id: str):
                     f"Failed to spawn {agent_type} for task {task.id} "
                     f"(attempt {count}/3): {err}"
                 )
+
+
+class TaskRetryBody(BaseModel):
+    """POST body for /api/tasks/{id}/retry.
+
+    `budget_max_tokens_override` is the only dial exposed today. For
+    `budget_exhausted` blocks the dashboard pre-fills it with the
+    estimator's `suggested_cap` (2× previous cap). For other categories
+    the field can be omitted and the task is reset with its existing
+    metadata.
+    """
+    budget_max_tokens_override: int | None = None
+
+
+@app.post("/api/tasks/{task_id}/retry")
+async def retry_task(task_id: str, body: TaskRetryBody | None = None):
+    """Reset a blocked/failed task to pending and advance the pipeline.
+
+    Dashboard calls this from the "Retry" / "Lift cap and retry" buttons
+    on blocked tasks. Permanent `stall_reason` blocks are still retriable
+    — the button lets the human force a retry once they've fixed the
+    underlying config — so the endpoint doesn't gate by category.
+    """
+    task = task_queue.get(task_id)
+    if not task:
+        raise HTTPException(404, "Task not found")
+    if task.status not in (TaskStatus.BLOCKED, TaskStatus.FAILED):
+        raise HTTPException(
+            400,
+            f"Task {task_id} is {task.status.value}; retry only valid for blocked/failed.",
+        )
+    cap = body.budget_max_tokens_override if body else None
+    if cap is not None and cap > 0:
+        task_queue.merge_metadata(task_id, {"budget_max_tokens_override": int(cap)})
+    reset = task_queue.reset_for_retry(task_id)
+    if not reset:
+        raise HTTPException(500, "Reset failed")
+    await ws_manager.broadcast({
+        "type": "task_updated",
+        "data": reset.model_dump(mode="json"),
+    })
+    if task.project_id:
+        await _advance_pipeline(task.project_id)
+    return {"status": "ok", "task_id": task_id, "new_cap": cap}
 
 
 # ==================== Tasks ====================
@@ -1724,10 +1896,21 @@ async def list_project_gates(project_id: str):
             (dep := task_queue.get(dep_id)) and dep.status == TaskStatus.COMPLETED
             for dep_id in t.depends_on
         )
+        # Flag gates whose upstream is blocked — the gate will never become
+        # ready without human action on the upstream task. Dashboard shows
+        # this as a "Upstream blocked" warning with a link to the offender.
+        upstream_blocked_ids: list[str] = []
+        if t.depends_on and not ready:
+            for dep_id in t.depends_on:
+                dep = task_queue.get(dep_id)
+                if dep and dep.status in (TaskStatus.BLOCKED, TaskStatus.FAILED):
+                    upstream_blocked_ids.append(dep_id)
         pending_gates.append({
             "task_id": t.id,
             "title": t.title,
             "ready": ready,
+            "upstream_blocked": bool(upstream_blocked_ids),
+            "upstream_blocked_ids": upstream_blocked_ids,
             "created_at": t.created_at.isoformat() if t.created_at else None,
             **ctx,
         })

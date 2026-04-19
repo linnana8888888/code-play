@@ -1,10 +1,20 @@
 """LLM Router — multi-provider routing with fallback chains."""
 from __future__ import annotations
 
+import asyncio
 import json
+import logging
 import httpx
 from src.models.llm import LLMRequest, LLMResponse, ToolCall, Provider
 from src.settings import settings
+
+_log = logging.getLogger(__name__)
+
+# LEGO proxy 503s on bursts of large-payload calls even while health-probes stay
+# green. Retry 502/503/504/429 with exponential backoff before giving up to the
+# fallback_model path.
+_RETRY_STATUS = {429, 502, 503, 504}
+_RETRY_DELAYS = (1.0, 2.0, 4.0)
 
 
 class LLMRouter:
@@ -19,6 +29,41 @@ class LLMRouter:
 
     async def close(self):
         await self._client.aclose()
+
+    async def _post_with_retry(
+        self, url: str, *, json: dict, headers: dict, provider: str
+    ) -> httpx.Response:
+        """POST with exponential backoff on transient upstream failures.
+
+        Retries on 429/502/503/504 and httpx transport errors. After the last
+        attempt the final response (or exception) is returned / raised so the
+        caller's fallback_model path can kick in.
+        """
+        last_exc: Exception | None = None
+        for attempt, delay in enumerate((*_RETRY_DELAYS, 0.0)):
+            try:
+                resp = await self._client.post(url, json=json, headers=headers)
+            except (httpx.TransportError, httpx.TimeoutException) as e:
+                last_exc = e
+                if delay > 0:
+                    _log.warning(
+                        "%s transport error (%s), retrying in %.1fs (attempt %d)",
+                        provider, type(e).__name__, delay, attempt + 1,
+                    )
+                    await asyncio.sleep(delay)
+                    continue
+                raise
+            if resp.status_code in _RETRY_STATUS and delay > 0:
+                _log.warning(
+                    "%s upstream %d, retrying in %.1fs (attempt %d)",
+                    provider, resp.status_code, delay, attempt + 1,
+                )
+                await asyncio.sleep(delay)
+                continue
+            return resp
+        if last_exc:
+            raise last_exc
+        return resp  # exhausted retries on 5xx — let caller raise_for_status
 
     async def complete(self, request: LLMRequest) -> LLMResponse:
         """Route an LLM request to the appropriate provider."""
@@ -59,10 +104,11 @@ class LLMRouter:
             "Content-Type": "application/json",
         }
 
-        resp = await self._client.post(
+        resp = await self._post_with_retry(
             f"{settings.openrouter_base_url}/chat/completions",
             json=payload,
             headers=headers,
+            provider="openrouter",
         )
         resp.raise_for_status()
         data = resp.json()
@@ -87,10 +133,11 @@ class LLMRouter:
         if settings.omlx_api_key:
             headers["Authorization"] = f"Bearer {settings.omlx_api_key}"
 
-        resp = await self._client.post(
+        resp = await self._post_with_retry(
             f"{settings.omlx_base_url}/v1/chat/completions",
             json=payload,
             headers=headers,
+            provider="omlx",
         )
         resp.raise_for_status()
         data = resp.json()
@@ -119,7 +166,7 @@ class LLMRouter:
             "api-key": settings.anthropic_auth_token,
             "Content-Type": "application/json",
         }
-        resp = await self._client.post(url, json=payload, headers=headers)
+        resp = await self._post_with_retry(url, json=payload, headers=headers, provider="openai")
         resp.raise_for_status()
         return self._parse_openai_response(resp.json(), Provider.OPENAI)
 
@@ -207,10 +254,11 @@ class LLMRouter:
 
         base = settings.anthropic_base_url.rstrip("/")
         url = f"{base}/v1/messages" if not base.endswith("/v1/messages") else base
-        resp = await self._client.post(
+        resp = await self._post_with_retry(
             url,
             json=payload,
             headers=headers,
+            provider="anthropic",
         )
         if resp.status_code >= 400:
             import json as _json, logging, pathlib

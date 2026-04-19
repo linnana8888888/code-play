@@ -49,11 +49,31 @@ function toRows(e: WsEvent): Row[] {
         id, time: t, kind: "end", accent: C.muted,
         actor: d.id || "agent", detail: "terminated",
       }];
-    case "agent_error":
+    case "agent_error": {
+      // Classified: transient 5xx/429 → warn, budget_exhausted → warn,
+      // permanent config stalls → danger, spawn drift → warn.
+      const cat = d.failure_category as string | undefined;
+      const accent = cat === "permanent" ? C.danger : cat ? C.warn : C.danger;
+      const prefix = cat ? `[${cat}] ` : "";
       return [{
-        id, time: t, kind: "error", accent: C.danger,
-        actor: d.instance_id || "agent", detail: shorten(d.error || ""),
+        id, time: t, kind: cat ? `err:${cat}` : "error", accent,
+        actor: d.instance_id || "agent",
+        detail: prefix + shorten(d.error || ""),
       }];
+    }
+    case "task_stalled": {
+      // Broadcast by backend when a task enters BLOCKED with a stall reason
+      // (permanent config, budget exhausted, upstream drift, etc.). Must be
+      // visible in the feed so the operator can jump to Needs Attention.
+      const cat = (d.failure_category as string) || "permanent";
+      const accent = cat === "permanent" ? C.danger : C.warn;
+      const hint = d.stall_hint ? ` — ${shorten(String(d.stall_hint), 60)}` : "";
+      return [{
+        id, time: t, kind: `stall:${cat}`, accent,
+        actor: d.task_id || "task",
+        detail: `${shorten(String(d.stall_reason || d.error || ""), 90)}${hint}`,
+      }];
+    }
     case "agent_turn": {
       const calls = d.tool_calls || [];
       if (calls.length === 0) {

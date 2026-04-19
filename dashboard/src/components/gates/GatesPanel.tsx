@@ -337,10 +337,33 @@ export default function GatesPanel({ projectId, initialExpandedId }: Props) {
                 </h3>
                 <p className="mt-1 text-xs text-text-muted">{gate.prompt}</p>
               </div>
-              <span className={`badge ${gate.ready ? "badge-running" : "badge-pending"}`}>
-                {gate.ready ? "ready" : "waiting"}
-              </span>
+              <div className="flex flex-col items-end gap-1">
+                <span className={`badge ${gate.ready ? "badge-running" : "badge-pending"}`}>
+                  {gate.ready ? "ready" : "waiting"}
+                </span>
+                {gate.upstream_blocked ? (
+                  <span
+                    className="rounded-full border border-danger/40 bg-danger/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-danger"
+                    title={
+                      gate.upstream_blocked_ids?.length
+                        ? `Blocked upstream: ${gate.upstream_blocked_ids.join(", ")}`
+                        : "An upstream task is blocked"
+                    }
+                  >
+                    upstream blocked
+                  </span>
+                ) : null}
+              </div>
             </div>
+            {gate.upstream_blocked && gate.upstream_blocked_ids?.length ? (
+              <p className="mt-2 text-[11px] text-danger">
+                Blocked upstream tasks:{" "}
+                <span style={{ fontFamily: "var(--font-mono)" }}>
+                  {gate.upstream_blocked_ids.join(", ")}
+                </span>{" "}
+                — resolve them from the Needs Attention banner to let this gate proceed.
+              </p>
+            ) : null}
 
             {summary ? (
               <pre className="mt-3 max-h-64 overflow-auto rounded bg-bg p-2 text-xs leading-relaxed text-text-muted whitespace-pre-wrap">
@@ -484,7 +507,9 @@ function GateDecisionRow({
   const reviseDisabled = !gate.ready || busy || !feedback.trim();
   const approveDisabled = !gate.ready || busy;
   const hint = !gate.ready
-    ? "Waiting on upstream step to complete — buttons enable automatically."
+    ? gate.upstream_blocked
+      ? "Upstream task is blocked — retry it from Needs Attention to unblock this gate."
+      : "Waiting on upstream step to complete — buttons enable automatically."
     : !feedback.trim()
       ? "Request changes requires a note. Approve works without one."
       : null;

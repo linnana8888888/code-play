@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import type { Task, ModelOption } from "../../types/api";
 import { getAvailableModels, patchTask } from "../../api/client";
+import BlockedTaskActions from "./BlockedTaskActions";
 
 const columns: { key: Task["status"]; label: string; accent: string }[] = [
   { key: "pending", label: "Pending", accent: "#c37d0d" },
@@ -19,9 +20,10 @@ function authorBadge(createdBy?: string | null) {
 interface Props {
   tasks: Task[];
   onCreate: () => void;
+  onRetried?: () => void;
 }
 
-export default function TaskBoard({ tasks, onCreate }: Props) {
+export default function TaskBoard({ tasks, onCreate, onRetried }: Props) {
   const [models, setModels] = useState<ModelOption[]>([]);
   const [saving, setSaving] = useState<string | null>(null);
 
@@ -103,6 +105,11 @@ export default function TaskBoard({ tasks, onCreate }: Props) {
                         <span className={`badge ${badge.cls}`} style={{ fontSize: "9px" }}>{badge.label}</span>
                         <span style={{ fontFamily: "var(--font-mono)" }}>P{t.priority}</span>
                       </div>
+                      {col.key === "blocked" && (
+                        <div className="mt-2">
+                          <BlockedTaskActions task={t} onRetried={onRetried} compact />
+                        </div>
+                      )}
                     </div>
                   );
                 })}

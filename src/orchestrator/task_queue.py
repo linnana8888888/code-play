@@ -177,6 +177,65 @@ class TaskQueue:
                     (status.value, datetime.now(timezone.utc).isoformat(), task_id),
                 )
 
+    def stall_task(
+        self, task_id: str, reason: str, hint: str | None = None
+    ) -> Task | None:
+        """Permanently block a task for a config/validation reason.
+
+        Unlike `record_spawn_failure` (which retries), this is one-shot and
+        tagged `failure_category=permanent` so the dashboard disables retry.
+        Used from `_advance_pipeline` when a pipeline task can't be routed
+        to any agent type (missing yaml step, no assignee_type, etc.).
+        """
+        task = self.get(task_id)
+        if not task:
+            return None
+        result = dict(task.result) if task.result else {}
+        result.update({
+            "failure_category": "permanent",
+            "stall_reason": reason,
+            "stall_hint": hint,
+        })
+        now = datetime.now(timezone.utc).isoformat()
+        with get_studio_db() as db:
+            db.execute(
+                "UPDATE tasks SET status = ?, result = ?, updated_at = ? WHERE id = ?",
+                (TaskStatus.BLOCKED.value, json.dumps(result), now, task_id),
+            )
+        return self.get(task_id)
+
+    def reset_for_retry(self, task_id: str) -> Task | None:
+        """Reset a blocked/failed task back to pending so the scheduler retries.
+
+        Clears `assigned_to`, `spawn_failures`, and failure-category markers,
+        but keeps history in `result.retry_history` for audit.
+        """
+        task = self.get(task_id)
+        if not task:
+            return None
+        if task.status not in (TaskStatus.BLOCKED, TaskStatus.FAILED):
+            return task
+        result = dict(task.result) if task.result else {}
+        history = list(result.get("retry_history", []))
+        history.append({
+            "at": datetime.now(timezone.utc).isoformat(),
+            "prev_status": task.status.value,
+            "prev_error": result.get("error") or result.get("stall_reason"),
+            "prev_category": result.get("failure_category"),
+        })
+        result["retry_history"] = history[-5:]
+        for k in ("error", "stall_reason", "stall_hint", "failure_category",
+                  "spawn_failures", "spawn_errors"):
+            result.pop(k, None)
+        now = datetime.now(timezone.utc).isoformat()
+        with get_studio_db() as db:
+            db.execute(
+                """UPDATE tasks SET status = 'pending', assigned_to = NULL,
+                   result = ?, updated_at = ? WHERE id = ?""",
+                (json.dumps(result) if result else None, now, task_id),
+            )
+        return self.get(task_id)
+
     def record_spawn_failure(
         self, task_id: str, error: str, max_failures: int = 3
     ) -> tuple[int, bool]:
@@ -197,6 +256,7 @@ class TaskQueue:
         errors.append(error)
         result["spawn_failures"] = failures
         result["spawn_errors"] = errors[-5:]
+        result["failure_category"] = "spawn"  # retryable – agent registry drift
 
         should_block = failures >= max_failures
         now = datetime.now(timezone.utc).isoformat()

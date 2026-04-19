@@ -156,9 +156,31 @@ pipelines:
         task: "Lint report only — review the prototype (memory key: game_html_v1) for bugs, performance, security. QA already validated gameplay; this is for code-quality concerns only."
         output: review
 
+      - id: scaffold-iteration
+        agent: rapid-prototyper
+        depends_on: [review]
+        task: |
+          The build has shipped and passed QA. Make this artifact iteration-ready
+          so it can be improved via the `iterate_artifact` pipeline later.
+
+          Call `src.iteration.scaffolder.scaffold_iteration_artifacts(project_id,
+          artifact_dir)` once. It emits:
+            - ITERATION_CONTRACT.md  (pointer to code-play/docs/iteration_contract.md)
+            - GOALS.md               (placeholder targets — edit thresholds to match this game's expected numbers)
+            - playtest_bot.mjs       (parameterized from templates/iteration/playtest_bot.mjs.tmpl)
+            - telemetry/.gitkeep
+            - .codeplay/config.yaml
+
+          Then open GOALS.md and adjust the 5 thresholds to plausible numbers for THIS
+          game's loop (be conservative — pick a median you could hit on a decent run).
+          Validate with `validate_goals_md()` from src.iteration.contract — must return
+          zero issues. Commit everything to the artifact repo. Save a one-line report
+          as memory artifact key 'iteration_scaffold_v1'.
+        output: iteration_scaffold
+
       - id: publish-prep
         agent: publisher
-        depends_on: [review]
+        depends_on: [scaffold-iteration]
         task: |
           Ship-gate preparation. Read from memory: concept_options_v1, mechanics_v1,
           laf_brief_v1, qa_report_v1, game_html_v1, and (if present) compliance_audit_v1.
@@ -328,9 +350,21 @@ pipelines:
         task: "Lint report on game_html_v1 (code quality/security only)."
         output: review
 
+      - id: scaffold-iteration
+        agent: rapid-prototyper
+        depends_on: [review]
+        task: |
+          Shipping done. Scaffold iteration kit so this artifact can be improved
+          via iterate_artifact. Call
+          `src.iteration.scaffolder.scaffold_iteration_artifacts(project_id,
+          artifact_dir)`. Then edit GOALS.md thresholds for THIS game and validate
+          with `validate_goals_md()` (must return []). Commit. Save one-line note
+          as memory key 'iteration_scaffold_v1'.
+        output: iteration_scaffold
+
       - id: publish-prep
         agent: publisher
-        depends_on: [review]
+        depends_on: [scaffold-iteration]
         task: |
           Ship-gate preparation. Read from memory: concept_options_v1, mechanics_v1,
           laf_brief_v1, qa_report_v1, game_html_v1, and (if present) compliance_audit_v1.

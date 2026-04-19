@@ -1,0 +1,258 @@
+// playtest_bot.mjs — headless random-walk bot that plays the live game and
+// dumps one telemetry JSON per run matching code-play's iteration_contract.md §1.
+//
+// Usage:   node playtest_bot.mjs [--runs N] [--seconds S] [--tag v1]
+// Env:     GAME_URL (default {{GAME_URL}})
+//
+// This file was scaffolded from templates/iteration/playtest_bot.mjs.tmpl.
+// The GAME_HOOK section is the one part you customize per game; everything
+// else — CLI parsing, chrome launch, tick cadence, telemetry write — must
+// stay consistent with the doctrine so rollups are comparable across games.
+//
+// COMPUTE LIMITATIONS (same for all games):
+// - `seed` is emitted as 0 for schema conformance; treat runs as non-reproducible.
+// - `error` (non-schema) is added on crash paths with outcome forced to "quit".
+
+import { chromium } from '/Users/dknanlin/.claude/skills/email-digest/node_modules/playwright/index.mjs';
+import { mkdirSync, writeFileSync, readdirSync } from 'fs';
+import { randomUUID } from 'crypto';
+import { join } from 'path';
+
+// ─── CLI parse ────────────────────────────────────────────────────────────────
+function parseArgs(argv) {
+  const out = { runs: 5, seconds: 60, tag: 'v1' };
+  for (let i = 2; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === '--runs')    out.runs    = parseInt(argv[++i], 10);
+    else if (a === '--seconds') out.seconds = parseInt(argv[++i], 10);
+    else if (a === '--tag')     out.tag     = String(argv[++i]);
+  }
+  return out;
+}
+
+const { runs, seconds, tag } = parseArgs(process.argv);
+const URL = process.env.GAME_URL || '{{GAME_URL}}';
+const REPO = '{{REPO_PATH}}';
+const TEL_DIR = join(REPO, 'telemetry');
+mkdirSync(TEL_DIR, { recursive: true });
+
+// ─── tiny utils ───────────────────────────────────────────────────────────────
+const rand = (min, max) => min + Math.random() * (max - min);
+const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
+// ─── shared chrome launch (WebGL via SwiftShader) ────────────────────────────
+const CHROME_PATH = '/Users/dknanlin/Library/Caches/ms-playwright/chromium-1217/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing';
+const CHROME_ARGS = [
+  '--use-gl=angle',
+  '--use-angle=swiftshader',
+  '--enable-unsafe-swiftshader',
+  '--enable-webgl',
+  '--ignore-gpu-blocklist',
+];
+
+// favicon-404 filter
+function makeErrorFilter(badResources) {
+  return (e) =>
+    /favicon/.test(e) ||
+    (/Failed to load resource.*404/.test(e) &&
+     badResources.every(u => /favicon/.test(u)));
+}
+
+// ─── single run ───────────────────────────────────────────────────────────────
+async function runOnce(browser, runIdx) {
+  const runId = randomUUID().replace(/-/g, '').slice(0, 8);
+  const startedAt = new Date();
+  const startedAtIso = startedAt.toISOString();
+
+  const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+  const page = await ctx.newPage();
+  const badResources = [];
+  page.on('response', r => { if (r.status() === 404) badResources.push(r.url()); });
+
+  const telemetry = {
+    schema_version: 1,
+    run_id: runId,
+    started_at: startedAtIso,
+    duration_sec: 0,
+    outcome: 'quit',
+    iteration_tag: tag,
+    seed: 0,
+    session_duration_sec: 0,
+    levels_reached: 0,
+    score: 0,
+    hi_score_beaten: false,
+    shots_fired: 0,
+    shots_hit: 0,
+    accuracy: 0,
+    kills: 0,
+    kills_per_min: 0,
+    boss_hits: 0,
+    boss_kills: 0,
+    damage_taken: 0,
+    times_hurt: 0,
+    dashes_used: 0,
+    stomps_used: 0,
+    xp_gained: 0,
+    xp_levels: 0,
+    upgrades_picked: [],
+    modifiers_picked: [],
+    gems_collected: 0,
+    pickups_collected: 0,
+    time_to_first_kill_sec: 0,
+    time_to_first_levelup_sec: 0,
+    longest_idle_sec: 0,
+    camera_mode_switches: 0,
+    events: [],
+  };
+  let crashErr = null;
+  const actionTimes = [];
+  let botStartMs = 0;
+  let playEndMs = 0;
+
+  try {
+    await page.goto(URL);
+    await page.waitForTimeout(1200);
+
+    // ══ GAME_HOOK START ══════════════════════════════════════════════════════
+    // Everything in this block is game-specific. Customize:
+    //   1. Start selector — click the thing that begins gameplay.
+    //   2. State accessor — how to read "am I in play state?" from window.
+    //   3. Action loop — which keys/clicks your game listens for.
+    //   4. Snapshot function — what to pull from window at end-of-run.
+    // The surrounding telemetry wiring is contract-locked; do not edit it.
+
+{{GAME_HOOK}}
+
+    // ══ GAME_HOOK END ════════════════════════════════════════════════════════
+
+    playEndMs = Date.now();
+  } catch (e) {
+    crashErr = e;
+    telemetry.outcome = 'quit';
+    telemetry.error = String(e && e.message ? e.message : e);
+    playEndMs = Date.now();
+  }
+
+  // Best-effort final snapshot (populated inside GAME_HOOK into `window.__snapshot`)
+  let snap = null;
+  try {
+    snap = await page.evaluate(() => window.__snapshot || null);
+  } catch {}
+
+  // ── Fill telemetry ─────────────────────────────────────────────────────────
+  const durSec = Math.max(0, (playEndMs - botStartMs) / 1000);
+  telemetry.duration_sec = Math.round(durSec * 100) / 100;
+  telemetry.session_duration_sec = telemetry.duration_sec;
+
+  if (snap) {
+    telemetry.score = snap.score | 0;
+    telemetry.levels_reached = snap.levelIdx | 0;
+    telemetry.hi_score_beaten = !!snap.hi_score_beaten;
+    telemetry.shots_fired = snap.counters?.shots | 0;
+    telemetry.shots_hit   = snap.counters?.hits  | 0;
+    telemetry.accuracy    = telemetry.shots_fired > 0
+      ? telemetry.shots_hit / telemetry.shots_fired
+      : 0;
+    telemetry.kills       = snap.counters?.kills | 0;
+    telemetry.kills_per_min = durSec > 0
+      ? telemetry.kills / (durSec / 60)
+      : 0;
+    telemetry.boss_hits   = snap.counters?.bossHits  | 0;
+    telemetry.boss_kills  = snap.counters?.bossKills | 0;
+    telemetry.dashes_used = snap.counters?.dashes    | 0;
+    telemetry.stomps_used = (snap.events || []).filter(e => e.type === 'stomp').length;
+    telemetry.pickups_collected = snap.counters?.pickups | 0;
+    telemetry.xp_levels   = Math.max(0, (snap.xp?.level ?? 1) - 1);
+    telemetry.events = snap.events || [];
+    if (snap.outcome) telemetry.outcome = snap.outcome;
+  }
+
+  // Derived from events
+  const evs = telemetry.events;
+  let dmgTaken = 0, timesHurt = 0;
+  let gems = 0, camSwitches = 0;
+  const upgradesPicked = [];
+  const modifiersPicked = [];
+  let firstKillT = null, firstLevelupT = null;
+  for (const e of evs) {
+    if (e.type === 'hurt') {
+      timesHurt += 1;
+      if (typeof e.dmg === 'number') dmgTaken += e.dmg;
+    } else if (e.type === 'gem') {
+      gems += 1;
+    } else if (e.type === 'cameraMode') {
+      camSwitches += 1;
+    } else if (e.type === 'upgrade' && e.id) {
+      upgradesPicked.push(e.id);
+    } else if (e.type === 'modifier' && e.id) {
+      modifiersPicked.push(e.id);
+    } else if (e.type === 'kill' && firstKillT == null) {
+      firstKillT = e.t;
+    } else if (e.type === 'levelUp' && firstLevelupT == null) {
+      firstLevelupT = e.t;
+    }
+  }
+  telemetry.damage_taken = dmgTaken;
+  telemetry.times_hurt = timesHurt;
+  telemetry.gems_collected = gems;
+  telemetry.camera_mode_switches = camSwitches;
+  telemetry.upgrades_picked = upgradesPicked;
+  telemetry.modifiers_picked = modifiersPicked;
+  telemetry.time_to_first_kill_sec = firstKillT ?? 0;
+  telemetry.time_to_first_levelup_sec = firstLevelupT ?? 0;
+
+  let xpGained = 0;
+  for (const e of evs) if (e.type === 'kill' && typeof e.gained === 'number') xpGained += e.gained;
+  telemetry.xp_gained = xpGained;
+
+  // longest_idle_sec: max gap between consecutive bot actions
+  let longestIdle = 0;
+  for (let i = 1; i < actionTimes.length; i++) {
+    const gap = (actionTimes[i] - actionTimes[i - 1]) / 1000;
+    if (gap > longestIdle) longestIdle = gap;
+  }
+  telemetry.longest_idle_sec = Math.round(longestIdle * 100) / 100;
+
+  // ── Write file ─────────────────────────────────────────────────────────────
+  const stampSafe = startedAtIso.replace(/[:.]/g, '-');
+  const fname = `${stampSafe}-${runId}.json`;
+  const fpath = join(TEL_DIR, fname);
+  writeFileSync(fpath, JSON.stringify(telemetry, null, 2));
+
+  console.log(
+    `run ${runIdx + 1}/${runs}  dur=${Math.round(telemetry.duration_sec)}s  ` +
+    `lv=${telemetry.levels_reached}  kills=${telemetry.kills}  score=${telemetry.score}  ` +
+    `outcome=${telemetry.outcome}` +
+    (crashErr ? `  err=${telemetry.error}` : '')
+  );
+
+  await ctx.close().catch(() => {});
+  return fpath;
+}
+
+// ─── main ─────────────────────────────────────────────────────────────────────
+const browser = await chromium.launch({
+  headless: true,
+  executablePath: CHROME_PATH,
+  args: CHROME_ARGS,
+});
+
+const written = [];
+const beforeCount = readdirSync(TEL_DIR).filter(f => f.endsWith('.json')).length;
+
+try {
+  for (let i = 0; i < runs; i++) {
+    try {
+      const fpath = await runOnce(browser, i);
+      written.push(fpath);
+    } catch (e) {
+      console.error(`run ${i + 1}/${runs} hard-crashed: ${e && e.message ? e.message : e}`);
+    }
+  }
+} finally {
+  await browser.close().catch(() => {});
+}
+
+const afterCount = readdirSync(TEL_DIR).filter(f => f.endsWith('.json')).length;
+console.log(`WROTE ${afterCount - beforeCount} files to telemetry/`);

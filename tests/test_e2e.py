@@ -575,10 +575,10 @@ def test_phased_producer_pipeline_registered():
     assert "phased-producer" in ids
     pp = next(p for p in pipelines if p["id"] == "phased-producer")
     gate_steps = [s for s in pp["steps"] if s.get("type") == "human-gate"]
-    # concept, mechanics, laf, tech, qa
-    assert len(gate_steps) == 5
+    # concept, mechanics, laf, tech, qa, publish
+    assert len(gate_steps) == 6
     gate_ids = {s["id"] for s in gate_steps}
-    assert gate_ids == {"gate-concept", "gate-mechanics", "gate-laf", "gate-tech", "gate-qa"}
+    assert gate_ids == {"gate-concept", "gate-mechanics", "gate-laf", "gate-tech", "gate-qa", "gate-publish"}
 
 
 def test_gate_list_approve_and_advance():
@@ -599,10 +599,10 @@ def test_gate_list_approve_and_advance():
     assert "gate-concept" in tasks_by_step
     assert "gate-mechanics" in tasks_by_step
 
-    # All 5 gates are created even before their upstream steps finish
+    # All 6 gates are created even before their upstream steps finish
     gates = client.get(f"/api/projects/{project_id}/gates").json()
     step_ids = {g["step_id"] for g in gates}
-    assert step_ids == {"gate-concept", "gate-mechanics", "gate-laf", "gate-tech", "gate-qa"}
+    assert step_ids == {"gate-concept", "gate-mechanics", "gate-laf", "gate-tech", "gate-qa", "gate-publish"}
     # None are ready yet — upstream steps are still running/pending
     assert all(not g["ready"] for g in gates)
 

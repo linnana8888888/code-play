@@ -10,6 +10,8 @@ export interface Project {
   repo_url?: string | null;
   repo_name?: string | null;
   require_roster_approval?: boolean;
+  iterate_enabled?: boolean | number;
+  auto_synthesis?: boolean | number;
   created_at: string;
 }
 

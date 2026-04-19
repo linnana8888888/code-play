@@ -3,9 +3,9 @@
 Index of every build that has shipped through the `publisher` agent to a live URL.
 Newest first. Each row corresponds to a `publish_manifest_v<N>` in project memory.
 
-| Date | Title | Engineering codename | itch.io | GH Pages | Roblox | Version | Agents |
-|------|-------|----------------------|---------|----------|--------|---------|--------|
-| _—_ | _no ships yet_ | | | | | | |
+| Date | Title | Engineering codename | itch.io | GH Pages | Roblox | Version | Rating | Agents |
+|------|-------|----------------------|---------|----------|--------|---------|--------|--------|
+| 2026-04-19 | Cheekshot | butt-shooting-game | 🟢 [live](https://linnana8888888.itch.io/cheekshot) | ⚪ skipped at gate | ⚪ n/a | v3 (`c1fa6d8`) | waived (smoke test) | publisher |
 
 ## Column notes
 

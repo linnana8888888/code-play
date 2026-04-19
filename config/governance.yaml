@@ -26,7 +26,8 @@ builtin:
   - git_commit
   - git_diff
   # Web
-  - web_search
+  - web_search          # DuckDuckGo HTML (no key)
+  - perplexity_research # Perplexity Sonar (needs PERPLEXITY_API_KEY)
   - web_fetch
   # Collaboration
   - channel_post
@@ -40,7 +41,10 @@ builtin:
   - task_create
   # Claude Code skills
   - skill_invoke
-  # Shared asset pools — kenney.nl (CC0) + itch.io (game-assets)
+  # Shared asset pools — kenney, itch, polyhaven, ambientcg, quaternius,
+  # pixabay (key), freesound (key), oga (CC0-filter).
+  # Non-CC0 content downloads require accept_attribution=true and auto-append
+  # to CREDITS.md at the project root.
   - asset_search
   - asset_fetch
   # Headless browser for QA playtests
@@ -80,6 +84,7 @@ builtin_skills:
   - coding-standards
   - git-workflow
   - testing-patterns
+  - asset-sources   # 8-pool asset documentation (kenney, itch, polyhaven, ambientcg, quaternius, pixabay, freesound, oga)
 
 blocked:
   # Always denied.

@@ -112,12 +112,16 @@ agents/
     roblox-systems-scripter.md
     roblox-experience-designer.md
   engineering/
+    frontend-developer.md
     code-reviewer.md
-    security-engineer.md
-    devops-automator.md
+    tech-lead.md
+    rapid-prototyper.md
+    data-engineer.md
+    database-optimizer.md
   testing/
     qa-engineer.md
-    performance-tester.md
+    game-performance-tester.md
+    game-release-gate.md
 ```
 
 ### 2. Agent Runtime

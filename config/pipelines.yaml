@@ -415,31 +415,25 @@ pipelines:
     steps:
       - id: concept
         agent: game-designer
-        task: "Create a Game Design Document from concept: {input}"
-        output: gdd
-
-      - id: narrative
-        agent: narrative-designer
-        depends_on: [concept]
-        task: "Create narrative framework based on the GDD"
-        output: narrative_doc
+        task: "Produce mechanics_v1 (pitch, core loop, scene list, flavor text, tuning table) from concept: {input}"
+        output: mechanics_v1
 
       - id: prototype
         agent: frontend-developer
         depends_on: [concept]
-        task: "Build a playable web prototype implementing the GDD core loop. Use the tech_stack specified in the project (Phaser, Three.js, Pixi.js, Babylon.js, or plain web). Keep it a single HTML file when possible."
+        task: "Build a playable web prototype implementing mechanics_v1 core loop. Use the tech_stack specified in the project (Phaser, Three.js, Pixi.js, Babylon.js, or plain web). Keep it a single HTML file when possible."
         output: prototype_code
 
       - id: review
         agent: code-reviewer
         depends_on: [prototype]
-        task: "Review prototype code for quality, security, and performance"
+        task: "Shippability + kid-safety review of prototype against mechanics_v1"
         output: review_feedback
 
       - id: human-review
         type: human-gate
-        depends_on: [prototype, narrative, review]
-        task: "Review prototype and narrative. Approve to continue."
+        depends_on: [prototype, review]
+        task: "Review prototype + review feedback. Approve to continue."
 
   quick-prototype:
     name: "Quick Prototype"

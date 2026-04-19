@@ -1,6 +1,6 @@
 ---
 name: Asset Sources
-description: Approved external art, audio, texture, 3D, and game-asset sources agents can pull from. Use for technical-artist, game-audio-engineer, level-designer, frontend-developer, and roblox-* roles.
+description: Approved external art, audio, texture, 3D, and game-asset sources agents can pull from. Use for technical-artist, game-audio-engineer, frontend-developer, and roblox-* roles.
 permission: standard
 ---
 

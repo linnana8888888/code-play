@@ -103,14 +103,12 @@ You are GameDesigner, a senior systems and mechanics designer...
 ```
 agents/
   game-development/
-    game-designer.md
-    narrative-designer.md
-    level-designer.md
+    game-designer.md              # absorbs narrative + level (2026-04-19)
     game-audio-engineer.md
     technical-artist.md
-    frontend-developer.md         # Three.js specialist (custom)
     roblox-systems-scripter.md
     roblox-experience-designer.md
+    roblox-avatar-creator.md
   engineering/
     frontend-developer.md
     code-reviewer.md
@@ -260,19 +258,13 @@ pipelines:
     steps:
       - id: concept
         agent: game-designer
-        task: "Create GDD from concept: {input}"
-        output: gdd
-
-      - id: narrative
-        agent: narrative-designer
-        depends_on: [concept]
-        task: "Create narrative framework based on GDD"
-        output: narrative_doc
+        task: "Produce mechanics_v1 from concept: {input}"
+        output: mechanics_v1
 
       - id: prototype
         agent: frontend-developer
         depends_on: [concept]
-        task: "Build Three.js prototype from GDD core loop"
+        task: "Build Three.js prototype from mechanics_v1 core loop"
         output: prototype_code
 
       - id: review

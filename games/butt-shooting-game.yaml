@@ -21,11 +21,12 @@ versions:
     ref: c1fa6d8
     branch: v3
     entry: index.html
-    status: qa-passing
-    released_at: 2026-04-18
-    notes: Split modules (game/player/camera/audio/juice/scenes/analytics). CONTRACTS + playtest bot.
+    status: shipped
+    released_at: 2026-04-19
+    shipped_as: Cheekshot
+    notes: Split modules (game/player/camera/audio/juice/scenes/analytics). CONTRACTS + playtest bot. Shipped as "Cheekshot" on itch.io 2026-04-19 via publisher chain (publish_plan_v1 → gate-publish → butler push html5 build #1623215).
     published:
-      itch:     null
+      itch:     https://linnana8888888.itch.io/cheekshot
       gh_pages: null
       roblox:   null
 

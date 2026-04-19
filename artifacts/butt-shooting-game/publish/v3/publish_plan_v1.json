@@ -1,0 +1,103 @@
+{
+  "slug": "butt-shooting-game",
+  "version_label": "v3",
+  "resolved_ref": "c1fa6d812a1f78c9ba8d5cb0e61c1a1f96607c5b",
+  "source_repo": "https://github.com/linnana8888888/butt-shooting-game",
+  "source_branch": "v3",
+  "package_path": "artifacts/butt-shooting-game/dist/v3.zip",
+  "package_bytes": 28487,
+  "package_sha256": "d46c5220d49f825dd35044caf038ef65c9780c2bbf7f395ee3c83e5c85d3c1bb",
+  "package_contents": [
+    "index.html",
+    "game.mjs",
+    "player.mjs",
+    "camera.mjs",
+    "audio.mjs",
+    "juice.mjs",
+    "scenes.mjs",
+    "analytics.mjs"
+  ],
+  "excluded_from_package": [
+    "playtest.mjs (dev-only bot with localhost ref; not loaded by index.html)",
+    "CONTRACTS.md, README.md (docs)",
+    ".git/"
+  ],
+  "slug_options": [
+    {
+      "title": "Clog King",
+      "chars": 9,
+      "rationale": "The v3 boss's name, used like Bowser or Ganon — instantly names the climax and is searchable."
+    },
+    {
+      "title": "Cheekshot",
+      "chars": 9,
+      "rationale": "Pun fusing 'cheek' (the game's polite codename for its subject) and the core verb. Kid-safe, doesn't spoil the boss.",
+      "preferred": true
+    },
+    {
+      "title": "Flushpoint",
+      "chars": 10,
+      "rationale": "Wordplay on 'flashpoint' + the Flusher enemies + the sewer theme. Carries the tonal mix of comedy and crisis."
+    }
+  ],
+  "chosen_slug_recommendation": "Cheekshot",
+  "metadata": {
+    "tagline": "A cheeky 3D arcade shooter. Survive. Beat the Clog King.",
+    "short_description": "Run-and-gun through Desert Dunes, Porcelain Lab, and Sewer Depths. Reload fast, chain combos, and take down the Clog King.",
+    "long_description_md": "## How to play\n\n- **WASD / Arrows** to move, **mouse** to aim\n- **Space** or **click** to fire, **R** to reload (auto when empty)\n- **Shift** to dash (0.6s cooldown, 0.25s i-frames)\n- **V** to cycle cameras: topdown → chase → FPS\n- **M** to mute, **`** to toggle analytics panel, **Esc** to release pointer lock\n\n## What it's about\n\nA tongue-in-cheek arcade shooter across three themed levels — Desert Dunes (20 kills), Porcelain Lab (30), Sewer Depths (40) — ending in a three-phase boss fight against the Clog King. Combo system rewards chained shots; reload discipline keeps you alive in the FPS camera. Three minutes to a run, designed for one-more-try.\n\n## Credits\n\n- **Engine:** three.js r160 (MIT) via unpkg importmap\n- **Code:** procedurally-generated geometry and audio — no external art or sound assets\n- **Pipeline:** code-play studio (game-designer → tech-lead → frontend-developer → qa-engineer → publisher)\n",
+    "tags": [
+      "arcade",
+      "shooter",
+      "3d",
+      "webgl",
+      "three-js",
+      "browser",
+      "single-screen",
+      "comedy",
+      "boss-fight",
+      "combo"
+    ],
+    "content_rating": "UNSET — compliance_audit_v1 not present (see preflight_results.compliance_audit)",
+    "cover_image_spec": {
+      "size_px": "256x256",
+      "background": "#e8a84d (desert-sand, primary level 1 palette)",
+      "glyph": "large bold bullet-trail cheek silhouette, white stroke",
+      "status": "spec-only — not rendered in smoke test"
+    },
+    "screenshots": [
+      "artifacts/butt-shooting-game/publish/v3/v3_title.png",
+      "artifacts/butt-shooting-game/publish/v3/v3_desert.png",
+      "artifacts/butt-shooting-game/publish/v3/v3_lab.png",
+      "artifacts/butt-shooting-game/publish/v3/v3_sewer.png",
+      "artifacts/butt-shooting-game/publish/v3/v3_boss.png"
+    ],
+    "pricing": "free"
+  },
+  "targets": [
+    {
+      "name": "itch.io",
+      "channel": "html5",
+      "estimated_url": "https://linnana8888888.itch.io/<chosen-slug>",
+      "requires": "game page exists on itch + BUTLER_API_KEY in env"
+    },
+    {
+      "name": "gh-pages",
+      "estimated_url": "https://linnana8888888.github.io/code-play/<chosen-slug>/",
+      "requires": "docs/<chosen-slug>/ committed + pages enabled on main"
+    }
+  ],
+  "preflight_results": {
+    "games_yaml_resolvable": "pass — ref c1fa6d8 resolved to c1fa6d812a1f78c9ba8d5cb0e61c1a1f96607c5b; HEAD matches",
+    "html_validates": "pass — single importmap from unpkg (three.js r160); no file:// or localhost refs in shipped files",
+    "asset_license_ledger": "n/a — game ships zero bundled art/audio assets; three.js is MIT via CDN",
+    "compliance_audit_v1": "MISSING — this is a mechanical smoke test of the publisher chain, not a phased-producer run. Strict interpretation: block. Smoke-test interpretation: surface to gate for explicit waiver.",
+    "qa_report_v1": "pass-by-index — games/butt-shooting-game.yaml marks v3 status: qa-passing (no in-memory artifact, but the index is the authoritative qa signal for historical builds)",
+    "qa_screenshots": "pass — 5 screenshots present at qa/ (title, desert, lab, sewer, boss)"
+  },
+  "gate_decision_surface": [
+    "1. Approve title 'Cheekshot' OR pick another of the three candidates OR reject for a new set.",
+    "2. Waive the missing compliance_audit_v1 for this smoke test OR block until compliance-auditor runs.",
+    "3. Confirm targets: both itch.io + gh-pages, just one, or neither.",
+    "4. Confirm itch.io game page exists at linnana8888888.itch.io/<chosen-slug> OR request a draft page be created first."
+  ]
+}

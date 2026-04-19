@@ -13,3 +13,6 @@ build/
 *.sqlite
 node_modules/
 .DS_Store
+# Publisher build output — rebuildable from pinned refs in games/<slug>.yaml.
+# Keep artifacts/<slug>/publish/ (manifests + live screenshots = audit trail).
+artifacts/*/dist/

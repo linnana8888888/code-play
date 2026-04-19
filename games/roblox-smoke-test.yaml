@@ -1,0 +1,29 @@
+slug: roblox-smoke-test
+title: Roblox Smoke Test (internal)
+status: active
+source:
+  kind: rojo
+  # Internal path — this artifact lives inside code-play itself rather than a
+  # separate repo, because its only job is to prove the publisher plumbing.
+  # The publisher's rojo-source resolver normally clones an external repo,
+  # but for this internal case it reads directly from the path below.
+  repo: internal
+  path: artifacts/roblox-smoke-test
+  project: default.project.json
+roblox:
+  universe_id: 10056703970
+  place_id:    126715565755517
+  visibility:  private
+  api_key_env: ROBLOX_OPEN_CLOUD_KEY
+versions:
+  - label: v1
+    ref: HEAD
+    rojo_entry: default.project.json
+    status: shipped
+    released_at: 2026-04-19
+    notes: Smoke test — empty baseplate + ModuleScript + server print script. Proves Rojo build → Open Cloud publish chain. Public /games URL 404s because visibility is private — expected; flip visibility in Creator Hub when ready for live play.
+    published:
+      itch:                    null
+      gh_pages:                null
+      roblox:                  https://www.roblox.com/games/126715565755517
+      roblox_version_number:   4

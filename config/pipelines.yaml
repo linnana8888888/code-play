@@ -199,14 +199,27 @@ pipelines:
           Also read from memory: concept_options_v1, mechanics_v1, laf_brief_v1,
           qa_report_v1, game_html_v1.
 
-          Run the pre-flight checklist:
+          Run the pre-flight checklist. Common items apply to every target;
+          target-specific items only apply when the corresponding target is in
+          the approved list.
+
+          Common:
             1. games/<slug>.yaml exists and the target version has a resolvable ref
                (git rev-parse succeeds in the cloned source).
-            2. HTML validates; no file:// or localhost references.
-            3. Every asset_id referenced in laf_brief_v1 maps to an entry in
+            2. Every asset_id referenced in laf_brief_v1 maps to an entry in
                skills/asset-sources.md with a compatible license (CC0 / CC-BY / Kenney).
-            4. qa_report_v1 verdict is "pass".
-            5. QA screenshots exist under the resolved source's qa/ dir.
+            3. qa_report_v1 verdict is "pass".
+            4. QA screenshots exist under the resolved source's qa/ dir.
+
+          HTML-target-only (itch.io, gh-pages):
+            H1. HTML validates; no file:// or localhost references.
+
+          Roblox-only (source.kind: rojo):
+            R1. games/<slug>.yaml has a roblox: block with universe_id + place_id.
+            R2. The env var named by roblox.api_key_env is set (never log the value).
+            R3. `rojo build --output artifacts/<slug>/dist/<label>/<slug>.rbxlx`
+                succeeds and the resulting file is non-empty and starts with `<roblox `.
+            R4. The prior manifest's version_number is recorded (for copySourceVersion rollback).
 
           Then generate THREE twisted title candidates. The working slug from the
           index is the engineering codename, not the ship name — bend it into
@@ -216,17 +229,21 @@ pipelines:
 
           Synthesize listing metadata (tagline ≤ 60 chars, short desc ≤ 140,
           long desc ≤ 4000 markdown, 5-10 tags, cover image spec, screenshot
-          references from qa/). Generate a flat itch-compatible package at
-          artifacts/<slug>/dist/<label>/ and zip it to
-          artifacts/<slug>/dist/<label>.zip.
+          references from qa/). Generate the platform-appropriate package:
+            - HTML targets: flat itch-compatible dir at artifacts/<slug>/dist/<label>/
+              and a zip at artifacts/<slug>/dist/<label>.zip.
+            - Roblox: a raw .rbxlx at artifacts/<slug>/dist/<label>/<slug>.rbxlx
+              (no zip — Open Cloud wants the file directly).
 
-          Targets for v1: ["itch.io", "gh-pages"]. Roblox target is accepted only
-          if source produces a .rbxl.
+          Targets for v1: ["itch.io", "gh-pages", "roblox"]. Roblox is first-class
+          when source.kind is "rojo" and games/<slug>.yaml has a roblox: block;
+          it's simply skipped otherwise.
 
           Save publish_plan_v1 to memory with:
             { slug, version_label, resolved_ref, source_repo, slug_options, chosen_slug,
               metadata, package_path, package_sha256, package_bytes, targets,
-              preflight_results, estimated_urls }.
+              preflight_results, estimated_urls, roblox: {universe_id, place_id,
+              prior_version_number} | null }.
 
           DO NOT PUBLISH. Stop here and wait for gate-publish.
         output: publish_plan
@@ -253,18 +270,36 @@ pipelines:
           target in parallel:
             - itch.io via itchio_publish (butler push + butler status).
             - gh-pages via gh_pages_publish (commit docs/<slug>/ on gh-pages branch).
-            - roblox via roblox_publish (Open Cloud PATCH place — only if approved).
-          For each target: HEAD the URL until 200, Playwright-load it headless,
-          take a live screenshot under assets/publish/<slug>/, note any console
-          errors.
+            - roblox via roblox_publish — wraps a single Open Cloud call:
+                POST https://apis.roblox.com/universes/v1/{universe_id}/places/{place_id}/versions?versionType=Published
+                Headers:
+                  x-api-key: $<value of games/<slug>.yaml roblox.api_key_env>
+                  Content-Type: application/octet-stream
+                Body: raw bytes of artifacts/<slug>/dist/<label>/<slug>.rbxlx
+                Expected response: {"versionNumber": N}. Record N in the manifest.
+                On non-2xx, surface the response body verbatim — auth/quota/scope
+                errors are the common Roblox failure modes.
+
+          For each target: verify liveness.
+            - HTML (itch.io, gh-pages): HEAD the URL until 200, Playwright-load
+              it headless, take a live screenshot under assets/publish/<slug>/,
+              note any console errors.
+            - Roblox: HEAD https://www.roblox.com/games/{place_id} until 200
+              (allow up to 2 min for first-publish cache warm-up), Playwright-load
+              the listing page headless, screenshot it. Do NOT try to join the
+              running experience — there's no headless Roblox client; listing
+              render + matching version_number is the verification.
 
           Write publish_manifest_v1 to memory with slug, version_label, resolved_ref,
           source_repo, chosen_title, published_at, targets (name/url/status/bytes/
-          live_shot), compliance_rating, assets_licensed.
+          live_shot + Roblox extras: universe_id, place_id, version_number,
+          prior_version_number), compliance_rating, assets_licensed.
 
           Then patch games/<slug>.yaml IN PLACE: set the shipped version's
           published.<target> to the live URL and flip its status to "shipped".
-          Append a row to docs/published-games.md.
+          For Roblox, also write published.roblox_version_number so the next
+          publish knows what to roll back to via copySourceVersion. Append a
+          row to docs/published-games.md.
 
           Post ONE message to the project channel: "🎪 Shipped: <title> — <primary_url>
           — <live_screenshot>". Nothing else.
@@ -403,14 +438,27 @@ pipelines:
           Also read from memory: concept_options_v1, mechanics_v1, laf_brief_v1,
           qa_report_v1, game_html_v1.
 
-          Run the pre-flight checklist:
+          Run the pre-flight checklist. Common items apply to every target;
+          target-specific items only apply when the corresponding target is in
+          the approved list.
+
+          Common:
             1. games/<slug>.yaml exists and the target version has a resolvable ref
                (git rev-parse succeeds in the cloned source).
-            2. HTML validates; no file:// or localhost references.
-            3. Every asset_id referenced in laf_brief_v1 maps to an entry in
+            2. Every asset_id referenced in laf_brief_v1 maps to an entry in
                skills/asset-sources.md with a compatible license (CC0 / CC-BY / Kenney).
-            4. qa_report_v1 verdict is "pass".
-            5. QA screenshots exist under the resolved source's qa/ dir.
+            3. qa_report_v1 verdict is "pass".
+            4. QA screenshots exist under the resolved source's qa/ dir.
+
+          HTML-target-only (itch.io, gh-pages):
+            H1. HTML validates; no file:// or localhost references.
+
+          Roblox-only (source.kind: rojo):
+            R1. games/<slug>.yaml has a roblox: block with universe_id + place_id.
+            R2. The env var named by roblox.api_key_env is set (never log the value).
+            R3. `rojo build --output artifacts/<slug>/dist/<label>/<slug>.rbxlx`
+                succeeds and the resulting file is non-empty and starts with `<roblox `.
+            R4. The prior manifest's version_number is recorded (for copySourceVersion rollback).
 
           Then generate THREE twisted title candidates. The working slug from the
           index is the engineering codename, not the ship name — bend it into
@@ -420,17 +468,21 @@ pipelines:
 
           Synthesize listing metadata (tagline ≤ 60 chars, short desc ≤ 140,
           long desc ≤ 4000 markdown, 5-10 tags, cover image spec, screenshot
-          references from qa/). Generate a flat itch-compatible package at
-          artifacts/<slug>/dist/<label>/ and zip it to
-          artifacts/<slug>/dist/<label>.zip.
+          references from qa/). Generate the platform-appropriate package:
+            - HTML targets: flat itch-compatible dir at artifacts/<slug>/dist/<label>/
+              and a zip at artifacts/<slug>/dist/<label>.zip.
+            - Roblox: a raw .rbxlx at artifacts/<slug>/dist/<label>/<slug>.rbxlx
+              (no zip — Open Cloud wants the file directly).
 
-          Targets for v1: ["itch.io", "gh-pages"]. Roblox target is accepted only
-          if source produces a .rbxl.
+          Targets for v1: ["itch.io", "gh-pages", "roblox"]. Roblox is first-class
+          when source.kind is "rojo" and games/<slug>.yaml has a roblox: block;
+          it's simply skipped otherwise.
 
           Save publish_plan_v1 to memory with:
             { slug, version_label, resolved_ref, source_repo, slug_options, chosen_slug,
               metadata, package_path, package_sha256, package_bytes, targets,
-              preflight_results, estimated_urls }.
+              preflight_results, estimated_urls, roblox: {universe_id, place_id,
+              prior_version_number} | null }.
 
           DO NOT PUBLISH. Stop here and wait for gate-publish.
         output: publish_plan
@@ -457,18 +509,36 @@ pipelines:
           target in parallel:
             - itch.io via itchio_publish (butler push + butler status).
             - gh-pages via gh_pages_publish (commit docs/<slug>/ on gh-pages branch).
-            - roblox via roblox_publish (Open Cloud PATCH place — only if approved).
-          For each target: HEAD the URL until 200, Playwright-load it headless,
-          take a live screenshot under assets/publish/<slug>/, note any console
-          errors.
+            - roblox via roblox_publish — wraps a single Open Cloud call:
+                POST https://apis.roblox.com/universes/v1/{universe_id}/places/{place_id}/versions?versionType=Published
+                Headers:
+                  x-api-key: $<value of games/<slug>.yaml roblox.api_key_env>
+                  Content-Type: application/octet-stream
+                Body: raw bytes of artifacts/<slug>/dist/<label>/<slug>.rbxlx
+                Expected response: {"versionNumber": N}. Record N in the manifest.
+                On non-2xx, surface the response body verbatim — auth/quota/scope
+                errors are the common Roblox failure modes.
+
+          For each target: verify liveness.
+            - HTML (itch.io, gh-pages): HEAD the URL until 200, Playwright-load
+              it headless, take a live screenshot under assets/publish/<slug>/,
+              note any console errors.
+            - Roblox: HEAD https://www.roblox.com/games/{place_id} until 200
+              (allow up to 2 min for first-publish cache warm-up), Playwright-load
+              the listing page headless, screenshot it. Do NOT try to join the
+              running experience — there's no headless Roblox client; listing
+              render + matching version_number is the verification.
 
           Write publish_manifest_v1 to memory with slug, version_label, resolved_ref,
           source_repo, chosen_title, published_at, targets (name/url/status/bytes/
-          live_shot), compliance_rating, assets_licensed.
+          live_shot + Roblox extras: universe_id, place_id, version_number,
+          prior_version_number), compliance_rating, assets_licensed.
 
           Then patch games/<slug>.yaml IN PLACE: set the shipped version's
           published.<target> to the live URL and flip its status to "shipped".
-          Append a row to docs/published-games.md.
+          For Roblox, also write published.roblox_version_number so the next
+          publish knows what to roll back to via copySourceVersion. Append a
+          row to docs/published-games.md.
 
           Post ONE message to the project channel: "🎪 Shipped: <title> — <primary_url>
           — <live_screenshot>". Nothing else.

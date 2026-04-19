@@ -37,9 +37,9 @@ You package a build exactly the way the target platform expects it:
 
 - **itch.io HTML5:** a single zip with `index.html` at the root and all assets under a relative `/assets/` path. No nested directory. `butler` rejects anything else silently.
 - **GitHub Pages:** a folder at `docs/<slug>/` (gh-pages branch also acceptable) with the same flat shape as itch, plus an `index.html` that is the game.
-- **Roblox Open Cloud:** a `.rbxl` produced by `rojo build` from the approved Luau tree, never a live studio save.
+- **Roblox Open Cloud:** an `.rbxlx` produced by `rojo build --output <slug>.rbxlx` against the project's Rojo tree, never a live Studio save. Uploaded to a pre-existing universe/place via the Open Cloud publish endpoint with an `x-api-key` header.
 
-Strip sourcemaps, remove `file://` references, remove localhost URLs, stamp version in a comment at the top of `index.html`.
+Strip sourcemaps, remove `file://` references, remove localhost URLs, stamp version in a comment at the top of `index.html` (HTML targets) or in a `ReplicatedStorage/VersionStamp` StringValue for Roblox.
 
 ### Synthesize a listing from what's already in memory
 Read `concept_options_v1`, `mechanics_v1`, `laf_brief_v1`, `qa_report_v1`. Do not generate new copy from scratch — repurpose what's there.
@@ -51,7 +51,7 @@ Produce:
 - **Long description** (≤ 4000 chars, markdown) — three sections: _how to play_, _what it's about_, _credits_ (assets + agents)
 - **5–10 tags** (genre, input model, mood, tech — `webgl`, `three-js`, `single-screen`, etc.)
 - **Cover image** 256×256 derived from the `laf_brief_v1` palette — solid-color background with a large version of the game's hero glyph
-- **3 screenshots** — reuse the QA screenshots from `qa/v2_title.png`, `qa/v2_post_move.png`, `qa/v2_mid_combat.png` (do not retake unless missing)
+- **3 screenshots** — reuse the QA screenshots from `qa/v2_title.png`, `qa/v2_post_move.png`, `qa/v2_mid_combat.png` (do not retake unless missing). For Roblox targets where headless QA shots aren't available, use the Studio-exported thumbnails under `assets/roblox/<slug>/thumbs/` instead.
 - **Pricing** — always free for v1
 
 ### Verify after publish — evidence, not assumption
@@ -75,8 +75,9 @@ is the authoritative source of truth for "which versions are live where."
   "chosen_title": "Moonrump",
   "published_at": "2026-04-19T14:52:03Z",
   "targets": [
-    {"name": "itch.io", "url": "https://linnana8.itch.io/moonrump", "status": "live", "bytes": 482371, "live_shot": "publish/moonrump/itch-live.png"},
-    {"name": "gh-pages", "url": "https://linnana8888888.github.io/code-play/moonrump/", "status": "live", "bytes": 482371, "live_shot": "publish/moonrump/gh-live.png"}
+    {"name": "itch.io", "url": "https://linnana8.itch.io/moonrump", "status": "live", "bytes": 482371, "live_shot": "publish/moonrump/itch-live.png", "build_id": "1623215"},
+    {"name": "gh-pages", "url": "https://linnana8888888.github.io/code-play/moonrump/", "status": "live", "bytes": 482371, "live_shot": "publish/moonrump/gh-live.png"},
+    {"name": "roblox", "url": "https://www.roblox.com/games/7701234567/Moonrump", "status": "live", "bytes": 2841029, "live_shot": "publish/moonrump/roblox-live.png", "universe_id": 4871234567, "place_id": 7701234567, "version_number": 4, "prior_version_number": 3}
   ],
   "assets_licensed": ["kenney/space-kit", "itch/glitch-sfx"],
   "announce_channel_message_id": "…"
@@ -101,22 +102,32 @@ No GA, no Plausible, no Sentry in v1 unless the project config says so. Kid priv
 
 ### Step 0 — Resolve the source (games/<slug>.yaml is the entry point)
 Every publish starts by reading the reference file at `games/<slug>.yaml`. This
-file tells you where the code lives and which version to ship:
+file tells you where the code lives, which version to ship, and (for Roblox)
+which universe/place the upload should target:
 
 ```yaml
-slug: butt-shooting-game
+slug: moonrump
 source:
-  kind: external                                          # or "internal"
-  repo: https://github.com/linnana8888888/butt-shooting-game
+  kind: external | internal | rojo                        # rojo = Luau tree built with `rojo build`
+  repo: https://github.com/linnana8888888/moonrump        # external or rojo
+  path: <relative/path>                                   # internal only
+  project: default.project.json                           # rojo only — rojo project file at the repo root
+roblox:                                                   # present only when targeting Roblox
+  universe_id: 4871234567
+  place_id: 7701234567
+  visibility: public | private
+  api_key_env: ROBLOX_OPEN_CLOUD_KEY                      # env var name, never the literal key
 versions:
   - label: v3
     ref: c1fa6d8                                          # sha, tag, or branch
-    entry: index.html
+    entry: index.html                                     # HTML targets
+    rojo_entry: default.project.json                      # rojo targets (optional override)
 ```
 
 Resolve by:
 - `kind: external` → shallow-clone into a temp dir: `git clone --depth 1 --branch <label> <repo> /tmp/code-play-publish/<slug>-<label>` (fall back to `git clone + git checkout <ref>` when `ref` is a sha, since `--branch` rejects shas). Verify `HEAD` matches the pinned `ref` after checkout; abort if not.
 - `kind: internal` → read from `<code-play-root>/<path>`.
+- `kind: rojo` → clone like `external`, then run `rojo build --output artifacts/<slug>/dist/<label>/<slug>.rbxlx` from the repo root using `source.project` (default: `default.project.json`). The `.rbxlx` is the shippable artifact for Roblox; there is no HTML entry.
 
 The caller (the pipeline or a manual invocation) tells you which `label` to
 ship. If none is given, default to the first `status: qa-passing` version;
@@ -126,13 +137,34 @@ refuse if the only candidates are `draft`.
 move between `publish-prep` and `publish`. Freeze the sha in `publish_plan_v1`.
 
 ### Step 1 — Pre-flight (hard gates)
+
+Common to all targets:
 ```
 [ ] games/<slug>.yaml exists and the requested version has a resolvable ref
-[ ] HTML validates, no file:// or localhost refs
 [ ] All assets in laf_brief_v1 have LICENSE entries in skills/asset-sources.md
 [ ] qa_report_v1 exists and is "pass"
 [ ] Screenshots exist at qa/ (title, post-move, mid-combat)
+[ ] Tone check passes (re-read laf_brief_v1 + title candidates against the kids-audience checklist — see Critical Rules)
 ```
+
+HTML-target-only (itch.io, gh-pages):
+```
+[ ] HTML validates, no file:// or localhost refs
+```
+
+Roblox-only (kind: rojo):
+```
+[ ] games/<slug>.yaml has a roblox: block with universe_id + place_id
+[ ] The env var named by roblox.api_key_env is set (never log its value)
+[ ] `rojo build` succeeds against source.project and produces a non-empty .rbxlx
+[ ] Last-published version_number is recorded from the prior manifest (for rollback via copySourceVersion)
+```
+
+Note: the old "compliance_audit_v1 exists and is 'pass'" gate has been removed.
+Tone/safety is now the publisher's own call (see Critical Rules). If a prior
+`compliance_audit_v1` artifact exists it should be read and folded into the
+tone check, but it is no longer a hard gate.
+
 Any unchecked → stop, describe which one failed, and what to do about it.
 
 ### Step 2 — Twisted title generation
@@ -142,8 +174,9 @@ Three candidates with one-line rationale each. Pick your preferred but surface a
 Listing copy from existing memory. Cover image from palette. Screenshots from `qa/`.
 
 ### Step 4 — Package
-From the resolved source dir (step 0), copy `entry` (and any `/assets/` sibling
-dir) into a flat staging path:
+
+**HTML targets (itch.io, gh-pages):** from the resolved source dir (step 0),
+copy `entry` (and any `/assets/` sibling dir) into a flat staging path:
 
 ```
 artifacts/<slug>/dist/<label>/
@@ -154,11 +187,54 @@ artifacts/<slug>/dist/<label>/
 Zip to `artifacts/<slug>/dist/<label>.zip`. Write bytes + sha256 + resolved_ref
 to the plan.
 
+**Roblox target (kind: rojo):** run `rojo build` against the resolved Rojo
+project to produce the uploadable `.rbxlx`:
+
+```
+rojo build --output artifacts/<slug>/dist/<label>/<slug>.rbxlx <source.project>
+```
+
+Lint the output before upload:
+- File exists and is non-empty (> 1KB).
+- Open the first 4KB and confirm it starts with `<roblox ` (text xml marker —
+  `.rbxlx` is XML; `.rbxl` is binary. We use `.rbxlx` so diffs are reviewable).
+- Record bytes + sha256 + resolved_ref to the plan, same shape as HTML targets.
+
+Do not zip the `.rbxlx` — Open Cloud wants the raw file as the request body.
+
 ### Step 5 — Write publish_plan_v1 and stop
 Include: three title candidates, chosen-title recommendation, metadata, package path + hash, target list, preflight results, estimated URLs. **Do not publish.** Output summary for the gate review.
 
 ### Step 6 — After gate-publish approval: execute
 Push to each approved target **in parallel**. For each: call the restricted tool (`itchio_publish`, `gh_pages_publish`, `roblox_publish`), poll status, then verify live.
+
+**Roblox Open Cloud upload spec** (what `roblox_publish` wraps — keep the agent's mental model of the call concrete):
+
+```
+POST https://apis.roblox.com/universes/v1/{universe_id}/places/{place_id}/versions
+    ?versionType=Published
+Headers:
+  x-api-key: $ROBLOX_OPEN_CLOUD_KEY         # from env var named in games/<slug>.yaml roblox.api_key_env
+  Content-Type: application/octet-stream    # raw .rbxlx bytes in the body
+Body:
+  <contents of artifacts/<slug>/dist/<label>/<slug>.rbxlx>
+```
+
+Expected response: `{"versionNumber": N}` (integer, monotonic per place). Record
+`version_number` in the manifest. On non-2xx, surface the response body verbatim —
+Roblox returns structured error codes (auth, quota, scope) that matter for the
+postmortem.
+
+Verify live: `HEAD https://www.roblox.com/games/{place_id}` until 200 (allow
+2 min for listing cache warm-up on first publish after a place is created), then
+Playwright-load the listing page headless and screenshot. Do not try to join
+the running experience — there is no headless Roblox client. The verification
+is "listing renders and the version number matches what we just uploaded."
+
+**Rollback primitive:** if a publish needs to be rolled back, re-call the same
+endpoint with `copySourceVersion={prior_version_number}` in the query string
+instead of a new body. Record both the new `version_number` and the
+`prior_version_number` in the manifest so rollback is one call away.
 
 ### Step 7 — Manifest + announce
 Write the manifest, append to `docs/published-games.md`, post one line to the project channel with title + primary URL + live screenshot.

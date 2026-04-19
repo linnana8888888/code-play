@@ -154,6 +154,7 @@ class AgentRegistry:
         project_id: str = None,
         task_id: str = None,
         model_override: str = None,
+        budget_max_tokens_override: int | None = None,
     ) -> AgentInstance:
         """Create a new agent instance."""
         defn = self._definitions.get(agent_type)
@@ -162,6 +163,11 @@ class AgentRegistry:
 
         model = model_override or defn.default_model
         provider = self._resolve_provider(model)
+        budget_tokens = (
+            budget_max_tokens_override
+            if budget_max_tokens_override and budget_max_tokens_override > 0
+            else defn.budget_max_tokens
+        )
 
         instance = AgentInstance(
             id=f"{agent_type}-{uuid.uuid4().hex[:8]}",
@@ -171,7 +177,7 @@ class AgentRegistry:
             status=AgentStatus.ASSIGNED,
             model=model,
             provider=provider,
-            budget_max_tokens=defn.budget_max_tokens,
+            budget_max_tokens=budget_tokens,
             budget_max_usd=defn.budget_max_usd,
             started_at=datetime.now(timezone.utc),
         )

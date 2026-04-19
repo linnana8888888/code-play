@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { useGovernance } from "../../hooks/useGovernance";
 import type { Skill, ToolCatalogEntry } from "../../types/api";
 import PendingRosters from "./PendingRosters";
+import PendingGatesAcrossProjects from "./PendingGatesAcrossProjects";
 
 const TIER_ORDER: Array<ToolCatalogEntry["tier"]> = [
   "builtin",
@@ -74,6 +75,9 @@ export default function GovernancePanel() {
     <div className="space-y-6">
       {/* Pending Rosters (agent roster approval) */}
       <PendingRosters />
+
+      {/* Pending Gates (human review across all projects) */}
+      <PendingGatesAcrossProjects />
 
       {/* Tool Catalog */}
       <div>

@@ -450,18 +450,39 @@ pipelines:
         depends_on: [postmortem]
         task: |
           Read 'postmortem_{{iteration_tag}}' + 'goals_md' + 'mechanics_v1' from memory.
-          Propose ONE mechanics-level change for cycle {{cycle_n}}+1 that targets the
-          single most-impactful miss in the postmortem.
+          Propose 5-8 distinct MECHANICS-level ideas for cycle {{cycle_n}}+1. Each
+          idea targets a miss in the postmortem — skip ideas you would rank below 6/10.
 
-          Format (≤ 300 words):
-            - Title (one line).
-            - Change (what, in code-change terms — file/system, new param, removed
-              behaviour, altered curve).
-            - Expected metric movement: name the §2 metric(s) this should move and
-              by how much (e.g. "accuracy: +0.05 on death runs").
-            - Risk: what could get worse (name a §2 metric).
+          OUTPUT CONTRACT — emit a single ```json fenced block, no prose outside it:
 
-          Save to memory as artifact 'proposal_designer_{{iteration_tag}}'.
+          ```json
+          {
+            "role": "designer",
+            "ideas": [
+              {
+                "id": "designer-1",
+                "title": "<one-line action>",
+                "hypothesis": "<if we change X then metric Y moves because ...>",
+                "expected_impact": {"metric": "<exact §2 metric name>", "delta": "<+0.05 / +15s / -2>"},
+                "risk": "<what could get worse; name a §2 metric>",
+                "change_summary": "<file/system touched + concrete edit in 1 sentence>"
+              }
+            ]
+          }
+          ```
+
+          Rules:
+            - 5-8 ideas. Span multiple misses, not 5 angles on the same miss.
+              Order best → worst by your own ranking.
+            - `expected_impact.metric` MUST pass validate_goals_md (same vocab
+              as the postmortem). Do not invent fps, drop_rate, etc.
+            - Ideas must be mechanics (spawn curves, damage values, win conditions,
+              progression). Not HUD (→ ux), not art (→ artist), not refactors (→ proto).
+            - If your JSON fails to parse downstream, the whole role drops out of the
+              human gate. Validate mentally before returning.
+
+          Save the JSON block verbatim (including fences) to artifact
+          'proposal_designer_{{iteration_tag}}'.
         output: proposal_designer
 
       - id: propose-ux
@@ -469,15 +490,15 @@ pipelines:
         depends_on: [postmortem]
         task: |
           Read 'postmortem_{{iteration_tag}}' + 'goals_md' + 'hud_spec_v1' from memory.
-          Propose ONE HUD / flow / legibility change (HUD element placement, pause
-          behavior, win/lose tone, tutorial hint, feedback signal) for cycle
-          {{cycle_n}}+1 that addresses a miss in the postmortem — not a mechanics
-          change, not new juice FX (that's propose-artist).
+          Propose 5-8 HUD / flow / legibility ideas for cycle {{cycle_n}}+1 — HUD
+          placement, pause behavior, win/lose tone, tutorial hints, feedback signals.
+          Not mechanics (→ designer), not juice FX (→ artist).
 
-          Format identical to propose-designer (Title, Change, Expected metric
-          movement, Risk). Cite §2 metrics.
+          OUTPUT CONTRACT identical to propose-designer, except `"role": "ux"` and
+          `id` prefix `ux-1` … `ux-8`. 5-8 ideas, ranked best → worst, JSON fenced,
+          no prose outside. Metric names must pass validate_goals_md.
 
-          Save as artifact 'proposal_ux_{{iteration_tag}}'.
+          Save to artifact 'proposal_ux_{{iteration_tag}}'.
         output: proposal_ux
 
       - id: propose-artist
@@ -485,12 +506,14 @@ pipelines:
         depends_on: [postmortem]
         task: |
           Read 'postmortem_{{iteration_tag}}' + 'goals_md' + 'laf_brief_v1' from
-          memory. Propose ONE art / feedback / readability change for cycle
-          {{cycle_n}}+1 — silhouette, palette, animation, or juice FX.
+          memory. Propose 5-8 art / feedback / readability ideas for cycle
+          {{cycle_n}}+1 — silhouette, palette, animation, juice FX, camera shake.
 
-          Format identical to propose-designer. Cite §2 metrics.
+          OUTPUT CONTRACT identical to propose-designer, except `"role": "artist"`
+          and `id` prefix `artist-1` … `artist-8`. 5-8 ideas, ranked best → worst,
+          JSON fenced, no prose outside. Metric names must pass validate_goals_md.
 
-          Save as artifact 'proposal_artist_{{iteration_tag}}'.
+          Save to artifact 'proposal_artist_{{iteration_tag}}'.
         output: proposal_artist
 
       - id: propose-proto
@@ -498,12 +521,14 @@ pipelines:
         depends_on: [postmortem]
         task: |
           Read 'postmortem_{{iteration_tag}}' + 'goals_md' + 'game_html_v{{cycle_n}}'
-          from memory. Propose ONE code-level change (refactor, tuning, bug fix,
-          perf win) for cycle {{cycle_n}}+1 addressing a miss — not a design change.
+          from memory. Propose 5-8 code-level ideas for cycle {{cycle_n}}+1 —
+          refactors, tuning, bug fixes, perf wins, input handling. Not design.
 
-          Format identical to propose-designer. Cite §2 metrics.
+          OUTPUT CONTRACT identical to propose-designer, except `"role": "proto"`
+          and `id` prefix `proto-1` … `proto-8`. 5-8 ideas, ranked best → worst,
+          JSON fenced, no prose outside. Metric names must pass validate_goals_md.
 
-          Save as artifact 'proposal_proto_{{iteration_tag}}'.
+          Save to artifact 'proposal_proto_{{iteration_tag}}'.
         output: proposal_proto
 
       - id: synthesis_gate
@@ -511,32 +536,199 @@ pipelines:
         depends_on: [propose-designer, propose-ux, propose-artist, propose-proto]
         review_of: propose-designer
         task: |
-          Review all 4 proposals (propose-designer / propose-ux / propose-artist /
-          propose-proto) against 'postmortem_{{iteration_tag}}'. Pick ONE to
-          implement, request a revision on one, or reject all and halt the loop.
-          The gate's approval note is passed to the implement step as the brief.
+          Review all 20-32 ideas across designer / ux / artist / proto against
+          'postmortem_{{iteration_tag}}'. Select the subset (any roles, any count)
+          you want implemented this cycle — or add your own ideas. Approve to hand
+          off to implement. Request changes to send every role back for a revised
+          batch of ideas. Reject all to halt the loop.
+          Selected ids + any human-added ideas land in 'selected_ideas_{{iteration_tag}}'.
 
+      # Cheap pre-flight estimator: reads the approved idea bundle + current
+      # code and projects token cost per idea + a size-balanced engineer split.
+      # Keeps this model deliberately small — the output is a budget forecast,
+      # not a design doc.
+      - id: estimate-implement
+        agent: tech-lead
+        depends_on: [synthesis_gate]
+        model_override: "anthropic/anthropic.claude-haiku-4-5-20251001-v1:0"
+        task: |
+          You are the budget estimator for cycle {{cycle_n}}+1. Your job is NOT
+          to design — it is to forecast how expensive each approved idea will be
+          to implement and to propose a parallel engineer split.
+
+          Read from memory:
+            - 'selected_ideas_{{iteration_tag}}' (JSON: {selected:[…], custom:[…]})
+            - 'game_html_v{{cycle_n}}' (current build, for scope estimation)
+            - 'tech_plan_v1', 'laf_brief_v1' (architectural context)
+
+          Also read the top-level file list at memory['artifact_repo_path'] via
+          the `external_repo_list` tool (or the bundled tool your runtime exposes).
+
+          For each idea (selected + custom), estimate:
+            - files_touched: which .mjs / .html / asset files it will edit
+            - est_tokens: realistic token budget to implement (read + think + edit + write)
+            - complexity: "low" (<40k) | "medium" (40-90k) | "high" (>90k)
+            - conflicts_with: ids of other ideas that edit the same function/region
+
+          Then compose a size-balanced split: 2-4 engineers, each gets ~80k-150k
+          worth of ideas, no engineer has two ideas that edit the same function.
+          Aim for 2 engineers if the total is under 300k, 3-4 if above.
+
+          OUTPUT CONTRACT — emit a single ```json fenced block, no prose outside:
+
+          ```json
+          {
+            "cycle_n_plus_1": {{cycle_n_plus_1}},
+            "ideas": [
+              {
+                "id": "<idea.id>",
+                "title": "<one-line>",
+                "files_touched": ["game.mjs", "hud.mjs"],
+                "est_tokens": 62000,
+                "complexity": "medium",
+                "conflicts_with": ["<other.id>"]
+              }
+            ],
+            "total_tokens_single": 245000,
+            "total_tokens_parallel": 280000,
+            "lead_coordinator_tokens": 35000,
+            "recommended_split": [
+              {"engineer_id": "eng-1", "idea_ids": ["…","…"], "est_tokens": 115000, "primary_files": ["game.mjs"]},
+              {"engineer_id": "eng-2", "idea_ids": ["…"], "est_tokens": 92000,  "primary_files": ["hud.mjs"]}
+            ],
+            "conflicts": [
+              {"idea_ids": ["a","b"], "file": "game.mjs", "line_region": "spawn()+xp()", "note": "both touch level-0 init; assign to same engineer"}
+            ],
+            "recommendation": "parallel|extend_cap|drop_ideas",
+            "recommendation_reason": "total 245k fits a 2-engineer split cleanly"
+          }
+          ```
+
+          Save the JSON block verbatim to artifact 'implementation_plan_{{iteration_tag}}'.
+        output: implementation_plan
+
+      # Human reviews the forecast, picks one of three decision paths.
+      # Decision JSON lands in 'budget_decision_{{iteration_tag}}'. Approve
+      # forks the downstream plan:
+      #   parallel   → prep-brief + N implement-engineer-* fan-out
+      #   extend_cap → single engineer with bumped budget_max_tokens
+      #   drop_ideas → single engineer with reduced bundle
+      - id: budget_gate
+        type: human-gate
+        depends_on: [estimate-implement]
+        review_of: estimate-implement
+        task: |
+          Review the implementation plan (per-idea token estimate, proposed
+          split, conflicts). Pick ONE:
+            - Approve parallel split  → lead writes brief, N engineers run on
+              worktrees with fresh budget each, lead merges + smokes.
+            - Extend budget cap        → single engineer with a bumped 200k cap
+              (you pick the new cap; think 300–500k).
+            - Drop heavy ideas         → deselect ideas to fit the default cap.
+          Decision lands in 'budget_decision_{{iteration_tag}}'.
+
+      # Lead agent writes the shared design doc BEFORE engineers fan out. Every
+      # engineer sees the full idea list + shared contracts + their own scope
+      # card, so 4 parallel workers still produce one coherent cycle.
+      - id: prep-brief
+        agent: tech-lead
+        depends_on: [budget_gate]
+        task: |
+          You are the LEAD ENGINEER for cycle {{cycle_n}}+1. Read:
+            - 'selected_ideas_{{iteration_tag}}'
+            - 'implementation_plan_{{iteration_tag}}'
+            - 'budget_decision_{{iteration_tag}}' (decision.mode + split)
+            - 'game_html_v{{cycle_n}}', 'tech_plan_v1', 'laf_brief_v1'
+
+          Write 'implementation_brief_{{iteration_tag}}' — the design doc every
+          sub-engineer will follow. ≤ 800 words. Sections:
+
+            1. **Cycle hypothesis** — one paragraph: what pain we're closing and
+               the one-sentence bet per the postmortem.
+            2. **Full idea list** — every approved idea with a 1-line summary.
+               Mark which engineer owns each (from decision.split). Every
+               engineer must be aware of everyone else's scope, not just their own.
+            3. **Shared contracts** — event names to emit, helper modules to add
+               vs. extend, telemetry keys, UI state flags. Name the canonical
+               helper for any pattern 2+ ideas would duplicate.
+            4. **Per-engineer scope card** — for each eng-i:
+                 - Your ideas (ids + titles)
+                 - Your primary files
+                 - Adjacent engineers' ideas that share a file or concept, with
+                   "read before touching X" notes
+                 - Merge order hint (who edits the same function first)
+            5. **Don't-break list** — window.__game shape, 8-event telemetry
+               catalogue, ITERATION_CONTRACT.md invariants, GOALS.md metric names.
+
+          Save to artifact 'implementation_brief_{{iteration_tag}}'. When this
+          task completes, the orchestrator fans out N implement-engineer tasks
+          (one per split entry) that all depend on this brief + on budget_gate.
+        output: implementation_brief
+
+      # Terminal step. Acts differently based on budget_decision.mode:
+      #   - parallel   → waits for all implement-engineer-{i} tasks, merges
+      #                  their branches, runs playtest_bot smoke, commits final
+      #                  game_html_v{{cycle_n_plus_1}}.
+      #   - extend_cap → runs with a bumped budget_max_tokens (orchestrator
+      #                  applies the override from budget_decision.extended_cap)
+      #                  and implements every selected idea itself.
+      #   - drop_ideas → runs with the reduced bundle from
+      #                  budget_decision.kept_ids, fits inside default 200k.
       - id: implement
         agent: frontend-developer
-        depends_on: [synthesis_gate]
+        depends_on: [prep-brief]
         task: |
-          Implement the approved proposal from the synthesis_gate for cycle
-          {{cycle_n}}+1. Read these memory keys BEFORE editing: the chosen
-          'proposal_*_{{iteration_tag}}', 'game_html_v{{cycle_n}}', 'tech_plan_v1',
-          'laf_brief_v1'.
+          Terminal step for cycle {{cycle_n}}+1. Your behaviour is driven by
+          'budget_decision_{{iteration_tag}}'. Read it FIRST.
 
-          Apply the proposal — do not rebuild from scratch. Preserve window.__game
-          shape so the next playtest bot can still drive the game.
+          Always read: 'selected_ideas_{{iteration_tag}}',
+          'implementation_brief_{{iteration_tag}}', 'game_html_v{{cycle_n}}',
+          'tech_plan_v1', 'laf_brief_v1'.
 
-          Save the new build to memory as artifact 'game_html_v{{cycle_n_plus_1}}'.
-          Then call the `external_repo_commit` tool with:
-            - repo_path = memory[`artifact_repo_path`]
-            - files = [{path: "index.html", content: <the new game html>}]
-            - branch = "iteration/v{{cycle_n_plus_1}}"
-            - message = "iteration v{{cycle_n_plus_1}}: <one-line proposal title>"
+          ── If decision.mode == "parallel" ──
+          N implement-engineer-{i} sub-tasks have already finished and each has
+          committed to branch `iteration/eng-{i}-v{{cycle_n_plus_1}}` with its
+          results summarised in memory as `engineer_result_{i}_{{iteration_tag}}`.
 
-          Do NOT use bash/git directly — the sandbox can't reach the artifact
-          repo. `external_repo_commit` writes the files, stages them, and makes
-          a local commit (no push). The orchestrator will relaunch the playtest
-          step for cycle {{cycle_n_plus_1}} as soon as this task completes.
+          You are the LEAD / MERGER:
+            1. Read every `engineer_result_{i}_{{iteration_tag}}`.
+            2. Use `external_repo_merge` (or sequential external_repo_commit
+               with the merged content) to bring every eng-{i} branch into a
+               fresh `iteration/v{{cycle_n_plus_1}}` branch.
+            3. Resolve conflicts by re-reading the brief's "merge order hint"
+               and picking the higher-impact edit; note every conflict in the
+               merge report.
+            4. Run a 1-run smoke via `iteration_runner` (runs=1, seconds=20,
+               tag=smoke-v{{cycle_n_plus_1}}). If it errors or the bot can't
+               reach first_playable, patch minimally to unblock — don't redo
+               the cycle's work.
+            5. Save the merged HTML to memory as
+               'game_html_v{{cycle_n_plus_1}}'.
+            6. Write 'merge_report_{{iteration_tag}}' with: ideas_landed_clean,
+               ideas_with_conflicts, smoke_outcome, anything_i_had_to_fix.
+            7. Call `external_repo_commit` with the merged index.html on branch
+               `iteration/v{{cycle_n_plus_1}}`, message
+               "iteration v{{cycle_n_plus_1}}: merge of {n} engineer branches".
+
+          Harmonize pass: scan the merged tree for duplication (same helper
+          defined twice), inconsistent event names, or orphaned telemetry. If
+          any found, fix inline and note in the merge report. That is your
+          PR-review pass.
+
+          ── If decision.mode == "extend_cap" ──
+          Your budget_max_tokens was raised via task metadata. Apply every idea
+          in selected_ideas + custom yourself, following the brief. Combine
+          changes where they touch the same system.
+
+          ── If decision.mode == "drop_ideas" ──
+          Read decision.kept_ids; only implement those ideas (ignore the rest).
+          Fits inside the default 200k.
+
+          ── All modes ──
+          Do not rebuild from scratch. Preserve window.__game shape so the next
+          playtest bot can drive the game. Save final to
+          'game_html_v{{cycle_n_plus_1}}' and commit via `external_repo_commit`
+          to branch `iteration/v{{cycle_n_plus_1}}`. The orchestrator will
+          relaunch the playtest step for cycle {{cycle_n_plus_1}} as soon as
+          this task completes.
         output: build

@@ -131,6 +131,38 @@ class TaskQueue:
                 return None
         return self.get(task_id)
 
+    def merge_metadata(self, task_id: str, patch: dict) -> Task | None:
+        """Shallow-merge `patch` into the task's metadata dict."""
+        task = self.get(task_id)
+        if not task:
+            return None
+        merged = dict(task.metadata or {})
+        merged.update(patch)
+        now = datetime.now(timezone.utc).isoformat()
+        with get_studio_db() as db:
+            db.execute(
+                "UPDATE tasks SET metadata = ?, updated_at = ? WHERE id = ?",
+                (json.dumps(merged), now, task_id),
+            )
+        return self.get(task_id)
+
+    def add_dependencies(self, task_id: str, dep_ids: list[str]) -> Task | None:
+        """Append dep_ids to the task's depends_on list (deduplicated)."""
+        task = self.get(task_id)
+        if not task:
+            return None
+        existing = list(task.depends_on or [])
+        for d in dep_ids:
+            if d not in existing:
+                existing.append(d)
+        now = datetime.now(timezone.utc).isoformat()
+        with get_studio_db() as db:
+            db.execute(
+                "UPDATE tasks SET depends_on = ?, updated_at = ? WHERE id = ?",
+                (json.dumps(existing), now, task_id),
+            )
+        return self.get(task_id)
+
     def update_status(self, task_id: str, status: TaskStatus, result: dict = None):
         """Update task status and optionally store result."""
         with get_studio_db() as db:

@@ -62,6 +62,8 @@ export interface HumanGate {
   review_of_agent: string | null;
   prompt: string;
   preceding_result: Record<string, unknown> | null;
+  cycle_n: number | null;
+  iteration_tag: string | null;
 }
 
 export interface ModelOption {
@@ -266,6 +268,52 @@ export interface DocumentRevise {
   content: string;
   change_summary?: string;
   title?: string;
+}
+
+/* ── Budget gate ── */
+export type BudgetMode = "parallel" | "extend_cap" | "drop_ideas";
+
+export interface ImplementationPlanIdea {
+  id: string;
+  title?: string;
+  files_touched?: string[];
+  est_tokens?: number;
+  complexity?: string;
+  conflicts_with?: string[];
+}
+
+export interface ImplementationPlanSplit {
+  engineer_id: string;
+  idea_ids: string[];
+  est_tokens?: number;
+  primary_files?: string[];
+}
+
+export interface ImplementationPlanConflict {
+  idea_ids: string[];
+  file?: string;
+  line_region?: string;
+  note?: string;
+}
+
+export interface ImplementationPlan {
+  cycle_n_plus_1?: number;
+  ideas?: ImplementationPlanIdea[];
+  total_tokens_single?: number;
+  total_tokens_parallel?: number;
+  lead_coordinator_tokens?: number;
+  recommended_split?: ImplementationPlanSplit[];
+  conflicts?: ImplementationPlanConflict[];
+  recommendation?: BudgetMode;
+  recommendation_reason?: string;
+}
+
+export interface BudgetDecisionPayload {
+  mode: BudgetMode;
+  extended_cap?: number;
+  kept_ids?: string[];
+  split?: ImplementationPlanSplit[];
+  reason?: string;
 }
 
 /* ── Agent proposals (roster approval) ── */

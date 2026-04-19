@@ -843,20 +843,42 @@ async def _maybe_relaunch_cyclic(project_id: str, pipeline_specs: dict) -> None:
             continue
 
         cycle_state.bump_cycle(project_id, next_n)
-        task_desc = (
-            first_step.get("task", "")
-            .replace("{{iteration_tag}}", f"v{next_n}")
-            .replace("{{cycle_n}}", str(next_n))
-        )
-        new_task = task_queue.create(TaskCreate(
-            project_id=project_id,
-            title=first_title,
-            description=task_desc,
-            created_by=f"pipeline:{pname}",
-            metadata={"iteration_tag": f"v{next_n}", "cycle_n": next_n},
-        ))
+        tag = f"v{next_n}"
+        metadata = {"iteration_tag": tag, "cycle_n": next_n}
+
+        # Mirror run_pipeline: scaffold every step for the new cycle with its
+        # depends_on wired by name→task_id. Without this, prep-brief /
+        # implement / budget_gate only ever existed for cycle 1 and had to be
+        # hand-injected on every subsequent cycle.
+        created_tasks: dict[str, str] = {}
+        first_task_id: str | None = None
+        for step in steps:
+            step_id = step["id"]
+            task_desc = (
+                step.get("task", "")
+                .replace("{{iteration_tag}}", tag)
+                .replace("{{cycle_n}}", str(next_n))
+            )
+            deps = [
+                created_tasks[dep_name]
+                for dep_name in step.get("depends_on", [])
+                if dep_name in created_tasks
+            ]
+            new_task = task_queue.create(TaskCreate(
+                project_id=project_id,
+                title=f"[{pname}] {step_id}",
+                description=task_desc,
+                depends_on=deps,
+                created_by=f"pipeline:{pname}",
+                metadata=metadata,
+            ))
+            created_tasks[step_id] = new_task.id
+            if first_task_id is None:
+                first_task_id = new_task.id
+
         logger.info(
-            f"Relaunched cyclic pipeline '{pname}' for {project_id} cycle {next_n}"
+            f"Relaunched cyclic pipeline '{pname}' for {project_id} cycle {next_n} "
+            f"({len(created_tasks)} tasks scaffolded)"
         )
         await ws_manager.broadcast({
             "type": "cycle_relaunched",
@@ -864,7 +886,8 @@ async def _maybe_relaunch_cyclic(project_id: str, pipeline_specs: dict) -> None:
                 "project_id": project_id,
                 "pipeline": pname,
                 "cycle_n": next_n,
-                "task_id": new_task.id,
+                "task_id": first_task_id,
+                "task_count": len(created_tasks),
             },
         })
 
@@ -932,12 +955,28 @@ async def _advance_pipeline(project_id: str):
         if not agent_type:
             continue
 
+        budget_override = None
+        if task.metadata and isinstance(task.metadata, dict):
+            raw = task.metadata.get("budget_max_tokens_override")
+            try:
+                if raw is not None:
+                    budget_override = int(raw)
+            except (TypeError, ValueError):
+                budget_override = None
+
+        # Let a yaml step pin a specific model (e.g. Haiku for the cheap
+        # estimator). Task-level override always wins when set.
+        effective_model_override = task.model_override
+        if not effective_model_override and step and step.get("model_override"):
+            effective_model_override = step.get("model_override")
+
         try:
             instance = registry.spawn(
                 agent_type=agent_type,
                 project_id=project_id,
                 task_id=task.id,
-                model_override=task.model_override,
+                model_override=effective_model_override,
+                budget_max_tokens_override=budget_override,
             )
             task_queue.checkout(task.id, instance.id)
             asyncio.create_task(_run_agent_task(instance, task.description))
@@ -1381,6 +1420,41 @@ async def run_pipeline(pipeline_name: str, body: PipelineRunBody):
 
 # ==================== Human gates ====================
 
+def _resolve_cycle_tag(task) -> tuple[int | None, str | None]:
+    """Walk a task's dependency chain until we hit one with metadata.cycle_n.
+
+    Only the first step of a cyclic pipeline gets stamped with
+    {"cycle_n": n, "iteration_tag": "v{n}"} (main.py:1274 / :856). Downstream
+    tasks in the same cycle inherit implicitly via `depends_on`. To answer
+    "which cycle does THIS gate review?" we walk the dep graph up to the
+    first-step task and read its metadata. Returns (cycle_n, iteration_tag)
+    or (None, None) if no metadata is found within 10 hops.
+    """
+    seen: set[str] = set()
+    cur = task
+    for _ in range(10):
+        md = cur.metadata or {}
+        n = md.get("cycle_n")
+        tag = md.get("iteration_tag")
+        if n is not None or tag is not None:
+            try:
+                n_int = int(n) if n is not None else None
+            except (TypeError, ValueError):
+                n_int = None
+            return n_int, tag or (f"v{n_int}" if n_int else None)
+        if not cur.depends_on:
+            return None, None
+        parent_id = cur.depends_on[0]
+        if parent_id in seen:
+            return None, None
+        seen.add(parent_id)
+        parent = task_queue.get(parent_id)
+        if not parent:
+            return None, None
+        cur = parent
+    return None, None
+
+
 def _gate_context(task) -> dict:
     """Look up the pipeline spec for a gate task and pull in the preceding step's result."""
     created_by = task.created_by or ""
@@ -1399,18 +1473,28 @@ def _gate_context(task) -> dict:
     preceding_result = None
     preceding_agent = None
     if review_of:
-        # Find the most recent sibling task for the review_of step in the same pipeline run
-        siblings = task_queue.list_tasks(project_id=task.project_id)
+        # Find the preceding step's task along this gate's own dep chain so we
+        # don't pick up a sibling from a different cycle (the project can have
+        # multiple parallel cycles queued — see _maybe_relaunch_cyclic).
         target_title = f"[{pipeline_name}] {review_of}"
-        candidates = [t for t in siblings if t.title == target_title]
+        candidates = []
+        for dep_id in task.depends_on or []:
+            dep = task_queue.get(dep_id)
+            if dep and dep.title == target_title:
+                candidates.append(dep)
+        if not candidates:
+            # Fallback: sibling-by-title (legacy behaviour)
+            siblings = task_queue.list_tasks(project_id=task.project_id)
+            candidates = [t for t in siblings if t.title == target_title]
         if candidates:
-            # Pick the latest one (iteration revisions get newer timestamps)
             candidates.sort(key=lambda t: t.updated_at or t.created_at or "", reverse=True)
             top = candidates[0]
             preceding_result = top.result
             review_step = next((s for s in pipeline.get("steps", []) if s.get("id") == review_of), None)
             if review_step:
                 preceding_agent = review_step.get("agent")
+
+    cycle_n, iteration_tag = _resolve_cycle_tag(task)
     return {
         "pipeline": pipeline_name,
         "pipeline_label": pipeline.get("name", pipeline_name),
@@ -1419,7 +1503,208 @@ def _gate_context(task) -> dict:
         "review_of_agent": preceding_agent,
         "prompt": step.get("task", ""),
         "preceding_result": preceding_result,
+        "cycle_n": cycle_n,
+        "iteration_tag": iteration_tag,
     }
+
+
+def _engineer_task_prompt(
+    engineer_id: str,
+    idea_ids: list[str],
+    primary_files: list[str],
+    iteration_tag: str,
+    cycle_n_plus_1: int,
+) -> str:
+    """Prompt given to each fan-out implement-engineer-{i} sub-task."""
+    idea_list = ", ".join(idea_ids) or "(none — see scope card)"
+    files_list = ", ".join(primary_files) or "(see scope card)"
+    return (
+        f"You are engineer {engineer_id} for cycle {cycle_n_plus_1}. "
+        f"Your scope is ideas [{idea_list}] touching files [{files_list}]. "
+        f"Read FIRST: "
+        f"'implementation_brief_{iteration_tag}' (shared design doc + your scope card), "
+        f"'selected_ideas_{iteration_tag}', "
+        f"'game_html_v{cycle_n_plus_1 - 1}' (current build). "
+        f"Work on branch 'eng-{engineer_id}-cycle{cycle_n_plus_1}' inside your own worktree. "
+        f"Implement ONLY your scoped ideas. Stay inside your primary_files list; "
+        f"if you must edit a file owned by another engineer, stop and write a "
+        f"'conflict_note_{engineer_id}_{iteration_tag}' artifact instead. "
+        f"When done, commit on your branch, and write "
+        f"'engineer_result_{engineer_id}_{iteration_tag}' to memory with: "
+        f"{{branch, commit_sha, ideas_implemented[], files_changed[], smoke_ran, notes}}. "
+        f"Do NOT merge; the lead engineer does that in the terminal 'implement' step."
+    )
+
+
+def _agent_type_for_engineer(engineer_id: str, primary_files: list[str]) -> str:
+    """Map an estimator-provided engineer_id (e.g. 'artist-1', 'telemetry-1',
+    'eng-2') to a real implementer agent type.
+
+    Routing hints (in priority order):
+      - `artist-*` or any primary_file under `assets/` → technical-artist
+        (pulls from 8 free pools via asset_search/asset_fetch + maintains the
+         licensed asset_manifest)
+      - `telemetry-*` or primary_file named `analytics.mjs` → telemetry-engineer
+      - default → frontend-developer
+    """
+    eid = (engineer_id or "").lower()
+    files_lc = [f.lower() for f in (primary_files or [])]
+    if eid.startswith("artist") or any(
+        f.startswith("assets/") or f.endswith((".png", ".jpg", ".glb", ".svg"))
+        for f in files_lc
+    ):
+        return "technical-artist"
+    if eid.startswith("telemetry") or any(
+        f.endswith("analytics.mjs") or f.endswith("telemetry.mjs")
+        for f in files_lc
+    ):
+        return "telemetry-engineer"
+    return "frontend-developer"
+
+
+async def _apply_budget_decision(gate_task, ctx: dict, decision: dict) -> dict:
+    """Serialise the budget_gate decision and (for parallel mode) fan out engineers.
+
+    Returns a dict merged into the gate task's result:
+      - engineers_spawned: [task_ids]  (parallel mode only)
+      - budget_cap: int                 (extend_cap mode only)
+      - kept_ids: [str]                 (drop_ideas mode only)
+    """
+    import json as _json
+
+    project_id = gate_task.project_id
+    iteration_tag = ctx.get("iteration_tag") or (
+        f"v{ctx['cycle_n']}" if ctx.get("cycle_n") else "v1"
+    )
+    cycle_n = ctx.get("cycle_n") or 1
+    cycle_n_plus_1 = cycle_n + 1
+    mode = (decision.get("mode") or "").strip().lower()
+    pipeline_name = ctx.get("pipeline") or "iterate_artifact"
+
+    # Always persist the decision so downstream steps can branch on it.
+    project_memory.write(
+        project_id,
+        mem_type="artifact",
+        key=f"budget_decision_{iteration_tag}",
+        content=_json.dumps(
+            {
+                "mode": mode,
+                "extended_cap": decision.get("extended_cap"),
+                "kept_ids": decision.get("kept_ids") or [],
+                "split": decision.get("split") or [],
+                "reason": decision.get("reason") or "",
+                "decided_at": datetime.utcnow().isoformat() + "Z",
+                "gate_task_id": gate_task.id,
+                "cycle_n_plus_1": cycle_n_plus_1,
+            },
+            indent=2,
+        ),
+        created_by=f"gate:{gate_task.id}",
+    )
+
+    # Locate the downstream implement task so we can patch its deps / metadata.
+    siblings = task_queue.list_tasks(project_id=project_id)
+    implement_title = f"[{pipeline_name}] implement"
+    impl_candidates = [
+        t for t in siblings
+        if t.title == implement_title and t.status == TaskStatus.PENDING
+    ]
+    impl_task = None
+    if impl_candidates:
+        # Pick the impl task whose cycle aligns with this gate.
+        for t in impl_candidates:
+            t_cycle = (t.metadata or {}).get("cycle_n")
+            if t_cycle == cycle_n or t_cycle is None:
+                impl_task = t
+                break
+        if not impl_task:
+            impl_task = impl_candidates[0]
+
+    out: dict = {"mode": mode, "iteration_tag": iteration_tag}
+
+    if mode == "extend_cap":
+        cap_raw = decision.get("extended_cap")
+        try:
+            cap = int(cap_raw) if cap_raw is not None else 0
+        except (TypeError, ValueError):
+            cap = 0
+        if cap <= 0:
+            raise HTTPException(400, "extend_cap requires a positive 'extended_cap'")
+        if impl_task:
+            task_queue.merge_metadata(
+                impl_task.id,
+                {"budget_max_tokens_override": cap, "budget_mode": "extend_cap"},
+            )
+        out["budget_cap"] = cap
+
+    elif mode == "drop_ideas":
+        kept = list(decision.get("kept_ids") or [])
+        if not kept:
+            raise HTTPException(400, "drop_ideas requires a non-empty 'kept_ids'")
+        if impl_task:
+            task_queue.merge_metadata(
+                impl_task.id,
+                {"budget_mode": "drop_ideas", "kept_ids": kept},
+            )
+        out["kept_ids"] = kept
+
+    elif mode == "parallel":
+        split = list(decision.get("split") or [])
+        if not split:
+            raise HTTPException(400, "parallel requires a non-empty 'split'")
+
+        # prep-brief is the shared design doc. Every engineer depends on it so
+        # they don't race the lead, and the implement task then depends on
+        # every engineer to act as merge coordinator.
+        prep_title = f"[{pipeline_name}] prep-brief"
+        prep_candidates = [t for t in siblings if t.title == prep_title]
+        prep_task_id = prep_candidates[-1].id if prep_candidates else None
+        eng_ids: list[str] = []
+        for entry in split:
+            engineer_id = str(entry.get("engineer_id") or f"eng-{len(eng_ids) + 1}")
+            idea_ids = [str(x) for x in (entry.get("idea_ids") or [])]
+            primary_files = [str(x) for x in (entry.get("primary_files") or [])]
+            try:
+                est_tokens = int(entry.get("est_tokens") or 0)
+            except (TypeError, ValueError):
+                est_tokens = 0
+
+            agent_type = _agent_type_for_engineer(engineer_id, primary_files)
+            metadata = {
+                "iteration_tag": iteration_tag,
+                "cycle_n": cycle_n,
+                "cycle_n_plus_1": cycle_n_plus_1,
+                "engineer_id": engineer_id,
+                "idea_ids": idea_ids,
+                "primary_files": primary_files,
+                "est_tokens": est_tokens,
+                "agent_type": agent_type,
+            }
+            sub = task_queue.create(TaskCreate(
+                project_id=project_id,
+                title=f"[{pipeline_name}] implement-engineer-{engineer_id}",
+                description=_engineer_task_prompt(
+                    engineer_id, idea_ids, primary_files, iteration_tag, cycle_n_plus_1
+                ),
+                assignee_type=agent_type,
+                depends_on=[prep_task_id] if prep_task_id else [],
+                created_by=f"pipeline:{pipeline_name}",
+                metadata=metadata,
+            ))
+            eng_ids.append(sub.id)
+
+        if impl_task and eng_ids:
+            task_queue.add_dependencies(impl_task.id, eng_ids)
+            task_queue.merge_metadata(
+                impl_task.id,
+                {"budget_mode": "parallel", "engineer_task_ids": eng_ids},
+            )
+        out["engineers_spawned"] = eng_ids
+
+    else:
+        raise HTTPException(400, f"Unknown budget_decision.mode: {mode!r}")
+
+    return out
 
 
 @app.get("/api/projects/{project_id}/gates")
@@ -1451,6 +1736,19 @@ async def list_project_gates(project_id: str):
 
 class GateDecisionBody(BaseModel):
     feedback: str = ""
+    # Synthesis-gate idea bundle: present when the human selects ideas on the
+    # IdeaBoard instead of picking one monolithic proposal. Both lists use the
+    # Idea schema from the proposer prompts (id/title/hypothesis/…). When
+    # either list is non-empty the gate serialises them to
+    # `selected_ideas_{iteration_tag}` memory; implement consumes that brief.
+    selected: list[dict] | None = None
+    custom: list[dict] | None = None
+    # Budget-gate decision: {mode: "parallel"|"extend_cap"|"drop_ideas",
+    #   extended_cap?: int, kept_ids?: list[str],
+    #   split?: list[{engineer_id, idea_ids, est_tokens, primary_files}]}
+    # Written to memory as `budget_decision_{iteration_tag}`; on "parallel" the
+    # gate fans out N engineer tasks and patches implement's depends_on.
+    budget_decision: dict | None = None
 
 
 @app.post("/api/gates/{task_id}/approve")
@@ -1462,15 +1760,82 @@ async def approve_gate(task_id: str, body: GateDecisionBody | None = None):
     if not ctx:
         raise HTTPException(400, "Task is not a human gate")
     feedback = (body.feedback if body else "") or "approved"
-    task_queue.update_status(task.id, TaskStatus.COMPLETED, result={"decision": "approved", "feedback": feedback})
-    await ws_manager.broadcast({"type": "gate_approved", "data": {"task_id": task.id}})
+    winner = _promote_pick(task, feedback)
+    result: dict = {"decision": "approved", "feedback": feedback}
+    if winner:
+        result["pick_winner"] = winner
+
+    # Budget gate: the human picks parallel / extend_cap / drop_ideas. We
+    # serialise the decision, then dynamically fan out engineer sub-tasks
+    # on "parallel" so the terminal `implement` step acts as merge coordinator.
+    if (
+        ctx.get("step_id") == "budget_gate"
+        and body
+        and body.budget_decision
+    ):
+        fanout = await _apply_budget_decision(task, ctx, body.budget_decision)
+        result["budget_decision"] = body.budget_decision
+        result.update(fanout)
+
+    # Synthesis-gate idea bundle: serialise the human's selection so the
+    # implement step has a deterministic brief. The proposer keys stay as-is
+    # (they're historical record); selected_ideas_<tag> is the decision log.
+    selected = (body.selected if body else None) or []
+    custom = (body.custom if body else None) or []
+    if selected or custom:
+        import json as _json
+        tag = ctx.get("iteration_tag") or (
+            f"v{ctx['cycle_n']}" if ctx.get("cycle_n") else None
+        )
+        if tag:
+            bundle = {
+                "selected": selected,
+                "custom": custom,
+                "approved_at": datetime.utcnow().isoformat() + "Z",
+                "gate_task_id": task.id,
+                "feedback": feedback,
+            }
+            project_memory.write(
+                task.project_id,
+                mem_type="artifact",
+                key=f"selected_ideas_{tag}",
+                content=_json.dumps(bundle, indent=2),
+                created_by=f"gate:{task.id}",
+            )
+            result["selected_count"] = len(selected)
+            result["custom_count"] = len(custom)
+            logger.info(
+                f"Gate {task.id}: wrote selected_ideas_{tag} "
+                f"({len(selected)} picked + {len(custom)} custom)"
+            )
+        else:
+            logger.warning(
+                f"Gate {task.id}: idea bundle present but no iteration_tag — skipped memory write"
+            )
+
+    task_queue.update_status(task.id, TaskStatus.COMPLETED, result=result)
+    await ws_manager.broadcast({"type": "gate_approved", "data": {"task_id": task.id, "pick_winner": winner}})
     await _advance_pipeline(task.project_id)
     return {"status": "approved", "task_id": task.id}
 
 
+_SYNTHESIS_ROLE_AGENTS: list[tuple[str, str]] = [
+    ("designer", "game-designer"),
+    ("ux", "hud-designer"),
+    ("artist", "technical-artist"),
+    ("proto", "frontend-developer"),
+]
+
+
 @app.post("/api/gates/{task_id}/revise")
 async def revise_gate(task_id: str, body: GateDecisionBody):
-    """Request changes on the preceding step: spawn a revision task, leave the gate pending."""
+    """Request changes on the preceding step: spawn revision task(s), leave the gate pending.
+
+    For the synthesis_gate we fan the feedback out to ALL 4 proposers so the
+    human can ask for a fresh batch of ideas across every role — matching the
+    IdeaBoard's "request changes (all roles)" button. For every other gate we
+    revise only the single preceding step (ctx.review_of_agent).
+    """
     task = task_queue.get(task_id)
     if not task:
         raise HTTPException(404, "Gate task not found")
@@ -1481,46 +1846,100 @@ async def revise_gate(task_id: str, body: GateDecisionBody):
     if not feedback:
         raise HTTPException(400, "Feedback required to request changes")
 
-    agent_type = ctx.get("review_of_agent")
-    if not agent_type:
-        raise HTTPException(400, "Gate has no preceding agent step to revise")
-
-    revise_desc = (
-        f"Revise the previous {ctx.get('review_of')} output based on human feedback:\n\n"
-        f"{feedback}\n\n"
-        "Update the same memory artifact keys the original step wrote to."
+    is_synthesis = (
+        ctx.get("step_id") == "synthesis_gate"
+        or (ctx.get("review_of") or "").startswith("propose-")
     )
-    revision = task_queue.create(TaskCreate(
-        project_id=task.project_id,
-        title=f"[{ctx['pipeline']}] {ctx['review_of']}-revision",
-        description=revise_desc,
-        assignee_type=agent_type,
-        created_by=f"pipeline:{ctx['pipeline']}",
-        model_override=task.model_override,
-    ))
-    # Make the gate wait on the new revision instead of the original step so it re-opens once revised.
+    tag = ctx.get("iteration_tag") or (
+        f"v{ctx['cycle_n']}" if ctx.get("cycle_n") else None
+    )
+
+    if is_synthesis:
+        targets = list(_SYNTHESIS_ROLE_AGENTS)
+    else:
+        agent_type = ctx.get("review_of_agent")
+        if not agent_type:
+            raise HTTPException(400, "Gate has no preceding agent step to revise")
+        targets = [(ctx.get("review_of") or "previous", agent_type)]
+
     import json as _json
     from src.database import get_studio_db as _db
-    new_deps = list(task.depends_on) + [revision.id]
-    with _db() as db:
-        db.execute("UPDATE tasks SET depends_on=?, result=? WHERE id=?",
-                   (_json.dumps(new_deps), _json.dumps({"decision": "changes_requested", "feedback": feedback, "revision_task_id": revision.id}), task.id))
 
-    # Kick the revision task running
-    try:
-        instance = registry.spawn(
-            agent_type=agent_type,
+    revision_ids: list[str] = []
+    new_deps = list(task.depends_on)
+
+    for role_or_name, agent_type in targets:
+        if is_synthesis:
+            revise_desc = (
+                f"Revise your cycle-{ctx.get('cycle_n') or '?'} ideas for role "
+                f"'{role_or_name}' based on human feedback:\n\n{feedback}\n\n"
+                "Read 'postmortem_" + (tag or "{{iteration_tag}}") + "' + 'goals_md' "
+                "again. Emit a fresh batch of 5-8 ideas in the JSON schema (see "
+                "your original task prompt). Overwrite the same memory key "
+                f"'proposal_{role_or_name}_{tag or '{{iteration_tag}}'}'."
+            )
+            title = f"[{ctx['pipeline']}] propose-{role_or_name}-revision"
+        else:
+            revise_desc = (
+                f"Revise the previous {ctx.get('review_of')} output based on human feedback:\n\n"
+                f"{feedback}\n\n"
+                "Update the same memory artifact keys the original step wrote to."
+            )
+            title = f"[{ctx['pipeline']}] {ctx.get('review_of')}-revision"
+
+        revision = task_queue.create(TaskCreate(
             project_id=task.project_id,
-            task_id=revision.id,
-            model_override=revision.model_override,
-        )
-        task_queue.checkout(revision.id, instance.id)
-        asyncio.create_task(_run_agent_task(instance, revise_desc))
-    except ValueError as exc:
-        logger.warning(f"Failed to spawn revision for gate {task.id}: {exc}")
+            title=title,
+            description=revise_desc,
+            assignee_type=agent_type,
+            created_by=f"pipeline:{ctx['pipeline']}",
+            model_override=task.model_override,
+        ))
+        revision_ids.append(revision.id)
+        new_deps.append(revision.id)
 
-    await ws_manager.broadcast({"type": "gate_revision", "data": {"task_id": task.id, "revision_task_id": revision.id}})
-    return {"status": "revision_requested", "task_id": task.id, "revision_task_id": revision.id}
+        try:
+            instance = registry.spawn(
+                agent_type=agent_type,
+                project_id=task.project_id,
+                task_id=revision.id,
+                model_override=revision.model_override,
+            )
+            task_queue.checkout(revision.id, instance.id)
+            asyncio.create_task(_run_agent_task(instance, revise_desc))
+        except ValueError as exc:
+            logger.warning(f"Failed to spawn {role_or_name} revision for gate {task.id}: {exc}")
+
+    # Gate waits on every spawned revision before re-opening.
+    with _db() as db:
+        db.execute(
+            "UPDATE tasks SET depends_on=?, result=? WHERE id=?",
+            (
+                _json.dumps(new_deps),
+                _json.dumps({
+                    "decision": "changes_requested",
+                    "feedback": feedback,
+                    "revision_task_ids": revision_ids,
+                    "fanout_roles": [r for r, _ in targets] if is_synthesis else None,
+                }),
+                task.id,
+            ),
+        )
+
+    await ws_manager.broadcast({
+        "type": "gate_revision",
+        "data": {
+            "task_id": task.id,
+            "revision_task_ids": revision_ids,
+            "fanout": is_synthesis,
+        },
+    })
+    return {
+        "status": "revision_requested",
+        "task_id": task.id,
+        "revision_task_ids": revision_ids,
+        "revision_task_id": revision_ids[0] if revision_ids else None,
+    }
 
 
 # ==================== Game preview + asset previews ====================

@@ -27,6 +27,7 @@ import type {
   DocumentRevise,
   AgentProposal,
   ProposalStatus,
+  BudgetDecisionPayload,
 } from "../types/api";
 
 const BASE = "/api";
@@ -93,10 +94,37 @@ export const getAvailableModels = () => req<ModelOption[]>("/models/available");
 /* ── Gates (human-in-the-loop) ── */
 export const getGates = (projectId: string) =>
   req<HumanGate[]>(`/projects/${projectId}/gates`);
-export const approveGate = (taskId: string, feedback = "") =>
+export interface IdeaPayload {
+  id: string;
+  role?: string;
+  title: string;
+  hypothesis?: string;
+  expected_impact?: { metric?: string; delta?: string };
+  risk?: string;
+  change_summary?: string;
+}
+export const approveGate = (
+  taskId: string,
+  feedback = "",
+  bundle?: { selected: IdeaPayload[]; custom: IdeaPayload[] },
+) =>
+  req<{ status: string; task_id: string; pick_winner?: string | null }>(
+    `/gates/${taskId}/approve`,
+    {
+      method: "POST",
+      body: JSON.stringify(
+        bundle ? { feedback, selected: bundle.selected, custom: bundle.custom } : { feedback },
+      ),
+    },
+  );
+export const approveBudgetGate = (
+  taskId: string,
+  feedback: string,
+  decision: BudgetDecisionPayload,
+) =>
   req<{ status: string; task_id: string }>(`/gates/${taskId}/approve`, {
     method: "POST",
-    body: JSON.stringify({ feedback }),
+    body: JSON.stringify({ feedback, budget_decision: decision }),
   });
 export const reviseGate = (taskId: string, feedback: string) =>
   req<{ status: string; task_id: string; revision_task_id: string }>(

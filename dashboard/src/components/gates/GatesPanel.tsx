@@ -9,8 +9,10 @@ import {
   getProject,
   advancePipeline,
   type AssetPreview,
+  type IdeaPayload,
 } from "../../api/client";
 import SpecDiffGrid from "./SpecDiffGrid";
+import BudgetGatePanel from "./BudgetGatePanel";
 
 interface Props {
   projectId: string;
@@ -42,6 +44,13 @@ function summariseResult(r: Record<string, unknown> | null): string {
   }
 }
 
+type LastDecision = {
+  task_id: string;
+  kind: "approved" | "revised";
+  message: string;
+  at: number;
+};
+
 export default function GatesPanel({ projectId, initialExpandedId }: Props) {
   const [gates, setGates] = useState<HumanGate[]>([]);
   const [loading, setLoading] = useState(true);
@@ -52,6 +61,8 @@ export default function GatesPanel({ projectId, initialExpandedId }: Props) {
   const [playOpen, setPlayOpen] = useState<string | null>(null);
   const [project, setProject] = useState<Project | null>(null);
   const [iterating, setIterating] = useState(false);
+  const [lastDecision, setLastDecision] = useState<LastDecision | null>(null);
+  const [confirming, setConfirming] = useState<{ id: string; action: "approve" | "revise" } | null>(null);
 
   async function refresh() {
     try {
@@ -94,11 +105,32 @@ export default function GatesPanel({ projectId, initialExpandedId }: Props) {
     if (initialExpandedId) setExpanded(initialExpandedId);
   }, [initialExpandedId]);
 
-  async function onApprove(gate: HumanGate) {
+  async function onApprove(
+    gate: HumanGate,
+    bundle?: { selected: IdeaPayload[]; custom: IdeaPayload[] },
+  ) {
     setBusy(gate.task_id);
     try {
-      await approveGate(gate.task_id, feedback[gate.task_id] ?? "");
+      const res = await approveGate(gate.task_id, feedback[gate.task_id] ?? "", bundle);
+      const winner = res?.pick_winner ? ` — promoted ${res.pick_winner}` : "";
+      const picked = bundle
+        ? ` — ${bundle.selected.length + bundle.custom.length} ideas handed off`
+        : "";
+      setLastDecision({
+        task_id: gate.task_id,
+        kind: "approved",
+        message: `Approved ${gate.review_of ?? gate.step_id}${winner}${picked}. Pipeline advanced.`,
+        at: Date.now(),
+      });
+      setConfirming(null);
       await refresh();
+    } catch (e) {
+      setLastDecision({
+        task_id: gate.task_id,
+        kind: "approved",
+        message: `Approval failed: ${e instanceof Error ? e.message : String(e)}`,
+        at: Date.now(),
+      });
     } finally {
       setBusy(null);
     }
@@ -113,12 +145,32 @@ export default function GatesPanel({ projectId, initialExpandedId }: Props) {
     setBusy(gate.task_id);
     try {
       await reviseGate(gate.task_id, note);
+      setLastDecision({
+        task_id: gate.task_id,
+        kind: "revised",
+        message: `Revision sent to ${gate.review_of_agent ?? gate.review_of ?? "previous step"}. Gate stays open until they respond.`,
+        at: Date.now(),
+      });
       setFeedback((f) => ({ ...f, [gate.task_id]: "" }));
+      setConfirming(null);
       await refresh();
+    } catch (e) {
+      setLastDecision({
+        task_id: gate.task_id,
+        kind: "revised",
+        message: `Revise failed: ${e instanceof Error ? e.message : String(e)}`,
+        at: Date.now(),
+      });
     } finally {
       setBusy(null);
     }
   }
+
+  useEffect(() => {
+    if (!lastDecision) return;
+    const t = setTimeout(() => setLastDecision(null), 8000);
+    return () => clearTimeout(t);
+  }, [lastDecision]);
 
   const iterateEnabled = Boolean(project?.iterate_enabled);
   const iterateHeader = iterateEnabled ? (
@@ -141,13 +193,40 @@ export default function GatesPanel({ projectId, initialExpandedId }: Props) {
     </div>
   ) : null;
 
+  const decisionBanner = lastDecision ? (
+    <div
+      role="status"
+      aria-live="polite"
+      className={`flex items-start justify-between gap-3 rounded-xl border px-4 py-3 ${
+        lastDecision.message.startsWith("Approval failed") ||
+        lastDecision.message.startsWith("Revise failed")
+          ? "border-danger/40 bg-danger/10 text-danger"
+          : "border-success/40 bg-success/10 text-success"
+      }`}
+    >
+      <div className="min-w-0">
+        <p className="text-xs font-semibold uppercase tracking-wide">
+          {lastDecision.kind === "approved" ? "Decision sent" : "Revision sent"}
+        </p>
+        <p className="mt-0.5 text-sm">{lastDecision.message}</p>
+      </div>
+      <button
+        onClick={() => setLastDecision(null)}
+        className="shrink-0 rounded px-2 py-0.5 text-xs opacity-70 hover:bg-black/10 hover:opacity-100"
+      >
+        dismiss
+      </button>
+    </div>
+  ) : null;
+
   if (loading) return <p className="text-sm text-text-muted">Loading gates...</p>;
   if (gates.length === 0) {
     return (
       <div className="space-y-4">
         {iterateHeader}
+        {decisionBanner}
         <p className="text-sm text-text-muted">
-          No pending human gates. Launch the Phased Producer pipeline from the Dashboard to see them here.
+          {lastDecision ? "Gate closed — waiting for the pipeline to surface the next one." : "No pending human gates. Launch the Phased Producer pipeline from the Dashboard to see them here."}
         </p>
       </div>
     );
@@ -156,6 +235,7 @@ export default function GatesPanel({ projectId, initialExpandedId }: Props) {
   return (
     <div className="space-y-4">
       {iterateHeader}
+      {decisionBanner}
       {gates.map((gate) => {
         const summary = summariseResult(gate.preceding_result);
         const hexCodes = extractHexCodes(summary);
@@ -171,6 +251,34 @@ export default function GatesPanel({ projectId, initialExpandedId }: Props) {
         const isSynthesisGate =
           gate.step_id === "synthesis_gate" ||
           (gate.review_of?.startsWith("propose-") ?? false);
+        const isBudgetGate =
+          gate.step_id === "budget_gate" ||
+          gate.review_of === "estimate-implement";
+
+        if (isBudgetGate) {
+          return (
+            <div
+              key={gate.task_id}
+              className={`rounded-xl border p-4 ${
+                gate.ready ? "border-accent/50 bg-bg-card" : "border-border bg-bg-card opacity-70"
+              } ${isExpanded ? "ring-2 ring-accent" : ""}`}
+            >
+              <BudgetGatePanel
+                projectId={projectId}
+                gate={gate}
+                onDecided={(msg) => {
+                  setLastDecision({
+                    task_id: gate.task_id,
+                    kind: "approved",
+                    message: msg,
+                    at: Date.now(),
+                  });
+                  refresh();
+                }}
+              />
+            </div>
+          );
+        }
 
         if (isSynthesisGate) {
           return (
@@ -189,7 +297,17 @@ export default function GatesPanel({ projectId, initialExpandedId }: Props) {
                 onFeedbackChange={(v) =>
                   setFeedback((f) => ({ ...f, [gate.task_id]: v }))
                 }
-                onApprove={() => onApprove(gate)}
+                confirming={
+                  confirming?.id === gate.task_id ? confirming.action : null
+                }
+                onArmApprove={() =>
+                  setConfirming({ id: gate.task_id, action: "approve" })
+                }
+                onArmRevise={() =>
+                  setConfirming({ id: gate.task_id, action: "revise" })
+                }
+                onCancelConfirm={() => setConfirming(null)}
+                onApprove={(bundle) => onApprove(gate, bundle)}
                 onRevise={() => onRevise(gate)}
               />
             </div>
@@ -318,25 +436,123 @@ export default function GatesPanel({ projectId, initialExpandedId }: Props) {
               className="mt-3 w-full rounded-2xl border border-border-strong bg-white px-4 py-2 text-sm text-text outline-none focus:border-accent"
             />
 
-            <div className="mt-3 flex gap-2">
-              <button
-                disabled={!gate.ready || busy === gate.task_id}
-                onClick={() => onApprove(gate)}
-                className="btn-primary"
-              >
-                {busy === gate.task_id ? "…" : "Approve"}
-              </button>
-              <button
-                disabled={!gate.ready || busy === gate.task_id || !(feedback[gate.task_id] ?? "").trim()}
-                onClick={() => onRevise(gate)}
-                className="btn-ghost"
-              >
-                {busy === gate.task_id ? "…" : "Request changes"}
-              </button>
-            </div>
+            <GateDecisionRow
+              gate={gate}
+              busy={busy === gate.task_id}
+              feedback={feedback[gate.task_id] ?? ""}
+              confirming={
+                confirming?.id === gate.task_id ? confirming.action : null
+              }
+              onArmApprove={() =>
+                setConfirming({ id: gate.task_id, action: "approve" })
+              }
+              onArmRevise={() =>
+                setConfirming({ id: gate.task_id, action: "revise" })
+              }
+              onCancelConfirm={() => setConfirming(null)}
+              onApprove={() => onApprove(gate)}
+              onRevise={() => onRevise(gate)}
+            />
           </div>
         );
       })}
+    </div>
+  );
+}
+
+function GateDecisionRow({
+  gate,
+  busy,
+  feedback,
+  confirming,
+  onArmApprove,
+  onArmRevise,
+  onCancelConfirm,
+  onApprove,
+  onRevise,
+}: {
+  gate: HumanGate;
+  busy: boolean;
+  feedback: string;
+  confirming: "approve" | "revise" | null;
+  onArmApprove: () => void;
+  onArmRevise: () => void;
+  onCancelConfirm: () => void;
+  onApprove: () => void;
+  onRevise: () => void;
+}) {
+  const reviseDisabled = !gate.ready || busy || !feedback.trim();
+  const approveDisabled = !gate.ready || busy;
+  const hint = !gate.ready
+    ? "Waiting on upstream step to complete — buttons enable automatically."
+    : !feedback.trim()
+      ? "Request changes requires a note. Approve works without one."
+      : null;
+
+  if (confirming === "approve") {
+    return (
+      <div className="mt-3 flex flex-wrap items-center gap-2 rounded-lg border border-success/40 bg-success/10 px-3 py-2">
+        <span className="text-xs text-success">
+          Confirm: approve this gate and advance the pipeline?
+        </span>
+        <button
+          onClick={onApprove}
+          disabled={busy}
+          className="rounded-lg bg-success px-3 py-1 text-xs font-semibold text-bg hover:bg-success/90 disabled:opacity-50"
+        >
+          {busy ? "Sending…" : "✓ Confirm approve"}
+        </button>
+        <button
+          onClick={onCancelConfirm}
+          disabled={busy}
+          className="rounded-lg bg-bg-hover px-3 py-1 text-xs font-medium text-text-muted hover:text-text"
+        >
+          Cancel
+        </button>
+      </div>
+    );
+  }
+  if (confirming === "revise") {
+    return (
+      <div className="mt-3 flex flex-wrap items-center gap-2 rounded-lg border border-warning/40 bg-warning/10 px-3 py-2">
+        <span className="text-xs text-warning">
+          Confirm: send feedback back to {gate.review_of_agent ?? "the previous step"}?
+        </span>
+        <button
+          onClick={onRevise}
+          disabled={busy || !feedback.trim()}
+          className="rounded-lg bg-warning px-3 py-1 text-xs font-semibold text-bg hover:bg-warning/90 disabled:opacity-50"
+        >
+          {busy ? "Sending…" : "✓ Confirm revise"}
+        </button>
+        <button
+          onClick={onCancelConfirm}
+          disabled={busy}
+          className="rounded-lg bg-bg-hover px-3 py-1 text-xs font-medium text-text-muted hover:text-text"
+        >
+          Cancel
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="mt-3 flex flex-wrap items-center gap-2">
+      <button
+        disabled={approveDisabled}
+        onClick={onArmApprove}
+        className="rounded-lg bg-success/20 px-3 py-1.5 text-xs font-medium text-success hover:bg-success/30 disabled:opacity-50"
+      >
+        Approve…
+      </button>
+      <button
+        disabled={reviseDisabled}
+        onClick={onArmRevise}
+        className="rounded-lg bg-warning/20 px-3 py-1.5 text-xs font-medium text-warning hover:bg-warning/30 disabled:opacity-50"
+      >
+        Request changes…
+      </button>
+      {hint && <span className="text-[10px] italic text-text-muted">{hint}</span>}
     </div>
   );
 }

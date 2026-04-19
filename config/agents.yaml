@@ -61,7 +61,7 @@ agents:
     model: "openai/gpt-5-2025-08-07"
     fallback_model: "anthropic/anthropic.claude-sonnet-4-6"
     description: "Web game implementer — builds game_html_v1 per tech_plan_v1 (Three.js/canvas + DOM UI)"
-    tools: [builtin]
+    tools: [builtin, external_repo_commit]
 
   code-reviewer:
     model: "anthropic/anthropic.claude-sonnet-4-6"
@@ -94,7 +94,7 @@ agents:
     model: "openai/gpt-5-2025-08-07"
     fallback_model: "anthropic/anthropic.claude-sonnet-4-6"
     description: "Playtest web games against the mechanics spec using a headless browser"
-    tools: [builtin, playwright_browser]
+    tools: [builtin, playwright_browser, iteration_runner]
 
   game-performance-tester:
     model: "anthropic/anthropic.claude-sonnet-4-6"
@@ -200,7 +200,7 @@ agents:
     model: "openai/gpt-5-2025-08-07"
     fallback_model: "anthropic/anthropic.claude-sonnet-4-6"
     description: "One-session playable spikes — playcentric iteration, throwaway-ok code"
-    tools: [builtin]
+    tools: [builtin, external_repo_commit, scaffold_iteration]
 
   # Compliance tier removed 2026-04-19 — target platforms (itch.io, GH Pages,
   # Roblox Creator Platform) run their own kids/content compliance review, so

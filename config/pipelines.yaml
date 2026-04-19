@@ -163,19 +163,27 @@ pipelines:
           The build has shipped and passed QA. Make this artifact iteration-ready
           so it can be improved via the `iterate_artifact` pipeline later.
 
-          Call `src.iteration.scaffolder.scaffold_iteration_artifacts(project_id,
-          artifact_dir)` once. It emits:
-            - ITERATION_CONTRACT.md  (pointer to code-play/docs/iteration_contract.md)
-            - GOALS.md               (placeholder targets — edit thresholds to match this game's expected numbers)
-            - playtest_bot.mjs       (parameterized from templates/iteration/playtest_bot.mjs.tmpl)
-            - telemetry/.gitkeep
-            - .codeplay/config.yaml
+          Step 1: Call the `scaffold_iteration` tool with
+          {artifact_dir: memory[`artifact_repo_path`], project_title: <game title>}.
+          The tool writes the 4-file kit (ITERATION_CONTRACT.md, GOALS.md,
+          playtest_bot.mjs, telemetry/.gitkeep, .codeplay/config.yaml) and
+          saves their paths to memory. Do NOT shell python/node or try to
+          import src.iteration.scaffolder — your sandbox can't reach the
+          code-play repo. This tool IS the binding.
 
-          Then open GOALS.md and adjust the 5 thresholds to plausible numbers for THIS
-          game's loop (be conservative — pick a median you could hit on a decent run).
-          Validate with `validate_goals_md()` from src.iteration.contract — must return
-          zero issues. Commit everything to the artifact repo. Save a one-line report
-          as memory artifact key 'iteration_scaffold_v1'.
+          Step 2: Read the just-written GOALS.md via the path memory[`goals_path`]
+          (use `file_read` on that absolute path). Adjust the 5 thresholds to
+          plausible numbers for THIS game's loop (be conservative — pick a
+          median you could hit on a decent run). Re-write via `file_write`.
+
+          Step 3: Stage + commit all scaffold files with the `external_repo_commit`
+          tool (repo_path=artifact_repo_path, files=[…the 5 paths], message="scaffold
+          iteration kit v1"). Skip any per-file content re-read if possible —
+          external_repo_commit writes the content you pass. For files you just
+          modified (GOALS.md), pass the updated content; for the other four,
+          pass the content returned by the scaffold tool.
+
+          Save a one-line report as memory artifact key 'iteration_scaffold_v1'.
         output: iteration_scaffold
 
       - id: publish-prep
@@ -368,11 +376,18 @@ pipelines:
         depends_on: [review]
         task: |
           Shipping done. Scaffold iteration kit so this artifact can be improved
-          via iterate_artifact. Call
-          `src.iteration.scaffolder.scaffold_iteration_artifacts(project_id,
-          artifact_dir)`. Then edit GOALS.md thresholds for THIS game and validate
-          with `validate_goals_md()` (must return []). Commit. Save one-line note
-          as memory key 'iteration_scaffold_v1'.
+          via iterate_artifact.
+
+          1. Call the `scaffold_iteration` tool with
+             {artifact_dir: memory[`artifact_repo_path`]}. It writes the 4-file
+             kit and persists paths to memory. Do NOT import the scaffolder
+             module directly — sandbox can't reach the code-play repo.
+          2. Read GOALS.md (path: memory[`goals_path`]) via `file_read`, tune
+             the 5 thresholds to plausible numbers for this game's loop, rewrite.
+          3. Call `external_repo_commit` with repo_path + the list of scaffolded
+             files + message "scaffold iteration kit v1" to stage and commit.
+
+          Save one-line note as memory key 'iteration_scaffold_v1'.
         output: iteration_scaffold
 
       - id: publish-prep
@@ -548,19 +563,25 @@ pipelines:
         task: |
           Run the playtest batch for iteration {{iteration_tag}} (cycle {{cycle_n}}).
 
-          You must call src.iteration.iterate_runner.run_playtest_batch(project_id,
-          repo_path, cycle_n=<cycle_n from task metadata>, runs=5, seconds_per_run=60).
-          The runner spawns `python3 -m http.server` on a free port, shells
-          `node playtest_bot.mjs --runs 5 --seconds 60 --tag {{iteration_tag}}`
-          against it, then aggregates every `<repo>/telemetry/*.json` whose
-          iteration_tag matches.
+          Call the `iteration_runner` tool with {repo_path, cycle_n={{cycle_n}},
+          runs=5, seconds_per_run=60}. Read `repo_path` from memory key
+          `artifact_repo_path` (or the project's registered repo path).
 
-          The runner persists the rollup to project memory as artifact
-          'telemetry_{{iteration_tag}}' and broadcasts `playtest_batch_complete`.
-          If node exits non-zero, surface its stdout_tail in the task result —
-          do NOT write a rollup that's missing runs.
+          Do NOT shell python/node yourself. Do NOT try to read
+          `src/iteration/iterate_runner.py` from the code-play repo — your sandbox
+          is scoped to your own worktree. The `iteration_runner` tool IS the
+          binding to that runner: it spawns `python3 -m http.server` on a free
+          port, shells `node playtest_bot.mjs --runs 5 --seconds 60 --tag
+          {{iteration_tag}}` against it, aggregates every `<repo>/telemetry/*.json`
+          whose iteration_tag matches, writes the rollup to project memory as
+          artifact `telemetry_{{iteration_tag}}`, and broadcasts
+          `playtest_batch_complete`.
 
-          Required memory output: artifact key 'telemetry_{{iteration_tag}}'.
+          If the tool returns `node_exit_code != 0`, surface its `stdout_tail`
+          in the task result — do NOT write a rollup that's missing runs.
+
+          Required memory output: artifact key `telemetry_{{iteration_tag}}`
+          (written by the tool).
         output: telemetry
 
       - id: postmortem
@@ -672,8 +693,15 @@ pipelines:
           Apply the proposal — do not rebuild from scratch. Preserve window.__game
           shape so the next playtest bot can still drive the game.
 
-          Save the new build to memory as artifact 'game_html_v{{cycle_n_plus_1}}'
-          AND commit to the project's artifact repo on its iteration branch. The
-          orchestrator will relaunch the playtest step for cycle {{cycle_n_plus_1}}
-          as soon as this task completes.
+          Save the new build to memory as artifact 'game_html_v{{cycle_n_plus_1}}'.
+          Then call the `external_repo_commit` tool with:
+            - repo_path = memory[`artifact_repo_path`]
+            - files = [{path: "index.html", content: <the new game html>}]
+            - branch = "iteration/v{{cycle_n_plus_1}}"
+            - message = "iteration v{{cycle_n_plus_1}}: <one-line proposal title>"
+
+          Do NOT use bash/git directly — the sandbox can't reach the artifact
+          repo. `external_repo_commit` writes the files, stages them, and makes
+          a local commit (no push). The orchestrator will relaunch the playtest
+          step for cycle {{cycle_n_plus_1}} as soon as this task completes.
         output: build

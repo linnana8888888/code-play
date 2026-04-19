@@ -61,6 +61,10 @@ pre_approved:
   - run_tests
   - project_memory_read
   - project_memory_write
+  # Iteration + cross-repo writes — local, reversible, no external side effects.
+  - iteration_runner       # run playtest_bot.mjs batch + rollup (wraps run_playtest_batch)
+  - external_repo_commit   # write files + stage + local commit in an artifact repo outside the worktree
+  - scaffold_iteration     # emit the 4-file iteration kit into an artifact repo (wraps scaffold_iteration_artifacts)
 
 # Claude Code plugin surface — auto-allowed by prefix.
 # Tools with names matching these prefixes bypass the approval queue on the
@@ -78,6 +82,10 @@ restricted:
   - git_branch_delete  # deleting branches
   - external_api_call  # calling unknown APIs
   - create_agent       # spawning new agent types
+  # Publisher targets — external side effects (uploads to itch.io / Pages / Roblox).
+  - itchio_publish     # butler push to itch.io
+  - gh_pages_publish   # commit + push to gh-pages branch
+  - roblox_publish     # Roblox Open Cloud place upload
 
 builtin_skills:
   # Skills that are auto-approved for all agents.

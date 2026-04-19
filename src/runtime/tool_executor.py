@@ -700,6 +700,158 @@ class ToolExecutor:
             },
         })
 
+        # iteration_runner — wraps run_playtest_batch for qa-engineer
+        self._register("iteration_runner", self._tool_iteration_runner, {
+            "name": "iteration_runner",
+            "description": (
+                "Run a headless playtest batch for one iteration cycle. Spawns "
+                "`python3 -m http.server` rooted at the artifact repo, shells "
+                "`node playtest_bot.mjs --runs N --tag v{cycle_n}` against it, "
+                "aggregates telemetry JSONs whose iteration_tag matches, persists "
+                "the rollup to project memory as artifact 'telemetry_v{cycle_n}', "
+                "and returns the rollup + node exit info. Use this tool in the "
+                "`playtest` step of iterate_artifact — do NOT shell python/node "
+                "yourself; do NOT try to read src/iteration/iterate_runner.py."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "repo_path": {"type": "string", "description": "Absolute path to the artifact repo (contains playtest_bot.mjs + telemetry/)"},
+                    "cycle_n": {"type": "integer", "description": "Cycle number; tag becomes v{cycle_n}"},
+                    "runs": {"type": "integer", "description": "Runs per batch (default 5)", "default": 5},
+                    "seconds_per_run": {"type": "integer", "description": "Seconds per run (default 60)", "default": 60},
+                    "game_entry": {"type": "string", "description": "HTML entry (default index.html)", "default": "index.html"},
+                    "bot_script": {"type": "string", "description": "Bot script name (default playtest_bot.mjs)", "default": "playtest_bot.mjs"},
+                },
+                "required": ["repo_path", "cycle_n"],
+            },
+        })
+
+        # external_repo_commit — write files into an external repo and commit (no push)
+        self._register("external_repo_commit", self._tool_external_repo_commit, {
+            "name": "external_repo_commit",
+            "description": (
+                "Write one or more files into an external git repository (outside "
+                "the agent sandbox) and commit them. Use this in `implement` or "
+                "`scaffold-iteration` steps that produce artifacts living in a "
+                "project's game repo — e.g. writing game_html_v{n} to "
+                "butt-shooting-game on its iteration branch, or scaffolding "
+                "ITERATION_CONTRACT.md + GOALS.md + playtest_bot.mjs. Stages only "
+                "the written files; optionally checks out a branch first; does "
+                "NOT push. Returns the commit SHA."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "repo_path": {"type": "string", "description": "Absolute path to the external git repo"},
+                    "files": {
+                        "type": "array",
+                        "description": "Files to write relative to repo_path",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "path": {"type": "string"},
+                                "content": {"type": "string"},
+                            },
+                            "required": ["path", "content"],
+                        },
+                    },
+                    "message": {"type": "string", "description": "Commit message"},
+                    "branch": {"type": "string", "description": "Optional branch to check out before writing/committing (created if absent)"},
+                    "allow_empty": {"type": "boolean", "description": "Allow empty commit (default false)", "default": False},
+                },
+                "required": ["repo_path", "files", "message"],
+            },
+        })
+
+        # scaffold_iteration — write the 4-file iteration kit into an artifact repo
+        self._register("scaffold_iteration", self._tool_scaffold_iteration, {
+            "name": "scaffold_iteration",
+            "description": (
+                "Scaffold the iteration kit (ITERATION_CONTRACT.md, GOALS.md, "
+                "playtest_bot.mjs, telemetry/.gitkeep, .codeplay/config.yaml) "
+                "into a newly-built game's artifact repo. Use this in the "
+                "`scaffold-iteration` tail step of phased-producer. Do NOT try "
+                "to import src.iteration.scaffolder yourself — your sandbox is "
+                "scoped to your worktree. This tool IS the binding. After it "
+                "returns, the files exist on disk and paths are saved to "
+                "project memory (iteration_contract_path, goals_path, "
+                "playtest_bot_path). You still need to stage + commit them with "
+                "`external_repo_commit` if you want them in the repo history."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "artifact_dir": {"type": "string", "description": "Absolute path to artifact repo root"},
+                    "project_title": {"type": "string", "description": "Human-readable title for GOALS.md preamble"},
+                    "game_url": {"type": "string", "description": "Local game URL for the bot to drive (default http://localhost:8765/index.html)"},
+                },
+                "required": ["artifact_dir"],
+            },
+        })
+
+        # itchio_publish — butler push
+        self._register("itchio_publish", self._tool_itchio_publish, {
+            "name": "itchio_publish",
+            "description": (
+                "Publish a flat HTML5 build to itch.io via butler. Requires butler "
+                "on PATH (or at ~/.local/bin/butler) and BUTLER_API_KEY env or "
+                "~/.config/itch/butler_creds. The itch.io game page must already "
+                "exist — butler cannot create it. Returns manifest JSON with "
+                "target_url + butler status output."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "build_dir": {"type": "string", "description": "Absolute path to flat build dir (must contain index.html)"},
+                    "target": {"type": "string", "description": "itch.io target 'user/slug:channel', e.g. dknanlin/butt-shooting-game:html"},
+                    "version": {"type": "string", "description": "Optional --userversion string"},
+                },
+                "required": ["build_dir", "target"],
+            },
+        })
+
+        # gh_pages_publish — commit build to gh-pages branch + push
+        self._register("gh_pages_publish", self._tool_gh_pages_publish, {
+            "name": "gh_pages_publish",
+            "description": (
+                "Publish a flat build to GitHub Pages by committing to the "
+                "gh-pages branch under docs/<slug>/ and pushing to origin. "
+                "Requires git + a remote named origin. Returns manifest JSON "
+                "with the deduced target_url."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "repo_path": {"type": "string", "description": "Absolute path to the repo with (or willing to have) a gh-pages branch"},
+                    "build_dir": {"type": "string", "description": "Absolute path to the flat build to publish"},
+                    "slug": {"type": "string", "description": "Path segment under docs/ on gh-pages"},
+                    "message": {"type": "string", "description": "Commit message (default 'Publish <slug>')"},
+                },
+                "required": ["repo_path", "build_dir", "slug"],
+            },
+        })
+
+        # roblox_publish — Open Cloud PATCH a place
+        self._register("roblox_publish", self._tool_roblox_publish, {
+            "name": "roblox_publish",
+            "description": (
+                "Publish a .rbxl place file via Roblox Open Cloud. Requires "
+                "ROBLOX_API_KEY with place-publish scope for the target "
+                "universe. Returns versionNumber + target_url."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "rbxl_path": {"type": "string", "description": "Absolute path to .rbxl file"},
+                    "universe_id": {"type": "string", "description": "Roblox universe ID"},
+                    "place_id": {"type": "string", "description": "Roblox place ID to publish over"},
+                    "version_type": {"type": "string", "description": "Saved | Published (default Published)", "default": "Published"},
+                },
+                "required": ["rbxl_path", "universe_id", "place_id"],
+            },
+        })
+
         # asset_fetch — download an asset's preview or zip into the workspace
         self._register("asset_fetch", self._tool_asset_fetch, {
             "name": "asset_fetch",
@@ -1669,6 +1821,335 @@ const { chromium } = require('playwright');
         except Exception:
             pass
         return f"Proposed agent '{p.agent_type}' (proposal={p.id}) — awaiting human approval."
+
+    # --- Iteration + cross-repo + publishing tools ---
+
+    async def _tool_iteration_runner(self, args: dict, **ctx) -> str:
+        from src.iteration.iterate_runner import run_playtest_batch
+        project_id = ctx.get("project_id")
+        if not project_id:
+            raise ValueError("iteration_runner requires a project context")
+        repo_path = args["repo_path"]
+        cycle_n = int(args["cycle_n"])
+        runs = int(args.get("runs", 5))
+        seconds_per_run = int(args.get("seconds_per_run", 60))
+        game_entry = args.get("game_entry", "index.html")
+        bot_script = args.get("bot_script", "playtest_bot.mjs")
+
+        loop = asyncio.get_running_loop()
+        result = await loop.run_in_executor(
+            None,
+            lambda: run_playtest_batch(
+                project_id=project_id,
+                repo_path=repo_path,
+                cycle_n=cycle_n,
+                runs=runs,
+                seconds_per_run=seconds_per_run,
+                game_entry=game_entry,
+                bot_script=bot_script,
+            ),
+        )
+
+        try:
+            import sys as _sys
+            main_mod = _sys.modules.get("src.main")
+            ws_manager = getattr(main_mod, "ws_manager", None) if main_mod else None
+            if ws_manager is not None:
+                await ws_manager.broadcast({
+                    "type": "playtest_batch_complete",
+                    "data": {
+                        "project_id": project_id,
+                        "cycle_n": result.cycle_n,
+                        "iteration_tag": result.iteration_tag,
+                        "n_runs": result.rollup.get("n_runs"),
+                        "n_valid": result.rollup.get("n_valid"),
+                    },
+                })
+        except Exception:
+            pass
+
+        return json.dumps({
+            "status": "ok" if result.node_exit_code == 0 else "bot_nonzero_exit",
+            "cycle_n": result.cycle_n,
+            "iteration_tag": result.iteration_tag,
+            "rollup": result.rollup,
+            "files": result.files,
+            "node_exit_code": result.node_exit_code,
+            "stdout_tail": result.stdout_tail[-2000:],
+        })
+
+    async def _tool_external_repo_commit(self, args: dict, **ctx) -> str:
+        repo_path = Path(args["repo_path"]).resolve()
+        if not (repo_path / ".git").exists():
+            raise ValueError(f"Not a git repo: {repo_path}")
+
+        files = args["files"]
+        if not isinstance(files, list) or not files:
+            raise ValueError("external_repo_commit requires a non-empty 'files' list")
+        message = args["message"]
+        branch = args.get("branch")
+        allow_empty = bool(args.get("allow_empty", False))
+
+        async def _run(cmd: str, timeout: int = 60) -> tuple[int, str]:
+            proc = await asyncio.create_subprocess_shell(
+                cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd=str(repo_path),
+            )
+            out, err = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+            return proc.returncode, (out.decode(errors="replace") + err.decode(errors="replace"))
+
+        results: dict = {"written": [], "commit": None, "branch": None}
+
+        if branch:
+            code, _ = await _run(f"git checkout {branch}")
+            if code != 0:
+                code2, out2 = await _run(f"git checkout -b {branch}")
+                if code2 != 0:
+                    raise RuntimeError(f"Could not checkout or create branch {branch}: {out2}")
+            results["branch"] = branch
+
+        written_rel: list[str] = []
+        for entry in files:
+            rel = entry["path"]
+            target = (repo_path / rel).resolve()
+            if not str(target).startswith(str(repo_path)):
+                raise PermissionError(f"Path traversal blocked: {rel}")
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(entry["content"], encoding="utf-8")
+            written_rel.append(rel)
+        results["written"] = written_rel
+
+        paths_arg = " ".join(f'"{p}"' for p in written_rel)
+        code, out = await _run(f"git add {paths_arg}")
+        if code != 0:
+            raise RuntimeError(f"git add failed: {out}")
+
+        msg_escaped = message.replace('"', '\\"')
+        empty_flag = "--allow-empty " if allow_empty else ""
+        code, out = await _run(f'git commit {empty_flag}-m "{msg_escaped}"')
+        if code != 0 and "nothing to commit" not in out:
+            raise RuntimeError(f"git commit failed: {out}")
+
+        code, sha = await _run("git rev-parse HEAD")
+        results["commit"] = sha.strip() if code == 0 else None
+
+        return json.dumps({"status": "ok", **results})
+
+    async def _tool_scaffold_iteration(self, args: dict, **ctx) -> str:
+        """Wrap src.iteration.scaffolder.scaffold_iteration_artifacts so agents
+        don't have to shell python or reach into the code-play repo."""
+        artifact_dir = args.get("artifact_dir")
+        if not artifact_dir:
+            return json.dumps({"status": "error", "error": "artifact_dir required"})
+        project_id = ctx.get("project_id")
+        if not project_id:
+            return json.dumps({"status": "error", "error": "project_id missing from context"})
+
+        from src.iteration.scaffolder import scaffold_iteration_artifacts
+
+        kwargs = {}
+        if args.get("project_title"):
+            kwargs["project_title"] = args["project_title"]
+        if args.get("game_url"):
+            kwargs["game_url"] = args["game_url"]
+
+        loop = asyncio.get_event_loop()
+        try:
+            paths = await loop.run_in_executor(
+                None,
+                lambda: scaffold_iteration_artifacts(project_id, artifact_dir, **kwargs),
+            )
+        except Exception as e:
+            return json.dumps({"status": "error", "error": f"scaffolder failed: {e}"})
+
+        return json.dumps({
+            "status": "ok",
+            "artifact_dir": str(artifact_dir),
+            "files": {k: str(v) for k, v in paths.items()} if isinstance(paths, dict) else None,
+        })
+
+    async def _tool_itchio_publish(self, args: dict, **ctx) -> str:
+        import shutil as _shutil
+        import os as _os
+        build_dir = Path(args["build_dir"]).resolve()
+        target = args["target"]
+        version = args.get("version")
+
+        if not build_dir.exists():
+            raise FileNotFoundError(f"Build dir not found: {build_dir}")
+        if not (build_dir / "index.html").exists():
+            raise FileNotFoundError(f"No index.html in {build_dir}")
+
+        butler = _shutil.which("butler") or "/Users/dknanlin/.local/bin/butler"
+        if not Path(butler).exists():
+            return json.dumps({"status": "error", "error": "butler not found on PATH"})
+
+        env = _os.environ.copy()
+        if "BUTLER_API_KEY" not in env:
+            creds_path = Path.home() / ".config" / "itch" / "butler_creds"
+            if creds_path.exists():
+                env["BUTLER_API_KEY"] = creds_path.read_text().strip()
+
+        vflag = f' --userversion "{version}"' if version else ""
+        push_cmd = f'"{butler}" push "{build_dir}" "{target}"{vflag}'
+        push = await asyncio.create_subprocess_shell(
+            push_cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            env=env,
+        )
+        out, err = await asyncio.wait_for(push.communicate(), timeout=600)
+        push_output = (out.decode(errors="replace") + err.decode(errors="replace"))[-2000:]
+
+        if push.returncode != 0:
+            return json.dumps({
+                "status": "error",
+                "error": f"butler push exited {push.returncode}",
+                "output": push_output,
+            })
+
+        user, slug_channel = target.split("/", 1)
+        slug = slug_channel.split(":")[0]
+        target_url = f"https://{user}.itch.io/{slug}"
+
+        status_proc = await asyncio.create_subprocess_shell(
+            f'"{butler}" status "{target}"',
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            env=env,
+        )
+        s_out, s_err = await asyncio.wait_for(status_proc.communicate(), timeout=60)
+        status_output = (s_out.decode(errors="replace") + s_err.decode(errors="replace"))[-2000:]
+
+        return json.dumps({
+            "status": "ok",
+            "target": target,
+            "target_url": target_url,
+            "push_output": push_output,
+            "status_output": status_output,
+        })
+
+    async def _tool_gh_pages_publish(self, args: dict, **ctx) -> str:
+        import shutil as _shutil
+        repo_path = Path(args["repo_path"]).resolve()
+        build_dir = Path(args["build_dir"]).resolve()
+        slug = args["slug"].strip("/")
+        message = args.get("message") or f"Publish {slug}"
+
+        if not (repo_path / ".git").exists():
+            raise ValueError(f"Not a git repo: {repo_path}")
+        if not build_dir.exists():
+            raise FileNotFoundError(f"Build dir not found: {build_dir}")
+
+        async def _run(cmd: str, timeout: int = 120) -> tuple[int, str]:
+            proc = await asyncio.create_subprocess_shell(
+                cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd=str(repo_path),
+            )
+            out, err = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+            return proc.returncode, (out.decode(errors="replace") + err.decode(errors="replace"))
+
+        code, cur = await _run("git rev-parse --abbrev-ref HEAD")
+        original_branch = cur.strip() if code == 0 else None
+
+        code, _ = await _run("git rev-parse --verify gh-pages")
+        if code != 0:
+            code, out = await _run("git checkout --orphan gh-pages")
+            if code != 0:
+                return json.dumps({"status": "error", "error": f"could not create gh-pages: {out}"})
+            await _run("git rm -rf . || true")
+        else:
+            code, out = await _run("git checkout gh-pages")
+            if code != 0:
+                return json.dumps({"status": "error", "error": f"could not checkout gh-pages: {out}"})
+
+        dest = repo_path / "docs" / slug
+        if dest.exists():
+            _shutil.rmtree(dest)
+        _shutil.copytree(build_dir, dest)
+
+        code, out = await _run(f'git add "docs/{slug}"')
+        if code != 0:
+            return json.dumps({"status": "error", "error": f"git add failed: {out}"})
+
+        msg_escaped = message.replace('"', '\\"')
+        code, out = await _run(f'git commit -m "{msg_escaped}"')
+        if code != 0 and "nothing to commit" not in out:
+            return json.dumps({"status": "error", "error": f"git commit failed: {out}"})
+
+        code, push_out = await _run("git push origin gh-pages", timeout=180)
+        if code != 0:
+            if original_branch and original_branch != "gh-pages":
+                await _run(f"git checkout {original_branch}")
+            return json.dumps({"status": "error", "error": f"git push failed: {push_out}"})
+
+        code, remote = await _run("git config --get remote.origin.url")
+        target_url = None
+        if code == 0:
+            url = remote.strip()
+            m = re.search(r"github\.com[:/]([^/]+)/([^/.]+)", url)
+            if m:
+                target_url = f"https://{m.group(1)}.github.io/{m.group(2)}/{slug}/"
+
+        if original_branch and original_branch != "gh-pages":
+            await _run(f"git checkout {original_branch}")
+
+        return json.dumps({
+            "status": "ok",
+            "target_url": target_url,
+            "slug": slug,
+            "push_output": push_out[-1000:],
+        })
+
+    async def _tool_roblox_publish(self, args: dict, **ctx) -> str:
+        import os as _os
+        key = _os.environ.get("ROBLOX_API_KEY")
+        if not key:
+            return json.dumps({"status": "error", "error": "ROBLOX_API_KEY not set"})
+
+        rbxl_path = Path(args["rbxl_path"]).resolve()
+        if not rbxl_path.exists():
+            raise FileNotFoundError(f"rbxl not found: {rbxl_path}")
+
+        universe_id = args["universe_id"]
+        place_id = args["place_id"]
+        version_type = args.get("version_type", "Published")
+        url = (
+            f"https://apis.roblox.com/universes/v1/{universe_id}/places/{place_id}/"
+            f"versions?versionType={version_type}"
+        )
+
+        import httpx as _httpx
+        data = rbxl_path.read_bytes()
+        try:
+            async with _httpx.AsyncClient(timeout=180.0) as client:
+                resp = await client.post(
+                    url,
+                    headers={
+                        "x-api-key": key,
+                        "Content-Type": "application/octet-stream",
+                    },
+                    content=data,
+                )
+                if resp.status_code >= 400:
+                    return json.dumps({
+                        "status": "error",
+                        "error": f"Roblox {resp.status_code}: {resp.text[:500]}",
+                    })
+                body = resp.json()
+        except Exception as e:
+            return json.dumps({"status": "error", "error": f"{type(e).__name__}: {e}"})
+
+        return json.dumps({
+            "status": "ok",
+            "version": body.get("versionNumber"),
+            "version_type": version_type,
+            "target_url": f"https://www.roblox.com/games/{place_id}",
+        })
 
     # --- Path safety ---
 

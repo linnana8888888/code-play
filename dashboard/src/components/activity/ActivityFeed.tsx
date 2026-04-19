@@ -90,6 +90,12 @@ function toRows(e: WsEvent): Row[] {
         actor: d.instance_id || "?",
         detail: `completed ${d.task_id}`,
       }];
+    case "spawn_failed":
+      return [{
+        id, time: t, kind: "blocked", accent: "text-red-500",
+        actor: d.agent_type || "agent",
+        detail: `BLOCKED after ${d.failures || "?"} failed spawns — ${shorten(d.error || "", 80)}`,
+      }];
     default:
       return [];
   }

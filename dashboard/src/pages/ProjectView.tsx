@@ -22,6 +22,14 @@ interface GateBannerEntry {
   title?: string;
 }
 
+interface SpawnFailedEntry {
+  task_id: string;
+  agent_type: string;
+  error: string;
+  failures: number;
+  hint?: string;
+}
+
 export default function ProjectView() {
   const { id } = useParams<{ id: string }>();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -31,6 +39,7 @@ export default function ProjectView() {
   );
   const [createTaskOpen, setCreateTaskOpen] = useState(false);
   const [gateBanner, setGateBanner] = useState<GateBannerEntry | null>(null);
+  const [spawnFailures, setSpawnFailures] = useState<SpawnFailedEntry[]>([]);
   const { tasks, create: createTask } = useTasks(id);
   const { instances, terminate } = useAgents();
   const expandedId = searchParams.get("expanded") ?? undefined;
@@ -42,14 +51,29 @@ export default function ProjectView() {
   useWebSocket((event) => {
     if (!id) return;
     const e = event as { type?: string; data?: Record<string, unknown> };
-    if (e.type !== "gate_ready") return;
     if (!e.data || e.data.project_id !== id) return;
-    setGateBanner({
-      task_id: String(e.data.task_id),
-      step_id: e.data.step_id as string | undefined,
-      review_of: e.data.review_of as string | undefined,
-      title: e.data.title as string | undefined,
-    });
+    if (e.type === "gate_ready") {
+      setGateBanner({
+        task_id: String(e.data.task_id),
+        step_id: e.data.step_id as string | undefined,
+        review_of: e.data.review_of as string | undefined,
+        title: e.data.title as string | undefined,
+      });
+      return;
+    }
+    if (e.type === "spawn_failed") {
+      setSpawnFailures((prev) => {
+        const task_id = String(e.data!.task_id);
+        const entry: SpawnFailedEntry = {
+          task_id,
+          agent_type: String(e.data!.agent_type || "?"),
+          error: String(e.data!.error || ""),
+          failures: Number(e.data!.failures || 0),
+          hint: e.data!.hint as string | undefined,
+        };
+        return [entry, ...prev.filter((p) => p.task_id !== task_id)].slice(0, 5);
+      });
+    }
   });
 
   function openGate(entry: GateBannerEntry) {
@@ -91,6 +115,45 @@ export default function ProjectView() {
 
       <CriteriaPanel projectId={id} />
 
+
+      {spawnFailures.length > 0 && (
+        <div className="space-y-2">
+          {spawnFailures.map((f) => (
+            <div
+              key={f.task_id}
+              className="flex items-start justify-between gap-3 rounded-xl border border-red-500/60 bg-red-500/10 p-3 text-sm"
+            >
+              <div className="min-w-0">
+                <p className="font-semibold text-red-400">
+                  Task blocked — agent spawn failed
+                </p>
+                <p className="mt-0.5 truncate text-xs text-text">
+                  <span className="font-mono">{f.agent_type}</span>
+                  <span className="text-text-muted">
+                    {" "}· task {f.task_id} · {f.failures} attempts
+                  </span>
+                </p>
+                <p className="mt-1 break-words text-xs text-text-muted">
+                  {f.error}
+                </p>
+                {f.hint && (
+                  <p className="mt-1 text-[11px] text-text-muted italic">
+                    {f.hint}
+                  </p>
+                )}
+              </div>
+              <button
+                onClick={() =>
+                  setSpawnFailures((prev) => prev.filter((p) => p.task_id !== f.task_id))
+                }
+                className="shrink-0 rounded-lg bg-bg-hover px-3 py-1.5 text-xs text-text-muted hover:text-text"
+              >
+                Dismiss
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
 
       {gateBanner ? (
         <div className="flex items-center justify-between gap-3 rounded-xl border border-accent/60 bg-accent/10 p-3 text-sm">

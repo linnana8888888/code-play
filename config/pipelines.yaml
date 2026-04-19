@@ -122,9 +122,33 @@ pipelines:
           Save the final HTML to memory as artifact key 'game_html_v1'.
         output: code
 
+      - id: instrument
+        agent: telemetry-engineer
+        depends_on: [build]
+        task: |
+          Read 'game_html_v1' + 'mechanics_v1' + 'tech_plan_v1' from memory. Patch
+          the HTML in-place to emit the 8-event default catalogue (session_start,
+          first_playable, tutorial_step_completed, death, retry, win, quit,
+          session_end) via `fetch('/telemetry', {method:'POST', keepalive:true})`.
+
+          Rules:
+            - Expose a TRACK(name, payload) helper on window.__game.
+            - session_start fires AFTER the first player input, not on load
+              (title-screen opt-out).
+            - No PII: never send names, emails, IPs, screen text.
+              ua_hash = sha256(navigator.userAgent).slice(0,8).
+            - Rate-limit: ≤ 2 events/sec per session (drop the rest, don't queue).
+            - keepalive:true on every fetch so session_end survives page close.
+
+          Overwrite 'game_html_v1' in memory with the patched HTML and write the
+          event schema to 'telemetry_spec_v1':
+            { events: [{name, fires_when, payload_keys, sample_rate}],
+              endpoint, session_id_strategy, kid_safety_notes }.
+        output: telemetry_spec
+
       - id: qa-playtest
         agent: qa-engineer
-        depends_on: [build]
+        depends_on: [instrument]
         task: |
           Read game_html_v1 + mechanics_v1 from memory. Launch the HTML in a headless browser
           via the playwright_browser tool. Verify:
@@ -186,9 +210,51 @@ pipelines:
           Save a one-line report as memory artifact key 'iteration_scaffold_v1'.
         output: iteration_scaffold
 
+      - id: dashboard-init
+        agent: metrics-dashboard-builder
+        depends_on: [scaffold-iteration]
+        task: |
+          The artifact repo now has telemetry/ (from scaffold-iteration) and the
+          instrumented game emits the 8-event catalogue. Stand up the analytics
+          store + single-HTML dashboard.
+
+          Write these files into memory[`artifact_repo_path`] via
+          external_repo_commit (do NOT shell git/python):
+            - tools/metrics_rollup.py — idempotent; walks telemetry/*.json,
+              upserts rows into metrics.sqlite (events + sessions rollup tables).
+              Dedup by (session_id, name, ts).
+            - dashboard.html — single file, loads sql.js + uPlot from CDN,
+              fetch()es metrics.sqlite next to itself, renders 4 charts:
+                1) sessions/day (last 14d), 2) session-length histogram,
+                3) tutorial → first_playable → win funnel,
+                4) top-5 death causes (from `death.cause` payload).
+              Cold load ≤ 1s, transfer ≤ 2MB, no React, no build step.
+            - metrics.sqlite — empty schema (events, sessions), committed so
+              the dashboard loads cleanly on an empty artifact repo.
+
+          Save to memory: 'metrics_store_spec_v1' (DDL + rollup contract) and
+          'dashboard_html_v1' (path to the committed file).
+        output: dashboard
+
+      - id: blurb
+        agent: analytics-reporter
+        depends_on: [dashboard-init]
+        task: |
+          Write 'publish_blurb_v1' for this ship. ≤ 80 words. Numbers-driven.
+
+          Read from memory: mechanics_v1, laf_brief_v1, qa_report_v1,
+          telemetry_spec_v1. Lead with the player-verb hook, one-sentence
+          differentiation, one metric that signals "we actually playtested"
+          (pull from qa_report_v1 evidence or reference the instrumented
+          funnel). Kid-audience tone; itch.io listing voice; no enterprise speak.
+
+          Save as 'publish_blurb_v1'. The publisher will paste this into the
+          itch long-desc intro.
+        output: blurb
+
       - id: publish-prep
         agent: publisher
-        depends_on: [scaffold-iteration]
+        depends_on: [blurb]
         task: |
           Ship-gate preparation. Source of truth is games/<slug>.yaml — read it
           first to locate the repo and resolve the version the pipeline is
@@ -197,7 +263,7 @@ pipelines:
           internal path. Freeze the resolved sha — never ship a moving branch tip.
 
           Also read from memory: concept_options_v1, mechanics_v1, laf_brief_v1,
-          qa_report_v1, game_html_v1.
+          qa_report_v1, game_html_v1, publish_blurb_v1.
 
           Run the pre-flight checklist:
             1. games/<slug>.yaml exists and the target version has a resolvable ref
@@ -353,9 +419,21 @@ pipelines:
         review_of: build-a
         task: "Play both candidate builds side-by-side. Pick A or B — the winning artifact will be promoted to 'game_html_v1' for downstream QA."
 
+      - id: instrument
+        agent: telemetry-engineer
+        depends_on: [gate-build-pick]
+        task: |
+          Patch the winning 'game_html_v1' with the 8-event telemetry catalogue
+          (session_start, first_playable, tutorial_step_completed, death, retry,
+          win, quit, session_end) via `fetch('/telemetry', {method:'POST',
+          keepalive:true})`. Expose window.__game.TRACK. No PII, ≤2 events/sec,
+          session_start on first input (not page load). Overwrite 'game_html_v1'
+          and save 'telemetry_spec_v1'.
+        output: telemetry_spec
+
       - id: qa-playtest
         agent: qa-engineer
-        depends_on: [gate-build-pick]
+        depends_on: [instrument]
         task: "Playtest game_html_v1 against mechanics_v1. Save 'qa_report_v1'."
         output: qa_report
 
@@ -390,9 +468,29 @@ pipelines:
           Save one-line note as memory key 'iteration_scaffold_v1'.
         output: iteration_scaffold
 
+      - id: dashboard-init
+        agent: metrics-dashboard-builder
+        depends_on: [scaffold-iteration]
+        task: |
+          Write tools/metrics_rollup.py + dashboard.html + empty metrics.sqlite
+          into memory[`artifact_repo_path`] via external_repo_commit. sql.js +
+          uPlot from CDN, 4 charts (sessions/day, session-length histogram,
+          tutorial→win funnel, top-5 death causes). Cold load ≤ 1s. Save
+          'metrics_store_spec_v1' + 'dashboard_html_v1' to memory.
+        output: dashboard
+
+      - id: blurb
+        agent: analytics-reporter
+        depends_on: [dashboard-init]
+        task: |
+          Write 'publish_blurb_v1' (≤80 words, itch.io tone). Read mechanics_v1,
+          laf_brief_v1, qa_report_v1, telemetry_spec_v1. Hook → differentiation →
+          one playtested metric.
+        output: blurb
+
       - id: publish-prep
         agent: publisher
-        depends_on: [scaffold-iteration]
+        depends_on: [blurb]
         task: |
           Ship-gate preparation. Source of truth is games/<slug>.yaml — read it
           first to locate the repo and resolve the version the pipeline is
@@ -401,7 +499,7 @@ pipelines:
           internal path. Freeze the resolved sha — never ship a moving branch tip.
 
           Also read from memory: concept_options_v1, mechanics_v1, laf_brief_v1,
-          qa_report_v1, game_html_v1.
+          qa_report_v1, game_html_v1, publish_blurb_v1.
 
           Run the pre-flight checklist:
             1. games/<slug>.yaml exists and the target version has a resolvable ref
@@ -584,6 +682,46 @@ pipelines:
           (written by the tool).
         output: telemetry
 
+      - id: dashboard-refresh
+        agent: metrics-dashboard-builder
+        depends_on: [playtest]
+        task: |
+          The playtest just wrote new telemetry/*.json to the artifact repo.
+          Re-run tools/metrics_rollup.py (via external_repo_commit with a
+          run-script step, or inline the rollup and rewrite metrics.sqlite) so
+          the new session rows land in the store. Commit metrics.sqlite back to
+          the iteration branch. Dashboard.html does not change this cycle.
+
+          Save 'metrics_store_refresh_v{{cycle_n}}' = { rows_added,
+          sessions_added, generated_at }.
+
+          If tools/metrics_rollup.py is missing (pre-analytics artifact), fail
+          the task with a clear message — don't silently skip; the phased-
+          producer pipeline should have set this up.
+        output: dashboard_refresh
+
+      - id: feedback-synthesis
+        agent: player-feedback-synthesizer
+        depends_on: [playtest]
+        task: |
+          Digest player comments for cycle {{cycle_n}}. Conditional: if the
+          project has no publish_manifest_v1 in memory (not yet shipped), save
+          'player_feedback_v{{cycle_n}}' = { skipped: true, reason:
+          "not_published" } and return — do NOT fabricate comments.
+
+          If published, scrape comments from the URLs in publish_manifest_v1
+          (itch.io page, GH Pages issues, Roblox experience reviews). Include
+          studio-DM snippets with player feedback since last cycle. Scrub PII:
+          names → handles, emails → redacted.
+
+          Produce 3-5 themes, each with ≥ 3 backing verbatim quotes. Tag each
+          quote kid/parent/unknown. For each theme, add a
+          'direction_to_proposal' hint (designer|ux|artist|proto) so the next
+          proposal step can pick it up.
+
+          Save as 'player_feedback_v{{cycle_n}}'.
+        output: player_feedback
+
       - id: postmortem
         agent: analytics-reporter
         depends_on: [playtest]
@@ -604,6 +742,13 @@ pipelines:
 
           All metric names you mention must pass validate_goals_md — same
           vocabulary as GOALS.md. Do not invent fps, drop_rate, etc.
+
+          Optional inputs (read if present, don't block if missing — these
+          steps run in parallel with you):
+            - 'player_feedback_v{{cycle_n}}' — if non-empty, weave 1-2 quoted
+              themes into the problems section and tag their direction_to_proposal.
+            - 'metrics_store_refresh_v{{cycle_n}}' — if present, link the
+              committed dashboard.html in the summary for the human gate.
 
           Save to memory as artifact 'postmortem_{{iteration_tag}}'.
         output: postmortem

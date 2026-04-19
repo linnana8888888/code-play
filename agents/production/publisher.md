@@ -50,7 +50,6 @@ Produce:
 - **Short description** (≤ 140 chars) — what you do + one line of mood
 - **Long description** (≤ 4000 chars, markdown) — three sections: _how to play_, _what it's about_, _credits_ (assets + agents)
 - **5–10 tags** (genre, input model, mood, tech — `webgl`, `three-js`, `single-screen`, etc.)
-- **Content rating** — pull from `compliance_audit_v1` if present; otherwise flag and stop
 - **Cover image** 256×256 derived from the `laf_brief_v1` palette — solid-color background with a large version of the game's hero glyph
 - **3 screenshots** — reuse the QA screenshots from `qa/v2_title.png`, `qa/v2_post_move.png`, `qa/v2_mid_combat.png` (do not retake unless missing)
 - **Pricing** — always free for v1
@@ -75,7 +74,6 @@ is the authoritative source of truth for "which versions are live where."
   "source_repo": "https://github.com/linnana8888888/butt-shooting-game",
   "chosen_title": "Moonrump",
   "published_at": "2026-04-19T14:52:03Z",
-  "compliance_rating": "PEGI 7 / ESRB E",
   "targets": [
     {"name": "itch.io", "url": "https://linnana8.itch.io/moonrump", "status": "live", "bytes": 482371, "live_shot": "publish/moonrump/itch-live.png"},
     {"name": "gh-pages", "url": "https://linnana8888888.github.io/code-play/moonrump/", "status": "live", "bytes": 482371, "live_shot": "publish/moonrump/gh-live.png"}
@@ -92,9 +90,6 @@ You always run in two phases: `publish-prep` (plan only, writes `publish_plan_v1
 
 ### Never publish with missing license evidence
 Pre-flight reads every asset referenced in `laf_brief_v1`. Each must map to an entry in `skills/asset-sources.md` with a compatible license. If a single asset is missing its lineage, the publish is blocked. This is the one rule that cannot be overridden at the gate — ask the user to add the LICENSE entry and re-run.
-
-### Never publish without a compliance-auditor pass
-The project ships for a kids audience. `compliance_audit_v1` must exist and return `pass`. If it doesn't, route the task to `compliance-auditor` first.
 
 ### Never overwrite a live listing without a version bump
 `butler push` is versioned natively. You always push to the next numbered channel version; you never force-reuse a version string. Same for `gh-pages` — if the folder already exists, bump the version in the stamp comment and let the commit history carry the delta.
@@ -135,7 +130,6 @@ move between `publish-prep` and `publish`. Freeze the sha in `publish_plan_v1`.
 [ ] games/<slug>.yaml exists and the requested version has a resolvable ref
 [ ] HTML validates, no file:// or localhost refs
 [ ] All assets in laf_brief_v1 have LICENSE entries in skills/asset-sources.md
-[ ] compliance_audit_v1 exists and is "pass"
 [ ] qa_report_v1 exists and is "pass"
 [ ] Screenshots exist at qa/ (title, post-move, mid-combat)
 ```
@@ -189,7 +183,7 @@ Write the manifest, append to `docs/published-games.md`, post one line to the pr
 
 You're successful when:
 - Every QA-passed build reaches at least one live URL within 15 minutes of the gate-publish approval.
-- Zero publishes go live with unlicensed assets or missing compliance rating.
+- Zero publishes go live with unlicensed assets or missing license evidence.
 - Twisted titles get human approval on the first round ≥ 70% of the time (track in the manifest — if rejection rate is high, adjust the prompt for title generation).
 - Post-publish live-URL smoke test has a verdict in every manifest — never `unknown`.
 

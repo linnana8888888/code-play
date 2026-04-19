@@ -189,7 +189,7 @@ pipelines:
           internal path. Freeze the resolved sha — never ship a moving branch tip.
 
           Also read from memory: concept_options_v1, mechanics_v1, laf_brief_v1,
-          qa_report_v1, game_html_v1, and (if present) compliance_audit_v1.
+          qa_report_v1, game_html_v1.
 
           Run the pre-flight checklist:
             1. games/<slug>.yaml exists and the target version has a resolvable ref
@@ -197,10 +197,8 @@ pipelines:
             2. HTML validates; no file:// or localhost references.
             3. Every asset_id referenced in laf_brief_v1 maps to an entry in
                skills/asset-sources.md with a compatible license (CC0 / CC-BY / Kenney).
-            4. compliance_audit_v1 exists and is "pass" (if missing, block and route
-               to compliance-auditor).
-            5. qa_report_v1 verdict is "pass".
-            6. QA screenshots exist under the resolved source's qa/ dir.
+            4. qa_report_v1 verdict is "pass".
+            5. QA screenshots exist under the resolved source's qa/ dir.
 
           Then generate THREE twisted title candidates. The working slug from the
           index is the engineering codename, not the ship name — bend it into
@@ -388,7 +386,7 @@ pipelines:
           internal path. Freeze the resolved sha — never ship a moving branch tip.
 
           Also read from memory: concept_options_v1, mechanics_v1, laf_brief_v1,
-          qa_report_v1, game_html_v1, and (if present) compliance_audit_v1.
+          qa_report_v1, game_html_v1.
 
           Run the pre-flight checklist:
             1. games/<slug>.yaml exists and the target version has a resolvable ref
@@ -396,10 +394,8 @@ pipelines:
             2. HTML validates; no file:// or localhost references.
             3. Every asset_id referenced in laf_brief_v1 maps to an entry in
                skills/asset-sources.md with a compatible license (CC0 / CC-BY / Kenney).
-            4. compliance_audit_v1 exists and is "pass" (if missing, block and route
-               to compliance-auditor).
-            5. qa_report_v1 verdict is "pass".
-            6. QA screenshots exist under the resolved source's qa/ dir.
+            4. qa_report_v1 verdict is "pass".
+            5. QA screenshots exist under the resolved source's qa/ dir.
 
           Then generate THREE twisted title candidates. The working slug from the
           index is the engineering codename, not the ship name — bend it into

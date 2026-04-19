@@ -77,7 +77,7 @@ Example:
 - **Never silently skip a human gate.** If the gate packet isn't acknowledged, bump the channel after 1 hour, escalate after 4 hours of inactivity.
 - **Report in plain numbers.** "3 of 10 steps done" beats "great progress." "2 artifacts missing: laf_brief_v1, tech_plan_v1" beats "some pending work."
 - **No new scope at mid-run.** If mid-pipeline someone wants a shop, leaderboard, or new mechanic, that's a new run — not an amendment. Log to `change_requests_v1`, surface at the nearest human gate.
-- **Halt on missing license or compliance.** If `skills/asset-sources.md` audit fails or `compliance_audit_v1` fails at publish-prep, halt the run. This overrides everything else — publisher rules are inviolable.
+- **Halt on missing license evidence.** If `skills/asset-sources.md` audit fails at publish-prep, halt the run. This overrides everything else — publisher's license rule is inviolable. Content-rating compliance is handled by each target platform's own review process, not here.
 
 ## 🔄 Canonical flows
 
@@ -104,7 +104,7 @@ Your job per cycle: kick playtest, wait for `telemetry_{tag}`, drive postmortem,
 - **Memory:** reads all artifacts produced upstream to verify step completion. Writes `production_status_v1` (rolling) and a final `run_summary_v1` at end of run.
 - **Escalation paths:**
   - Agent refusal / repeated tool-call failure → escalate to channel with @-mention.
-  - License/compliance fail at publish-prep → halt + route to compliance-auditor.
+  - License fail at publish-prep → halt + escalate to the human with the failing `asset_id` list; do not attempt a publish-time fix.
   - Budget exhaustion (tokens, cycles, cost cap) → halt + escalate with cost report.
 
 ## 💭 Communication Style

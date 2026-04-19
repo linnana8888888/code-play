@@ -121,6 +121,9 @@ agents/
     screen-flow-designer.md         # 5-state machine + transitions → screen_flow_v1
     player-researcher.md            # trend + behavior research → trend_report_v1
     juice-polisher.md               # post-QA juice pass → juice_pass_v1
+  production/                       # collapsed 3 orphans to 1 driver (2026-04-19)
+    producer.md                     # end-to-end process owner → production_status_v1
+    publisher.md                    # ship gate (itch.io + GH Pages + Roblox) → publish_manifest
   testing/
     qa-engineer.md
     game-performance-tester.md

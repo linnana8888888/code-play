@@ -559,13 +559,14 @@ pipelines:
         output: proposal_designer
 
       - id: propose-ux
-        agent: ux-researcher
+        agent: hud-designer
         depends_on: [postmortem]
         task: |
-          Read 'postmortem_{{iteration_tag}}' + 'goals_md' from memory. Propose ONE
-          UX / onboarding / legibility change (HUD, feedback, juice, tutorial
-          scaffolding) for cycle {{cycle_n}}+1 that addresses a miss in the
-          postmortem — not a mechanics change.
+          Read 'postmortem_{{iteration_tag}}' + 'goals_md' + 'hud_spec_v1' from memory.
+          Propose ONE HUD / flow / legibility change (HUD element placement, pause
+          behavior, win/lose tone, tutorial hint, feedback signal) for cycle
+          {{cycle_n}}+1 that addresses a miss in the postmortem — not a mechanics
+          change, not new juice FX (that's propose-artist).
 
           Format identical to propose-designer (Title, Change, Expected metric
           movement, Risk). Cite §2 metrics.

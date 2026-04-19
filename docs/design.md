@@ -116,6 +116,11 @@ agents/
     rapid-prototyper.md
     data-engineer.md
     database-optimizer.md
+  design/                           # narrowed to kid-game scope (2026-04-19)
+    hud-designer.md                 # 6-screen HUD + menu layout → hud_spec_v1
+    screen-flow-designer.md         # 5-state machine + transitions → screen_flow_v1
+    player-researcher.md            # trend + behavior research → trend_report_v1
+    juice-polisher.md               # post-QA juice pass → juice_pass_v1
   testing/
     qa-engineer.md
     game-performance-tester.md

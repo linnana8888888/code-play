@@ -141,28 +141,35 @@ agents:
     description: "Stealth model (elephant-alpha) for experiments and benchmarking"
     tools: [builtin]
 
-  # Design (imported from agency-agents — P0 batch, 2026-04-18)
-  design-ui-designer:
+  # Design (2026-04-19 audit — narrowed to kid web/Roblox game scope):
+  #   hud-designer          → HUD + menu layout (6 screens) — produces hud_spec_v1
+  #   screen-flow-designer  → state machine + transitions (5 states) — produces screen_flow_v1
+  #   player-researcher     → market + behavior research for 6-12 kid games — produces trend_report_v1
+  #   juice-polisher        → post-QA polish pass (shake/particles/hit-stop) — produces juice_pass_v1
+  # Renamed from design-{ui,ux-architect,ux-researcher,whimsy-injector}. Brand/enterprise scope
+  # stripped — these are kid-game roles, not microsite/IA/design-system roles.
+  hud-designer:
     model: "anthropic/anthropic.claude-sonnet-4-6"
     fallback_model: "omlx/Qwen3.5-9B-MLX-4bit"
-    description: "Visual UI systems, component libraries, pixel-perfect interface creation"
+    description: "Lays out title + HUD + pause + win/lose screens for kid web/Roblox games; produces hud_spec_v1"
     tools: [builtin]
 
-  design-ux-architect:
+  screen-flow-designer:
     model: "anthropic/anthropic.claude-sonnet-4-6"
     fallback_model: "omlx/Qwen3.5-9B-MLX-4bit"
-    description: "Onboarding flows, meta-loops, information architecture, navigation models"
+    description: "Owns the 5-state machine + transition table + input bindings; produces screen_flow_v1"
     tools: [builtin]
 
-  design-ux-researcher:
+  player-researcher:
+    model: "anthropic/anthropic.claude-sonnet-4-6"
+    fallback_model: "anthropic/anthropic.claude-opus-4-7"
+    description: "Trend + behavior research for kid (6-12) web/Roblox game landscape; produces trend_report_v1"
+    tools: [builtin]
+
+  juice-polisher:
     model: "anthropic/anthropic.claude-sonnet-4-6"
     fallback_model: "omlx/Qwen3.5-9B-MLX-4bit"
-    description: "Playtest interviews, heuristic evaluation, NPS driver analysis"
-    tools: [builtin]
-
-  design-whimsy-injector:
-    model: "omlx/Qwen3.5-9B-MLX-4bit"
-    description: "Polish/joy specialist — delight moments, micro-interactions, play tone"
+    description: "Post-QA game-juice pass (shake/particles/hit-stop/AV sync); 5-10 file:line deltas; produces juice_pass_v1"
     tools: [builtin]
 
   # Production (imported from agency-agents — P0 batch)

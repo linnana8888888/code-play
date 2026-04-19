@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useParams, Link, useSearchParams } from "react-router-dom";
-import { getProject } from "../api/client";
+import { getProject, runPipeline } from "../api/client";
 import { useTasks } from "../hooks/useTasks";
 import { useAgents } from "../hooks/useAgents";
 import { useWebSocket } from "../api/websocket";
@@ -40,6 +40,10 @@ export default function ProjectView() {
   const [createTaskOpen, setCreateTaskOpen] = useState(false);
   const [gateBanner, setGateBanner] = useState<GateBannerEntry | null>(null);
   const [spawnFailures, setSpawnFailures] = useState<SpawnFailedEntry[]>([]);
+  const [relaunchOpen, setRelaunchOpen] = useState(false);
+  const [relaunchInput, setRelaunchInput] = useState("");
+  const [relaunching, setRelaunching] = useState(false);
+  const [relaunchMsg, setRelaunchMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
   const { tasks, create: createTask } = useTasks(id);
   const { instances, terminate } = useAgents();
   const expandedId = searchParams.get("expanded") ?? undefined;
@@ -82,6 +86,21 @@ export default function ProjectView() {
     setGateBanner(null);
   }
 
+  async function onRelaunch() {
+    if (!id) return;
+    setRelaunching(true);
+    setRelaunchMsg(null);
+    try {
+      await runPipeline("phased-producer", id, relaunchInput || project?.goal || "");
+      setRelaunchMsg({ kind: "ok", text: "phased-producer launched — tasks queued." });
+      setRelaunchInput("");
+    } catch (e) {
+      setRelaunchMsg({ kind: "err", text: e instanceof Error ? e.message : String(e) });
+    } finally {
+      setRelaunching(false);
+    }
+  }
+
   if (!id) return null;
 
   const projectInstances = instances.filter((i) => i.project_id === id);
@@ -102,15 +121,57 @@ export default function ProjectView() {
           className="rounded-2xl border border-border bg-bg-card p-6"
           style={{ boxShadow: "rgba(0,0,0,0.03) 0px 2px 4px" }}
         >
-          <h1 className="text-[28px] font-semibold tight-display">{project.name}</h1>
-          <p className="mt-1.5 text-sm text-text-muted">{project.description}</p>
-          <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-text-muted">
-            <span className="badge badge-running">{project.tech_stack}</span>
-            {project.goal && <span>Goal: {project.goal}</span>}
-            {project.require_roster_approval && (
-              <span className="badge badge-assigned">roster approval</span>
-            )}
+          <div className="flex items-start justify-between gap-4">
+            <div className="min-w-0">
+              <h1 className="text-[28px] font-semibold tight-display">{project.name}</h1>
+              <p className="mt-1.5 text-sm text-text-muted">{project.description}</p>
+              <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-text-muted">
+                <span className="badge badge-running">{project.tech_stack}</span>
+                {project.goal && <span>Goal: {project.goal}</span>}
+                {project.require_roster_approval && (
+                  <span className="badge badge-assigned">roster approval</span>
+                )}
+              </div>
+            </div>
+            <button
+              onClick={() => setRelaunchOpen((v) => !v)}
+              className="btn-ghost shrink-0"
+              title="Re-run phased-producer with custom input"
+            >
+              {relaunchOpen ? "Cancel" : "↻ Relaunch"}
+            </button>
           </div>
+
+          {relaunchOpen && (
+            <div className="mt-4 rounded-xl border border-border-strong bg-bg-subtle p-4">
+              <p className="mono-label mb-2">Relaunch phased-producer</p>
+              <textarea
+                rows={2}
+                value={relaunchInput}
+                onChange={(e) => setRelaunchInput(e.target.value)}
+                placeholder={project.goal ? `Leave blank to reuse goal: "${project.goal}"` : "Game concept (fills {input})"}
+                className="w-full rounded-2xl border border-border-strong bg-white px-4 py-2 text-sm outline-none placeholder:text-text-subtle focus:border-accent"
+              />
+              <div className="mt-3 flex items-center gap-2">
+                <button onClick={onRelaunch} disabled={relaunching} className="btn-primary">
+                  {relaunching ? "Launching…" : "Launch"}
+                </button>
+                {relaunchMsg && (
+                  <span
+                    className="text-xs"
+                    style={{
+                      color:
+                        relaunchMsg.kind === "ok"
+                          ? "var(--color-accent-hover)"
+                          : "var(--color-danger)",
+                    }}
+                  >
+                    {relaunchMsg.text}
+                  </span>
+                )}
+              </div>
+            </div>
+          )}
         </div>
       )}
 

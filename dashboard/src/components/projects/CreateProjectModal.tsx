@@ -4,7 +4,7 @@ import type { ProjectCreate } from "../../types/api";
 interface Props {
   open: boolean;
   onClose: () => void;
-  onCreate: (data: ProjectCreate) => Promise<void>;
+  onCreate: (data: ProjectCreate, opts: { autoLaunch: boolean }) => Promise<void>;
 }
 
 export default function CreateProjectModal({ open, onClose, onCreate }: Props) {
@@ -14,6 +14,7 @@ export default function CreateProjectModal({ open, onClose, onCreate }: Props) {
   const [goal, setGoal] = useState("");
   const [createRepo, setCreateRepo] = useState(false);
   const [rosterApproval, setRosterApproval] = useState(true);
+  const [autoLaunch, setAutoLaunch] = useState(true);
   const [submitting, setSubmitting] = useState(false);
 
   if (!open) return null;
@@ -21,14 +22,17 @@ export default function CreateProjectModal({ open, onClose, onCreate }: Props) {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setSubmitting(true);
-    await onCreate({
-      name,
-      description,
-      tech_stack: techStack,
-      goal: goal || undefined,
-      create_repo: createRepo,
-      require_roster_approval: rosterApproval,
-    });
+    await onCreate(
+      {
+        name,
+        description,
+        tech_stack: techStack,
+        goal: goal || undefined,
+        create_repo: createRepo,
+        require_roster_approval: rosterApproval,
+      },
+      { autoLaunch },
+    );
     setSubmitting(false);
     setName(""); setDescription(""); setGoal("");
     onClose();
@@ -81,11 +85,22 @@ export default function CreateProjectModal({ open, onClose, onCreate }: Props) {
         <label className="flex items-center gap-2 text-sm text-text-muted">
           <input
             type="checkbox"
+            checked={autoLaunch}
+            onChange={(e) => setAutoLaunch(e.target.checked)}
+            className="rounded border-border"
+          />
+          <span>
+            Auto-launch <span className="font-medium text-text">phased-producer</span> pipeline on create
+          </span>
+        </label>
+        <label className="flex items-center gap-2 text-sm text-text-muted">
+          <input
+            type="checkbox"
             checked={createRepo}
             onChange={(e) => setCreateRepo(e.target.checked)}
             className="rounded border-border"
           />
-          Create private GitHub repo now (linnana8888888) — usually leave off and use Publish later
+          Create private GitHub repo now (linnana8888888)
         </label>
         <label className="flex items-center gap-2 text-sm text-text-muted">
           <input
@@ -101,7 +116,7 @@ export default function CreateProjectModal({ open, onClose, onCreate }: Props) {
             Cancel
           </button>
           <button type="submit" disabled={!name || submitting} className="btn-primary">
-            {submitting ? "Creating…" : "Create project"}
+            {submitting ? "Creating…" : autoLaunch ? "Create & launch" : "Create project"}
           </button>
         </div>
       </form>

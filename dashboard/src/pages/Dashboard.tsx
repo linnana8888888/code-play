@@ -7,12 +7,12 @@ import ActivityFeed from "../components/activity/ActivityFeed";
 import AgentRoster from "../components/agents/AgentRoster";
 import InstanceList from "../components/agents/InstanceList";
 import GovernancePanel from "../components/governance/GovernancePanel";
-import PipelineLauncher from "../components/pipelines/PipelineLauncher";
 import TaskBoard from "../components/tasks/TaskBoard";
 import CreateTaskModal from "../components/tasks/CreateTaskModal";
 import { useProjects } from "../hooks/useProjects";
 import { useAgents } from "../hooks/useAgents";
 import { useTasks } from "../hooks/useTasks";
+import { runPipeline } from "../api/client";
 
 const tabs = ["overview", "agents", "tasks", "governance"] as const;
 type Tab = (typeof tabs)[number];
@@ -67,7 +67,6 @@ export default function Dashboard() {
             </div>
             <ActivityFeed />
           </div>
-          <PipelineLauncher projects={projects} />
         </>
       )}
 
@@ -133,7 +132,17 @@ export default function Dashboard() {
       <CreateProjectModal
         open={createOpen}
         onClose={() => setCreateOpen(false)}
-        onCreate={async (data) => { await create(data); }}
+        onCreate={async (data, opts) => {
+          const p = await create(data);
+          if (opts.autoLaunch) {
+            try {
+              await runPipeline("phased-producer", p.id, data.goal ?? data.description ?? "");
+            } catch (e) {
+              console.error("auto-launch phased-producer failed", e);
+              alert(`Project created, but pipeline launch failed: ${e instanceof Error ? e.message : e}`);
+            }
+          }
+        }}
       />
     </div>
   );

@@ -14,6 +14,73 @@ name set and aggregate whitelist from this file. If you edit §2 or the
 aggregate list in §3, update `contract.py` in the same commit and rerun
 `tests/test_iteration_contract.py` — the test locks the vocabulary.
 
+## 1a. `window.GameAPI` — the bot ↔ game contract (mandatory)
+
+Every code-play game artifact **must** expose `window.GameAPI` on its entry
+HTML before `playtest_bot.mjs` is asked to drive it. The bot never reaches into
+game internals (`window.__game.game.*`, DOM ids, …). It drives and reads the
+game **only through this interface**, so a bot built for one artifact can drive
+any other artifact without changes.
+
+```ts
+window.GameAPI = {
+  version: 1,
+
+  /**
+   * Begin a run. MUST resolve once `getState() === 'play'` is guaranteed
+   * (the first input tick after the player entity exists). Seed is optional
+   * but, if honored, makes runs reproducible for A/B postmortems.
+   */
+  start(opts?: { seed?: number }): Promise<void>,
+
+  /**
+   * One of 'title' | 'play' | 'picker' | 'paused' | 'win' | 'gameover'.
+   * 'picker' means a modal (level-up / modifier / upgrade) is open and the
+   * bot should call pickCard(i) instead of issuing gameplay input.
+   */
+  getState(): 'title' | 'play' | 'picker' | 'paused' | 'win' | 'gameover',
+
+  /**
+   * Everything the bot needs to fill telemetry without DOM scraping. Shape:
+   *
+   *   {
+   *     schemaVersion: 1,
+   *     state, pickerOpen, score, hiScore,
+   *     level:    { idx, name },
+   *     xp:       { level, gained },
+   *     counters: { shots, hits, kills, bossHits, bossKills, dashes, pickups, ... },
+   *     events:   [ {t, type, ...}, ... ],   // last 400
+   *     mag?, combo?                         // game-specific extras allowed
+   *   }
+   *
+   * Games without a given counter omit the key (bot treats missing as 0).
+   * Counters MUST cover every metric GOALS.md refs in §2 — there is no other
+   * way for the bot to observe them without reverse-engineering internals.
+   */
+  getSnapshot(): GameSnapshot,
+
+  /**
+   * Click the `idx`-th card in an open picker modal. Returns false if no
+   * picker is up. Present even when the game has no picker flow — callers
+   * can no-op.
+   */
+  pickCard(idx: number): boolean,
+
+  /** Optional teardown. Default implementation may be empty. */
+  stop?(): void,
+}
+```
+
+**Why a separate API and not just `__game`?** `__game` is free-form dev
+inspection — its shape drifts with refactors and differs per game. `GameAPI`
+is a stable, versioned contract the bot + analytics can rely on. Games should
+keep `__game` for dev panels but route every bot interaction through
+`GameAPI`.
+
+**Bump `version`** whenever the snapshot shape or method signatures change.
+Old bots detect the bump and should refuse to run rather than emit silently
+broken telemetry.
+
 ## 1. Telemetry schema (what `playtest_bot.mjs` writes per run)
 
 File: `<artifact_repo>/telemetry/<iso8601>-<run-id>.json`

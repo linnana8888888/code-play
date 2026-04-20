@@ -198,6 +198,9 @@ human
 ├── producer (orchestrates all pipelines)
 ├── creative-director (creative authority, reviews at 3 create gates + 1 iterate gate)
 │   ├── game-designer (mechanics, balance, systems)
+│   ├── ux-designer (experience architecture, interaction patterns, accessibility)
+│   │   ├── hud-designer (screen layouts, touch targets, HUD elements)
+│   │   └── screen-flow-designer (state machine, transitions, input binding)
 │   ├── technical-artist (visual identity, asset selection)
 │   └── style-researcher (reference gathering, competitive positioning)
 ├── technical-director (architecture authority, escalation target)
@@ -215,7 +218,7 @@ human
 │   └── telemetry-engineer (event specs, instrumentation design)
 ├── publisher (packaging, listing, deployment, liveness)
 ├── rapid-prototyper (iteration scaffolding)
-└── hud-designer (HUD/UX proposals in iterate)
+└── hud-designer (HUD/UX proposals in iterate — also reports to ux-designer for spec work)
 ```
 
 ## Conflict Resolution
@@ -238,6 +241,7 @@ They are available for ad-hoc use, future pipelines, or pipeline enrichment.
 ### Design Agents
 | Agent | Purpose | Pipeline Opportunity |
 |-------|---------|---------------------|
+| ux-designer | Player experience architecture — info hierarchy, interaction patterns, onboarding, accessibility. Delegates to hud-designer + screen-flow-designer | Add between mechanics and style-research (produces `ux_spec_v1` that feeds hud-designer + screen-flow-designer) |
 | juice-polisher | Screen shake, particles, hit-stop, feedback signals | Add as step between build and QA, or as iterate proposer |
 | screen-flow-designer | Screen flow diagrams, navigation architecture | Add to concept or mechanics phase for UI-heavy games |
 | player-researcher | Player interviews, competitive analysis, persona development | Pre-concept research phase |

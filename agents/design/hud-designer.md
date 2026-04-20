@@ -120,9 +120,9 @@ For each screen: name the DOM element id (web) or ScreenGui Frame name (Roblox),
 
 ## 🤝 Handoff
 
-- **Upstream:** `mechanics_v1` (HUD data), `laf_brief_v1` (palette + font).
+- **Upstream:** `ux_spec_v1` (information hierarchy — tier assignments + positions, feedback table), `mechanics_v1` (HUD data), `laf_brief_v1` (palette + font).
 - **Downstream:** `screen-flow-designer` (ties the six screens to the state machine), `frontend-developer` / `roblox-systems-scripter` (DOM/ScreenGui implementation), `juice-polisher` (adds the particle + screen-shake details).
-- **Review:** `code-reviewer` checks touch target sizes and focus ring implementation against this spec.
+- **Review:** `code-reviewer` checks touch target sizes and focus ring implementation against this spec. `ux-designer` validates that layouts match the information hierarchy.
 
 ## 💭 Communication Style
 

@@ -76,31 +76,38 @@ def _matches(path: str, pattern: str) -> bool:
     return fnmatch.fnmatch(path, pattern)
 
 
-def match_rules(text: str) -> str | None:
-    """Return assembled rules block for all paths mentioned in *text*, or None."""
+def match_rules(text: str, exclude_labels: set[str] | None = None) -> tuple[str | None, set[str]]:
+    """Return (rules_block, matched_labels) for paths mentioned in *text*.
+
+    *exclude_labels* — labels already injected earlier in this run. Matched
+    rules with these labels are skipped so the agent never sees duplicates.
+
+    Returns (None, empty_set) when nothing new matches.
+    """
     _load()
     if not _rule_sets:
-        return None
+        return None, set()
 
     paths = _extract_paths(text)
     if not paths:
-        return None
+        return None, set()
 
-    matched_labels: set[str] = set()
+    skip = exclude_labels or set()
+    new_labels: set[str] = set()
     blocks: list[str] = []
 
     for rule_set in _rule_sets:
-        if rule_set.label in matched_labels:
+        if rule_set.label in skip or rule_set.label in new_labels:
             continue
         for p in paths:
             if _matches(p, rule_set.pattern):
-                matched_labels.add(rule_set.label)
+                new_labels.add(rule_set.label)
                 blocks.append(rule_set.rules)
                 break
 
     if not blocks:
-        return None
+        return None, set()
 
     header = "## Path-Scoped Rules (auto-injected)\n"
     header += "The following rules apply because your task references files in these areas:\n"
-    return header + "\n\n".join(blocks)
+    return header + "\n\n".join(blocks), new_labels

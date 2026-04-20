@@ -86,6 +86,9 @@ class AgentRuntime:
             except Exception as e:
                 logger.warning(f"[{instance.id}] Workspace creation failed (non-fatal): {e}")
 
+        # Track which path-scoped rule labels have been injected (avoids duplicates)
+        self._injected_path_labels: set[str] = set()
+
         # Resume from saved session or build fresh conversation
         if session_id:
             saved = session_store.load(session_id)
@@ -196,6 +199,19 @@ class AgentRuntime:
                         "content": result.content,
                     })
 
+                # Mid-loop path-scoped rule injection — scan tool results for
+                # new file paths and inject any rule sets not seen yet.
+                tool_text = "\n".join(r.content for r in tool_results if r.content)
+                new_rules, new_labels = match_path_rules(
+                    tool_text, exclude_labels=self._injected_path_labels
+                )
+                if new_rules:
+                    self._injected_path_labels |= new_labels
+                    conversation.append({
+                        "role": "system",
+                        "content": new_rules,
+                    })
+
                 # Persist session after each tool iteration
                 try:
                     session_id = session_store.save(
@@ -279,9 +295,10 @@ class AgentRuntime:
             for msg in context_messages:
                 if isinstance(msg.get("content"), str):
                     path_rules_text += "\n" + msg["content"]
-        path_rules = match_path_rules(path_rules_text)
+        path_rules, initial_labels = match_path_rules(path_rules_text)
         if path_rules:
             system_content += f"\n\n{path_rules}"
+        self._injected_path_labels = initial_labels
 
         messages.append({"role": "system", "content": system_content})
 

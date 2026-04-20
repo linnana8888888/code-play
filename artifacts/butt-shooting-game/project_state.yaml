@@ -1,0 +1,121 @@
+slug: butt-shooting-game
+pipeline: phased-producer
+current_phase: publish
+current_agent: publisher
+phase_status: complete
+last_transition_at: 2026-04-19T17:45:00Z
+next_expected_agent: null
+gates_passed:
+  - gate-concept
+  - gate-mechanics
+  - gate-laf
+  - gate-tech
+  - gate-qa
+  - gate-publish
+gates_pending: []
+artifacts_complete:
+  concept_options_v1:
+    at: 2026-04-18T10:00:00Z
+    note: retrofit — not measured
+  mechanics_v1:
+    at: 2026-04-18T10:30:00Z
+    note: retrofit — not measured
+  style_research_v1:
+    at: 2026-04-18T11:00:00Z
+    note: retrofit — not measured
+  laf_brief_v1:
+    at: 2026-04-18T11:30:00Z
+    note: retrofit — not measured
+  tech_plan_v1:
+    at: 2026-04-18T12:00:00Z
+    note: retrofit — not measured
+  game_html_v2:
+    at: 2026-04-18T14:00:00Z
+    ref: eb4b0da
+    branch: v2
+    note: v2 shipped (initial HTML build + playtest harness)
+  game_html_v3:
+    at: 2026-04-19T12:00:00Z
+    ref: c1fa6d8
+    branch: v3
+    shipped_as: Cheekshot
+    note: split modules, published to itch.io
+  game_html_v4:
+    at: 2026-04-19T17:45:00Z
+    ref: 2cb373a
+    branch: v4
+    shipped_as: Cheekshot
+    itch_build: 1623921
+    note: v4 cycle2 complete (13/13 playtest_v4 + 8/8 playtest_new_ideas pass)
+  qa_report_v4:
+    at: 2026-04-19T17:30:00Z
+    note: retrofit — 13/13 + 8/8 test checks pass
+  publish_manifest_v4:
+    at: 2026-04-19T17:45:00Z
+    path: publish/cheekshot/publish_manifest_v4.json
+    note: itch.io live at https://linnana8888888.itch.io/cheekshot
+artifacts_pending: []
+validation_failures: []
+blockers: []
+history:
+  - phase: concept
+    at: 2026-04-18T10:00:00Z
+    agent: game-designer
+    outcome: pass
+  - phase: mechanics
+    at: 2026-04-18T10:30:00Z
+    agent: game-designer
+    outcome: pass
+  - phase: style-research
+    at: 2026-04-18T11:00:00Z
+    agent: technical-artist
+    outcome: pass
+  - phase: look-and-feel
+    at: 2026-04-18T11:30:00Z
+    agent: technical-artist
+    outcome: pass
+  - phase: tech-plan
+    at: 2026-04-18T12:00:00Z
+    agent: tech-lead
+    outcome: pass
+  - phase: build
+    at: 2026-04-18T14:00:00Z
+    agent: frontend-developer
+    outcome: pass
+    note: v2 shipped as initial HTML build
+  - phase: qa-playtest
+    at: 2026-04-18T15:00:00Z
+    agent: qa-engineer
+    outcome: pass
+  - phase: review
+    at: 2026-04-19T11:00:00Z
+    agent: code-reviewer
+    outcome: pass
+  - phase: build
+    at: 2026-04-19T12:00:00Z
+    agent: frontend-developer
+    outcome: pass
+    note: v3 split modules + analytics
+  - phase: publish
+    at: 2026-04-19T12:30:00Z
+    agent: publisher
+    outcome: pass
+    note: v3 published to itch.io as "Cheekshot" (build 1623215)
+  - phase: build
+    at: 2026-04-19T17:00:00Z
+    agent: frontend-developer
+    outcome: pass
+    note: v4 cycle2 (XP smoothing, warmup dummies, breadcrumb beacon, outfit overlay, diversity guarantee)
+  - phase: qa-playtest
+    at: 2026-04-19T17:30:00Z
+    agent: qa-engineer
+    outcome: pass
+    note: 13/13 playtest_v4 + 8/8 playtest_new_ideas
+  - phase: publish
+    at: 2026-04-19T17:45:00Z
+    agent: publisher
+    outcome: complete
+    note: v4 pushed to same "Cheekshot" listing (build 1623921)
+retrofit:
+  created_at: 2026-04-19T18:00:00Z
+  reason: "initial population after project_state.yaml infrastructure added — backfilled from games/butt-shooting-game.yaml + publish_manifest_v4.json + docs/published-games.md"

@@ -10,6 +10,8 @@ pipelines:
         agent: game-designer
         task: "Draft 3 distinct concept directions for: {input}. For each: one-line pitch, core loop (2-3 sentences), target feel. Save to memory as artifact key 'concept_options_v1'."
         output: concepts
+        expected_outputs:
+          - {kind: memory_key, type: artifact, key: concept_options_v1, min_bytes: 500}
 
       - id: gate-concept
         type: human-gate
@@ -22,6 +24,8 @@ pipelines:
         depends_on: [gate-concept]
         task: "Expand the approved concept (memory key: concept_options_v1, see review notes for chosen direction) into a mechanics doc: player verbs, progression, win/lose conditions, 2-3 signature systems. Save to memory as artifact key 'mechanics_v1'."
         output: mechanics
+        expected_outputs:
+          - {kind: memory_key, type: artifact, key: mechanics_v1, min_bytes: 500}
 
       - id: gate-mechanics
         type: human-gate
@@ -47,6 +51,8 @@ pipelines:
             - "Don't do this" list: 3-5 anti-patterns to avoid.
           Save to memory as artifact key 'style_research_v1'.
         output: style_research
+        expected_outputs:
+          - {kind: memory_key, type: artifact, key: style_research_v1, min_bytes: 800}
 
       - id: look-and-feel
         agent: technical-artist
@@ -72,6 +78,8 @@ pipelines:
                  - References (list the asset_ids).
           Save the final brief to memory as artifact key 'laf_brief_v1'.
         output: look_and_feel
+        expected_outputs:
+          - {kind: memory_key, type: artifact, key: laf_brief_v1, min_bytes: 600}
 
       - id: gate-laf
         type: human-gate
@@ -95,6 +103,8 @@ pipelines:
               state } so the QA step can assert state.
           Keep it to ≤ 1 page. Save to memory as artifact key 'tech_plan_v1'.
         output: tech_plan
+        expected_outputs:
+          - {kind: memory_key, type: artifact, key: tech_plan_v1, min_bytes: 400}
 
       - id: gate-tech
         type: human-gate
@@ -121,6 +131,8 @@ pipelines:
 
           Save the final HTML to memory as artifact key 'game_html_v1'.
         output: code
+        expected_outputs:
+          - {kind: memory_key, type: artifact, key: game_html_v1, min_bytes: 2000}
 
       - id: instrument
         agent: telemetry-engineer
@@ -145,6 +157,9 @@ pipelines:
             { events: [{name, fires_when, payload_keys, sample_rate}],
               endpoint, session_id_strategy, kid_safety_notes }.
         output: telemetry_spec
+        expected_outputs:
+          - {kind: memory_key, type: artifact, key: telemetry_spec_v1, min_bytes: 300}
+          - {kind: memory_key, type: artifact, key: game_html_v1, min_bytes: 2000}
 
       - id: qa-playtest
         agent: qa-engineer
@@ -164,6 +179,8 @@ pipelines:
           Save a structured report to memory as 'qa_report_v1':
             { verdict: pass|fail, checks: [{name, pass, evidence_path, note}], console_errors: […] }.
         output: qa_report
+        expected_outputs:
+          - {kind: memory_key, type: artifact, key: qa_report_v1, min_bytes: 300}
 
       - id: gate-qa
         type: human-gate
@@ -177,8 +194,10 @@ pipelines:
       - id: review
         agent: code-reviewer
         depends_on: [gate-qa]
-        task: "Lint report only — review the prototype (memory key: game_html_v1) for bugs, performance, security. QA already validated gameplay; this is for code-quality concerns only."
+        task: "Lint report only — review the prototype (memory key: game_html_v1) for bugs, performance, security. QA already validated gameplay; this is for code-quality concerns only. Save findings as memory artifact key 'code_review_v1'."
         output: review
+        expected_outputs:
+          - {kind: memory_key, type: artifact, key: code_review_v1, min_bytes: 200}
 
       - id: scaffold-iteration
         agent: rapid-prototyper
@@ -209,6 +228,8 @@ pipelines:
 
           Save a one-line report as memory artifact key 'iteration_scaffold_v1'.
         output: iteration_scaffold
+        expected_outputs:
+          - {kind: memory_key, type: artifact, key: iteration_scaffold_v1, min_bytes: 50}
 
       - id: dashboard-init
         agent: metrics-dashboard-builder
@@ -235,6 +256,9 @@ pipelines:
           Save to memory: 'metrics_store_spec_v1' (DDL + rollup contract) and
           'dashboard_html_v1' (path to the committed file).
         output: dashboard
+        expected_outputs:
+          - {kind: memory_key, type: artifact, key: metrics_store_spec_v1, min_bytes: 100}
+          - {kind: memory_key, type: artifact, key: dashboard_html_v1, min_bytes: 50}
 
       - id: blurb
         agent: analytics-reporter
@@ -251,6 +275,8 @@ pipelines:
           Save as 'publish_blurb_v1'. The publisher will paste this into the
           itch long-desc intro.
         output: blurb
+        expected_outputs:
+          - {kind: memory_key, type: artifact, key: publish_blurb_v1, min_bytes: 100}
 
       - id: publish-prep
         agent: publisher
@@ -296,6 +322,8 @@ pipelines:
 
           DO NOT PUBLISH. Stop here and wait for gate-publish.
         output: publish_plan
+        expected_outputs:
+          - {kind: memory_key, type: artifact, key: publish_plan_v1, min_bytes: 400}
 
       - id: gate-publish
         type: human-gate
@@ -335,6 +363,8 @@ pipelines:
           Post ONE message to the project channel: "🎪 Shipped: <title> — <primary_url>
           — <live_screenshot>". Nothing else.
         output: manifest
+        expected_outputs:
+          - {kind: memory_key, type: artifact, key: publish_manifest_v1, min_bytes: 200}
 
   iterate_artifact:
     name: "Iterate on an existing game (playtest → postmortem → propose → implement, looped)"
@@ -371,6 +401,8 @@ pipelines:
           Required memory output: artifact key `telemetry_{{iteration_tag}}`
           (written by the tool).
         output: telemetry
+        expected_outputs:
+          - {kind: memory_key, type: artifact, key: "telemetry_{{iteration_tag}}", min_bytes: 100}
 
       - id: dashboard-refresh
         agent: metrics-dashboard-builder
@@ -389,6 +421,8 @@ pipelines:
           the task with a clear message — don't silently skip; the phased-
           producer pipeline should have set this up.
         output: dashboard_refresh
+        expected_outputs:
+          - {kind: memory_key, type: artifact, key: "metrics_store_refresh_v{{cycle_n}}", min_bytes: 40}
 
       - id: feedback-synthesis
         agent: player-feedback-synthesizer
@@ -411,6 +445,8 @@ pipelines:
 
           Save as 'player_feedback_v{{cycle_n}}'.
         output: player_feedback
+        expected_outputs:
+          - {kind: memory_key, type: artifact, key: "player_feedback_v{{cycle_n}}", min_bytes: 40}
 
       - id: postmortem
         agent: analytics-reporter
@@ -442,6 +478,8 @@ pipelines:
 
           Save to memory as artifact 'postmortem_{{iteration_tag}}'.
         output: postmortem
+        expected_outputs:
+          - {kind: memory_key, type: artifact, key: "postmortem_{{iteration_tag}}", min_bytes: 600}
 
       # Four proposers fan out in parallel — deliberately no depends_on between
       # them. Each reads the same postmortem and pitches one change.
@@ -484,6 +522,8 @@ pipelines:
           Save the JSON block verbatim (including fences) to artifact
           'proposal_designer_{{iteration_tag}}'.
         output: proposal_designer
+        expected_outputs:
+          - {kind: memory_key, type: artifact, key: "proposal_designer_{{iteration_tag}}", min_bytes: 400}
 
       - id: propose-ux
         agent: hud-designer
@@ -500,6 +540,8 @@ pipelines:
 
           Save to artifact 'proposal_ux_{{iteration_tag}}'.
         output: proposal_ux
+        expected_outputs:
+          - {kind: memory_key, type: artifact, key: "proposal_ux_{{iteration_tag}}", min_bytes: 400}
 
       - id: propose-artist
         agent: technical-artist
@@ -515,6 +557,8 @@ pipelines:
 
           Save to artifact 'proposal_artist_{{iteration_tag}}'.
         output: proposal_artist
+        expected_outputs:
+          - {kind: memory_key, type: artifact, key: "proposal_artist_{{iteration_tag}}", min_bytes: 400}
 
       - id: propose-proto
         agent: frontend-developer
@@ -530,6 +574,8 @@ pipelines:
 
           Save to artifact 'proposal_proto_{{iteration_tag}}'.
         output: proposal_proto
+        expected_outputs:
+          - {kind: memory_key, type: artifact, key: "proposal_proto_{{iteration_tag}}", min_bytes: 400}
 
       - id: synthesis_gate
         type: human-gate
@@ -606,6 +652,8 @@ pipelines:
 
           Save the JSON block verbatim to artifact 'implementation_plan_{{iteration_tag}}'.
         output: implementation_plan
+        expected_outputs:
+          - {kind: memory_key, type: artifact, key: "implementation_plan_{{iteration_tag}}", min_bytes: 400}
 
       # Human reviews the forecast, picks one of three decision paths.
       # Decision JSON lands in 'budget_decision_{{iteration_tag}}'. Approve
@@ -664,6 +712,8 @@ pipelines:
           task completes, the orchestrator fans out N implement-engineer tasks
           (one per split entry) that all depend on this brief + on budget_gate.
         output: implementation_brief
+        expected_outputs:
+          - {kind: memory_key, type: artifact, key: "implementation_brief_{{iteration_tag}}", min_bytes: 600}
 
       # Terminal step. Acts differently based on budget_decision.mode:
       #   - parallel   → waits for all implement-engineer-{i} tasks, merges
@@ -732,3 +782,5 @@ pipelines:
           relaunch the playtest step for cycle {{cycle_n_plus_1}} as soon as
           this task completes.
         output: build
+        expected_outputs:
+          - {kind: memory_key, type: artifact, key: "game_html_v{{cycle_n_plus_1}}", min_bytes: 2000}

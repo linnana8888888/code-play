@@ -33,7 +33,7 @@ from src.runtime.llm_router import router
 from src.runtime.tool_executor import tool_executor
 from src.runtime.agent_runtime import agent_runtime
 from src.runtime.session_store import session_store
-from src.runtime.task_validator import validate_outputs
+from src.runtime.task_validator import substitute_expected_outputs, validate_outputs
 from src.runtime.skill_registry import skill_registry
 from src.runtime.claude_bridge import discover as discover_claude_plugins
 from src.runtime.mcp_bridge import mcp_bridge
@@ -999,6 +999,11 @@ async def _maybe_relaunch_cyclic(project_id: str, pipeline_specs: dict) -> None:
                 for dep_name in step.get("depends_on", [])
                 if dep_name in created_tasks
             ]
+            step_expected = substitute_expected_outputs(
+                step.get("expected_outputs"),
+                iteration_tag=tag,
+                cycle_n=next_n,
+            )
             new_task = task_queue.create(TaskCreate(
                 project_id=project_id,
                 title=f"[{pname}] {step_id}",
@@ -1006,6 +1011,7 @@ async def _maybe_relaunch_cyclic(project_id: str, pipeline_specs: dict) -> None:
                 depends_on=deps,
                 created_by=f"pipeline:{pname}",
                 metadata=metadata,
+                expected_outputs=step_expected,
             ))
             created_tasks[step_id] = new_task.id
             if first_task_id is None:
@@ -1488,6 +1494,27 @@ async def run_pipeline(pipeline_name: str, body: PipelineRunBody):
     gated = _project_requires_roster_approval(project_id)
     batch_id = f"batch-{uuid.uuid4().hex[:10]}" if gated else None
 
+    # Stamp the on-disk project_state.yaml as soon as we know a pipeline is
+    # running. Other agents (producer persona, GPT, local Qwen) read this file
+    # to answer "what phase is <slug>?" without hitting the studio DB.
+    try:
+        from src.runtime.project_state import (
+            initial_state,
+            read_state,
+            resolve_state_path,
+            write_state,
+        )
+        first_phase = "concept"
+        steps_list = pipeline.get("steps") or []
+        if steps_list and steps_list[0].get("id"):
+            first_phase = steps_list[0]["id"]
+        state_path = resolve_state_path(project_id)
+        if read_state(state_path) is None:
+            write_state(state_path, initial_state(project_id, pipeline_name, first_phase))
+            logger.info(f"project_state.yaml stamped at {state_path}")
+    except Exception as exc:  # never block kickoff on a state-file write
+        logger.warning(f"project_state.yaml stamp failed for {project_id}: {exc}")
+
     cyclic = bool(pipeline.get("cyclic"))
     if cyclic:
         # Cyclic pipelines (iterate_artifact) cannot run without goals_md —
@@ -1533,6 +1560,12 @@ async def run_pipeline(pipeline_name: str, body: PipelineRunBody):
             if dep_name in created_tasks:
                 deps.append(created_tasks[dep_name])
 
+        step_expected = substitute_expected_outputs(
+            step.get("expected_outputs"),
+            iteration_tag="v1" if cyclic else None,
+            cycle_n=1 if cyclic else None,
+        )
+
         task = task_queue.create(TaskCreate(
             project_id=project_id,
             title=f"[{pipeline_name}] {step_id}",
@@ -1540,6 +1573,7 @@ async def run_pipeline(pipeline_name: str, body: PipelineRunBody):
             depends_on=deps,
             created_by=f"pipeline:{pipeline_name}",
             metadata=task_metadata,
+            expected_outputs=step_expected,
         ))
         created_tasks[step_id] = task.id
 
@@ -2109,6 +2143,12 @@ async def revise_gate(task_id: str, body: GateDecisionBody):
     revision_ids: list[str] = []
     new_deps = list(task.depends_on)
 
+    # Look up the original pipeline step so the revision inherits the same
+    # expected_outputs contract — otherwise the validator would no-op on
+    # revisions and we'd re-introduce the silent-success bug.
+    pipeline_cfg = _load_pipelines_yaml().get("pipelines", {}).get(ctx["pipeline"]) or {}
+    steps_by_id = {s["id"]: s for s in pipeline_cfg.get("steps") or [] if s.get("id")}
+
     for role_or_name, agent_type in targets:
         if is_synthesis:
             revise_desc = (
@@ -2120,6 +2160,7 @@ async def revise_gate(task_id: str, body: GateDecisionBody):
                 f"'proposal_{role_or_name}_{tag or '{{iteration_tag}}'}'."
             )
             title = f"[{ctx['pipeline']}] propose-{role_or_name}-revision"
+            original_step_id = f"propose-{role_or_name}"
         else:
             revise_desc = (
                 f"Revise the previous {ctx.get('review_of')} output based on human feedback:\n\n"
@@ -2127,6 +2168,20 @@ async def revise_gate(task_id: str, body: GateDecisionBody):
                 "Update the same memory artifact keys the original step wrote to."
             )
             title = f"[{ctx['pipeline']}] {ctx.get('review_of')}-revision"
+            original_step_id = ctx.get("review_of") or ""
+
+        original_step = steps_by_id.get(original_step_id) or {}
+        cycle_n_int = None
+        if ctx.get("cycle_n") is not None:
+            try:
+                cycle_n_int = int(ctx["cycle_n"])
+            except (TypeError, ValueError):
+                cycle_n_int = None
+        revision_expected = substitute_expected_outputs(
+            original_step.get("expected_outputs"),
+            iteration_tag=tag,
+            cycle_n=cycle_n_int,
+        )
 
         revision = task_queue.create(TaskCreate(
             project_id=task.project_id,
@@ -2135,6 +2190,7 @@ async def revise_gate(task_id: str, body: GateDecisionBody):
             assignee_type=agent_type,
             created_by=f"pipeline:{ctx['pipeline']}",
             model_override=task.model_override,
+            expected_outputs=revision_expected,
         ))
         revision_ids.append(revision.id)
         new_deps.append(revision.id)

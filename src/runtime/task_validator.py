@@ -28,6 +28,42 @@ from src.memory.project_memory import ProjectMemory
 _log = logging.getLogger(__name__)
 
 
+def substitute_expected_outputs(
+    expected: list[dict] | None,
+    *,
+    iteration_tag: str | None = None,
+    cycle_n: int | None = None,
+) -> list[dict] | None:
+    """Substitute `{{iteration_tag}}`, `{{cycle_n}}`, `{{cycle_n_plus_1}}` in
+    every string field of each expected_output entry.
+
+    Pipelines declare keys like `"telemetry_{{iteration_tag}}"` in
+    config/pipelines.yaml; this helper renders them for a concrete task before
+    the contract is stored on TaskCreate.
+    """
+    if not expected:
+        return expected
+    subs = {}
+    if iteration_tag is not None:
+        subs["{{iteration_tag}}"] = str(iteration_tag)
+    if cycle_n is not None:
+        subs["{{cycle_n}}"] = str(cycle_n)
+        subs["{{cycle_n_plus_1}}"] = str(int(cycle_n) + 1)
+    if not subs:
+        return [dict(e) for e in expected]
+
+    rendered: list[dict] = []
+    for entry in expected:
+        new_entry: dict = {}
+        for k, v in entry.items():
+            if isinstance(v, str):
+                for needle, value in subs.items():
+                    v = v.replace(needle, value)
+            new_entry[k] = v
+        rendered.append(new_entry)
+    return rendered
+
+
 def validate_outputs(
     task: Task,
     project_memory: ProjectMemory,

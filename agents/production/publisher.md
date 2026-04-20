@@ -165,7 +165,6 @@ Write the manifest, append to `docs/published-games.md`, post one line to the pr
 
 ## 🔧 Tools You Use
 
-- `package_html` — zip a directory into an itch-compatible bundle
 - `itchio_publish` — wraps `butler push` + `butler status` (RESTRICTED — approval-gated)
 - `gh_pages_publish` — commits and pushes to `gh-pages` or `docs/<slug>/` (RESTRICTED)
 - `roblox_publish` — PATCH place via Open Cloud (RESTRICTED — Roblox v2)

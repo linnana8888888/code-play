@@ -37,7 +37,15 @@ class AgentRegistry:
             self._builtin_tools = list(gov.get("builtin", [])) + list(gov.get("pre_approved", []))
 
     def _expand_tools(self, tools: list[str]) -> list[str]:
-        """Expand the `builtin` shorthand to the full governance builtin+pre_approved list."""
+        """Expand shorthands into concrete tool names.
+
+        - `builtin` expands eagerly to the governance builtin+pre_approved list.
+        - `mcp` is preserved as a literal sentinel. MCP tools are discovered
+          asynchronously after boot (`main.py` kicks `mcp_bridge.discover_tools()`
+          well after `registry.load_agents()`), so the live list isn't known here.
+          `AgentRuntime._get_agent_tools()` resolves the sentinel at prompt-build
+          time against `mcp_bridge.tools` so every agent sees the full surface.
+        """
         if not tools:
             return []
         out: list[str] = []

@@ -266,11 +266,23 @@ class AgentRuntime:
         elif project_id:
             system_content += f"\n\n[Project ID: {project_id}]"
 
-        # Inject approved skills
-        if defn.skills:
-            skill_content = skill_registry.get_injectable_content(defn.id, defn.skills)
+        # Inject approved skills. When an agent doesn't declare any, auto-seed
+        # from the builtin set (governance + plugin-discovered) so every agent
+        # matches the Claude Code CLI surface by default.
+        effective_skills = defn.skills or skill_registry.get_builtin_skills()
+        if effective_skills:
+            skill_content = skill_registry.get_injectable_content(defn.id, effective_skills)
             if skill_content:
                 system_content += f"\n\n{skill_content}"
+
+        # Always attach the skill catalog so the agent knows which ids
+        # `skill_invoke(...)` accepts even when the full body wasn't injected.
+        catalog = skill_registry.catalog_for_prompt()
+        if catalog:
+            system_content += (
+                "\n\n## Available skills (invoke via `skill_invoke(skill_id)`):\n"
+                + catalog
+            )
 
         messages.append({"role": "system", "content": system_content})
 
@@ -284,11 +296,38 @@ class AgentRuntime:
         return messages
 
     def _get_agent_tools(self, defn: AgentDefinition) -> list[dict]:
-        """Get tool schemas this agent is allowed to use."""
+        """Get tool schemas this agent is allowed to use.
+
+        Resolves the `"mcp"` sentinel against the live `mcp_bridge` catalog so
+        agents spawned after async MCP discovery completes see every discovered
+        plugin tool (figma, playwright, qmd, …). The sentinel is preserved in
+        `defn.tools` by `AgentRegistry._expand_tools` precisely because the
+        catalog is empty when definitions load.
+        """
         if defn.tools:
-            return tool_executor.get_tool_schemas(defn.tools)
+            resolved = self._resolve_mcp_sentinel(defn.tools)
+            return tool_executor.get_tool_schemas(resolved)
         # Default: all builtin tools
         return tool_executor.get_tool_schemas()
+
+    @staticmethod
+    def _resolve_mcp_sentinel(tools: list[str]) -> list[str]:
+        if "mcp" not in tools:
+            return tools
+        from src.runtime.mcp_bridge import mcp_bridge
+        live = list(mcp_bridge.tools.keys())
+        out: list[str] = []
+        seen: set[str] = set()
+        for t in tools:
+            if t == "mcp":
+                for name in live:
+                    if name not in seen:
+                        out.append(name)
+                        seen.add(name)
+            elif t not in seen:
+                out.append(t)
+                seen.add(t)
+        return out
 
     def _response_to_message(self, response: LLMResponse) -> dict:
         """Convert LLM response to a conversation message."""

@@ -122,6 +122,33 @@ class SkillRegistry:
     def list_skills(self) -> list[SkillDefinition]:
         return sorted(self._skills.values(), key=lambda s: s.id)
 
+    def get_builtin_skills(self) -> list[str]:
+        """Return sorted IDs of every auto-approved skill.
+
+        Combines governance-marked `builtin_skills` with skills discovered from
+        `~/.claude` (user + enabled plugins) via `load_claude_plugin_skills`.
+        Agents without explicit `skills:` frontmatter auto-seed from this list
+        so they match the Claude Code CLI surface.
+        """
+        return sorted(self._builtin_skills)
+
+    def catalog_for_prompt(self, max_desc_chars: int = 120) -> str:
+        """One-line-per-skill catalog for system-prompt injection.
+
+        Lists every registered skill — not just builtins — so the agent knows
+        which `skill_invoke(<id>)` calls the governance layer will accept.
+        Non-builtin skills still go through the approval queue at call time.
+        Format: `- <id> — <description-truncated>`.
+        """
+        lines: list[str] = []
+        for skill in sorted(self._skills.values(), key=lambda s: s.id):
+            desc = (skill.description or "").strip().replace("\n", " ")
+            if len(desc) > max_desc_chars:
+                desc = desc[: max_desc_chars - 1].rstrip() + "…"
+            tag = "" if skill.id in self._builtin_skills else " [needs approval]"
+            lines.append(f"- {skill.id}{tag} — {desc}" if desc else f"- {skill.id}{tag}")
+        return "\n".join(lines)
+
     # --- Permission model ---
 
     def is_builtin(self, skill_id: str) -> bool:

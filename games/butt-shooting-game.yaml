@@ -41,3 +41,19 @@ versions:
       itch:     null
       gh_pages: null
       roblox:   null
+
+  - label: v6.1
+    ref: d09f232
+    branch: main
+    entry: index.html
+    status: active
+    released_at: null
+    notes: |
+      v5: mobile-friendly HUD + on-screen joystick + fire/reload/stomp buttons.
+      v6: responsive mobile browser adaptation — scaled touch controls, phone/landscape breakpoints.
+      v6.1: AudioContext resume fix for iOS Safari.
+      Full iteration infrastructure: GOALS.md (6 targets), playtest_bot.mjs, telemetry/, ITERATION_CONTRACT.md.
+    published:
+      itch:     null
+      gh_pages: null
+      roblox:   null

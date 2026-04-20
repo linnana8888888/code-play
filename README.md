@@ -4,6 +4,8 @@ An AI game studio where 34 specialized agents collaborate to build, playtest, an
 
 Not a framework. A studio. You describe a game, agents design it, build it, QA it, and publish it. You make the creative calls at human gates. They do the rest.
 
+![Code PLAY Dashboard](docs/images/dashboard.png)
+
 ## How it works
 
 ```

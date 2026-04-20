@@ -64,11 +64,7 @@ Agents route through **Anthropic** (Claude Opus/Sonnet), **OpenAI** (GPT-5), and
 | Pipeline | Purpose |
 |----------|---------|
 | `phased-producer` | Full game production: concept to live URL with human gates at every phase |
-| `phased-producer-race` | Same flow but fans out the build step to two models (GPT-5 vs Opus) — you pick the winner |
 | `iterate_artifact` | Cyclic improvement loop: playtest bot runs 5x → postmortem → 4 parallel proposals → you pick → implement → repeat |
-| `quick-prototype` | Fast spike from a one-liner — parallel art + build after design |
-| `new-game` | Minimal concept → prototype → review |
-| `roblox-experience` | Roblox-specific design → Luau scripting → review |
 
 ## The iteration loop
 

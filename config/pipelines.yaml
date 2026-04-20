@@ -17,9 +17,23 @@ pipelines:
         review_of: concept
         task: "Review the 3 concept directions. Pick one, request changes, or regenerate."
 
+      - id: cd-concept-check
+        agent: creative-director
+        depends_on: [gate-concept]
+        task: |
+          Read concept_options_v1 from memory (the human just approved one direction).
+          Evaluate against the Vision Articulation Framework:
+            1. Does the chosen concept deliver a compelling core fantasy?
+            2. Can you derive 3-5 falsifiable pillars from this direction?
+            3. Does the unique hook pass the "and also" test?
+            4. Is the target audience clear and the aesthetic direction age-appropriate?
+          Issue verdict: [CD-CONCEPT]: APPROVE | CONCERNS | REJECT
+          If CONCERNS: name the specific pillar or fantasy gap and suggest a fix.
+        output: cd_concept_verdict
+
       - id: mechanics
         agent: game-designer
-        depends_on: [gate-concept]
+        depends_on: [cd-concept-check]
         task: "Expand the approved concept (memory key: concept_options_v1, see review notes for chosen direction) into a mechanics doc: player verbs, progression, win/lose conditions, 2-3 signature systems. Save to memory as artifact key 'mechanics_v1'."
         output: mechanics
 
@@ -28,6 +42,21 @@ pipelines:
         depends_on: [mechanics]
         review_of: mechanics
         task: "Review the mechanics doc. Approve, or request changes with specific feedback."
+
+      - id: cd-mechanics-check
+        agent: creative-director
+        depends_on: [gate-mechanics]
+        task: |
+          Read mechanics_v1 + concept_options_v1 from memory.
+          Evaluate against pillars and player psychology:
+            1. Does the core loop serve the target MDA aesthetics?
+            2. Do micro/meso/macro loops create the intended emotional arc?
+            3. Is the difficulty curve shaped for flow state (sawtooth, not flat)?
+            4. Do the balance choices match the target player experience?
+            5. Is the tuning table complete with kid-appropriate ranges?
+          Issue verdict: [CD-MECHANICS]: APPROVE | CONCERNS | REJECT
+          If CONCERNS: name the specific MDA misalignment or flow-state gap.
+        output: cd_mechanics_verdict
 
       - id: style-research
         agent: style-researcher
@@ -79,9 +108,23 @@ pipelines:
         review_of: look-and-feel
         task: "Review the look-and-feel brief against the style research. Approve, or request changes."
 
+      - id: cd-laf-check
+        agent: creative-director
+        depends_on: [gate-laf]
+        task: |
+          Read laf_brief_v1 + style_research_v1 + concept_options_v1 from memory.
+          Evaluate visual/audio coherence with creative vision:
+            1. Does the visual direction reinforce the pillars?
+            2. Is there visual/audio coherence — does it feel like one game?
+            3. Are palette, proportions, and UI chrome age-appropriate for kids 6-12?
+            4. Does the art direction strengthen or weaken competitive positioning?
+          Issue verdict: [CD-LAF]: APPROVE | CONCERNS | REJECT
+          If CONCERNS: name the specific pillar-visual mismatch.
+        output: cd_laf_verdict
+
       - id: tech-plan
         agent: tech-lead
-        depends_on: [gate-laf]
+        depends_on: [cd-laf-check]
         task: |
           Read concept_options_v1 + mechanics_v1 + style_research_v1 + laf_brief_v1 from memory.
           Pick ONE engine from the project's tech_stack list (or infer from research if 3D is
@@ -122,9 +165,42 @@ pipelines:
           Save the final HTML to memory as artifact key 'game_html_v1'.
         output: code
 
+      - id: telemetry-spec
+        agent: telemetry-engineer
+        depends_on: [build]
+        task: |
+          Read mechanics_v1 + tech_plan_v1 + game_html_v1 from memory. Produce a
+          telemetry specification for this game's first release:
+            1. Map each player verb in mechanics_v1 to an event from the 8-event
+               catalogue (session_start, first_playable, tutorial_step_completed,
+               death, level_completed, item_acquired, session_end, custom).
+            2. For each event: define payload schema (properties, types, examples).
+            3. Identify 3-5 KPIs derivable from these events (session length,
+               tutorial completion rate, death rate per minute, etc.).
+            4. Specify the telemetry sink (telemetry/*.json files for local
+               iteration; analytics endpoint for production).
+          Save to memory as artifact key 'telemetry_spec_v1'.
+        output: telemetry_spec
+
+      - id: telemetry-instrument
+        agent: frontend-developer
+        depends_on: [telemetry-spec]
+        task: |
+          Read telemetry_spec_v1 + game_html_v1 from memory. Instrument the game
+          build with telemetry event calls matching the spec:
+            1. Add a lightweight emit function that writes events to the telemetry
+               sink defined in the spec (JSON file for local, fetch for remote).
+            2. Wire each specified event to its trigger point in game code.
+            3. Preserve window.__game test hook — telemetry must not break QA.
+            4. Verify: load the instrumented build, trigger one event, confirm
+               the JSON payload matches the spec schema.
+          Save the updated build to memory as artifact key 'game_html_v1'
+          (overwrite — the instrumented version IS the shipping version).
+        output: instrumented_code
+
       - id: qa-playtest
         agent: qa-engineer
-        depends_on: [build]
+        depends_on: [telemetry-instrument]
         task: |
           Read game_html_v1 + mechanics_v1 from memory. Launch the HTML in a headless browser
           via the playwright_browser tool. Verify:
@@ -320,9 +396,23 @@ pipelines:
         review_of: concept
         task: "Review the 3 concept directions. Pick one, request changes, or regenerate."
 
+      - id: cd-concept-check
+        agent: creative-director
+        depends_on: [gate-concept]
+        task: |
+          Read concept_options_v1 from memory (the human just approved one direction).
+          Evaluate against the Vision Articulation Framework:
+            1. Does the chosen concept deliver a compelling core fantasy?
+            2. Can you derive 3-5 falsifiable pillars from this direction?
+            3. Does the unique hook pass the "and also" test?
+            4. Is the target audience clear and the aesthetic direction age-appropriate?
+          Issue verdict: [CD-CONCEPT]: APPROVE | CONCERNS | REJECT
+          If CONCERNS: name the specific pillar or fantasy gap and suggest a fix.
+        output: cd_concept_verdict
+
       - id: mechanics
         agent: game-designer
-        depends_on: [gate-concept]
+        depends_on: [cd-concept-check]
         task: "Expand the approved concept into a mechanics doc. Save as 'mechanics_v1'."
         output: mechanics
 
@@ -332,9 +422,24 @@ pipelines:
         review_of: mechanics
         task: "Review the mechanics doc."
 
+      - id: cd-mechanics-check
+        agent: creative-director
+        depends_on: [gate-mechanics]
+        task: |
+          Read mechanics_v1 + concept_options_v1 from memory.
+          Evaluate against pillars and player psychology:
+            1. Does the core loop serve the target MDA aesthetics?
+            2. Do micro/meso/macro loops create the intended emotional arc?
+            3. Is the difficulty curve shaped for flow state (sawtooth, not flat)?
+            4. Do the balance choices match the target player experience?
+            5. Is the tuning table complete with kid-appropriate ranges?
+          Issue verdict: [CD-MECHANICS]: APPROVE | CONCERNS | REJECT
+          If CONCERNS: name the specific MDA misalignment or flow-state gap.
+        output: cd_mechanics_verdict
+
       - id: style-research
         agent: style-researcher
-        depends_on: [gate-mechanics]
+        depends_on: [cd-mechanics-check]
         task: "Roblox-style research, save as 'style_research_v1'."
         output: style_research
 
@@ -350,9 +455,23 @@ pipelines:
         review_of: look-and-feel
         task: "Review the look-and-feel brief."
 
+      - id: cd-laf-check
+        agent: creative-director
+        depends_on: [gate-laf]
+        task: |
+          Read laf_brief_v1 + style_research_v1 + concept_options_v1 from memory.
+          Evaluate visual/audio coherence with creative vision:
+            1. Does the visual direction reinforce the pillars?
+            2. Is there visual/audio coherence — does it feel like one game?
+            3. Are palette, proportions, and UI chrome age-appropriate for kids 6-12?
+            4. Does the art direction strengthen or weaken competitive positioning?
+          Issue verdict: [CD-LAF]: APPROVE | CONCERNS | REJECT
+          If CONCERNS: name the specific pillar-visual mismatch.
+        output: cd_laf_verdict
+
       - id: tech-plan
         agent: tech-lead
-        depends_on: [gate-laf]
+        depends_on: [cd-laf-check]
         task: "Engine + layout + asset loader + input model + loop shape. Save as 'tech_plan_v1'."
         output: tech_plan
 
@@ -388,9 +507,28 @@ pipelines:
         review_of: build-a
         task: "Play both candidate builds side-by-side. Pick A or B — the winning artifact will be promoted to 'game_html_v1' for downstream QA."
 
+      - id: telemetry-spec
+        agent: telemetry-engineer
+        depends_on: [gate-build-pick]
+        task: |
+          Read mechanics_v1 + tech_plan_v1 + game_html_v1 from memory. Produce a
+          telemetry specification: map player verbs to the 8-event catalogue,
+          define payload schemas, identify 3-5 KPIs, specify telemetry sink.
+          Save to memory as artifact key 'telemetry_spec_v1'.
+        output: telemetry_spec
+
+      - id: telemetry-instrument
+        agent: frontend-developer
+        depends_on: [telemetry-spec]
+        task: |
+          Read telemetry_spec_v1 + game_html_v1 from memory. Instrument the game
+          with telemetry event calls matching the spec. Preserve window.__game.
+          Save updated build as artifact key 'game_html_v1' (overwrite).
+        output: instrumented_code
+
       - id: qa-playtest
         agent: qa-engineer
-        depends_on: [gate-build-pick]
+        depends_on: [telemetry-instrument]
         task: "Playtest game_html_v1 against mechanics_v1. Save 'qa_report_v1'."
         output: qa_report
 
@@ -751,9 +889,25 @@ pipelines:
           implement, request a revision on one, or reject all and halt the loop.
           The gate's approval note is passed to the implement step as the brief.
 
+      - id: cd-proposal-check
+        agent: creative-director
+        depends_on: [synthesis_gate]
+        task: |
+          Read the human-picked proposal from synthesis_gate + concept_options_v1 +
+          mechanics_v1 + postmortem_{{iteration_tag}} from memory.
+          Evaluate whether the proposed change preserves creative identity:
+            1. Does this change reinforce or dilute the pillars?
+            2. Does the expected metric movement align with the game's emotional arc?
+            3. Could this change introduce ludonarrative dissonance?
+            4. For kid audiences: does this maintain age-appropriate tone and pacing?
+          Issue verdict: [CD-ITERATE]: APPROVE | CONCERNS | REJECT
+          If CONCERNS: name the pillar at risk and suggest a constraint for the
+          implementer to preserve creative intent.
+        output: cd_iterate_verdict
+
       - id: implement
         agent: frontend-developer
-        depends_on: [synthesis_gate]
+        depends_on: [cd-proposal-check]
         task: |
           Implement the approved proposal from the synthesis_gate for cycle
           {{cycle_n}}+1. Read these memory keys BEFORE editing: the chosen

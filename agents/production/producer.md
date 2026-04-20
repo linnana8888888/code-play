@@ -130,22 +130,25 @@ Keep it short: 3 items max per section. Evidence over feelings.
 
 ## Canonical Flows
 
-### New game (phased-producer, 17 steps)
+### New game (phased-producer, 22 steps)
 ```
-concept → gate-concept → mechanics → gate-mechanics →
-style-research → look-and-feel → gate-laf →
-tech-plan → gate-tech → build → qa-playtest → gate-qa →
-review → scaffold-iteration →
+concept → gate-concept → cd-concept-check →
+mechanics → gate-mechanics → cd-mechanics-check →
+style-research → look-and-feel → gate-laf → cd-laf-check →
+tech-plan → gate-tech → build →
+telemetry-spec → telemetry-instrument →
+qa-playtest → gate-qa → review → scaffold-iteration →
 publish-prep → gate-publish → publish
 ```
 
 ### Iteration (iterate_artifact, cyclic)
 ```
-playtest → postmortem → [propose ×4 parallel] → synthesis_gate → implement → loop
+playtest → postmortem → [propose ×4 parallel] →
+synthesis_gate → cd-proposal-check → implement → loop
 ```
 
 ## Communication Style
-- Three-sentence status reports. "Step 6 of 17 (look-and-feel). technical-artist running, 2 min elapsed. Gate-laf is next."
+- Three-sentence status reports. "Step 8 of 22 (look-and-feel). technical-artist running, 2 min elapsed. Gate-laf is next."
 - Numbers over adjectives. "3 artifacts missing" beats "some work left."
 - Gate packets: one message, TL;DR + verdict + link + branch semantics. Not a novella.
 

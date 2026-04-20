@@ -284,9 +284,11 @@ async def create_project(body: ProjectCreate):
 
     with get_studio_db() as db:
         db.execute(
-            "INSERT INTO projects (id, name, description, goal, tech_stack, repo_url, repo_name, require_roster_approval, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO projects (id, name, description, goal, tech_stack, repo_url, repo_name, require_roster_approval, auto_iterate, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (project_id, body.name, body.description, body.goal, body.tech_stack, repo_url, repo_name,
-             1 if body.require_roster_approval else 0, now, now),
+             1 if body.require_roster_approval else 0,
+             1 if body.auto_iterate else 0,
+             now, now),
         )
 
     # Init project memory DB
@@ -302,11 +304,28 @@ async def create_project(body: ProjectCreate):
         repo_url=repo_url,
         repo_name=repo_name,
         require_roster_approval=body.require_roster_approval,
+        auto_iterate=body.auto_iterate,
         created_at=datetime.fromisoformat(now),
         updated_at=datetime.fromisoformat(now),
     )
 
     await ws_manager.broadcast({"type": "project_created", "data": project.model_dump(mode="json")})
+
+    # Auto-launch pipeline (producer drives the team from here)
+    if body.pipeline:
+        try:
+            await run_pipeline(
+                body.pipeline,
+                PipelineRunBody(project_id=project_id, input_text=body.goal or body.description),
+            )
+            await ws_manager.broadcast({
+                "type": "pipeline_auto_launched",
+                "data": {"project_id": project_id, "pipeline": body.pipeline},
+            })
+            logger.info(f"[{project_id}] Auto-launched pipeline '{body.pipeline}'")
+        except Exception as e:
+            logger.warning(f"[{project_id}] Auto-launch pipeline '{body.pipeline}' failed: {e}")
+
     return project
 
 
@@ -314,6 +333,8 @@ def _project_row_to_dict(row) -> dict:
     d = dict(row)
     if "require_roster_approval" in d:
         d["require_roster_approval"] = bool(d["require_roster_approval"])
+    if "auto_iterate" in d:
+        d["auto_iterate"] = bool(d["auto_iterate"])
     return d
 
 
@@ -869,6 +890,48 @@ async def _maybe_relaunch_cyclic(project_id: str, pipeline_specs: dict) -> None:
         })
 
 
+async def _maybe_auto_iterate(project_id: str):
+    """Auto-launch iterate_artifact when phased-producer completes.
+
+    Fires only when: all project tasks are COMPLETED, iterate is not already
+    running, and the project has auto_iterate enabled.
+    """
+    with get_studio_db() as db:
+        row = db.execute(
+            "SELECT auto_iterate, iterate_enabled FROM projects WHERE id = ?",
+            (project_id,),
+        ).fetchone()
+    if not row or not row["auto_iterate"]:
+        return
+    if row["iterate_enabled"]:
+        return
+
+    all_tasks = task_queue.list_tasks(project_id=project_id)
+    if not all_tasks:
+        return
+    if not all(t.status == TaskStatus.COMPLETED for t in all_tasks):
+        return
+
+    has_phased = any(
+        (t.created_by or "").startswith("pipeline:phased-producer") for t in all_tasks
+    )
+    if not has_phased:
+        return
+
+    logger.info(f"[{project_id}] phased-producer complete — auto-launching iterate_artifact")
+    try:
+        await run_pipeline(
+            "iterate_artifact",
+            PipelineRunBody(project_id=project_id, input_text=""),
+        )
+        await ws_manager.broadcast({
+            "type": "pipeline_auto_launched",
+            "data": {"project_id": project_id, "pipeline": "iterate_artifact"},
+        })
+    except Exception as e:
+        logger.warning(f"[{project_id}] Auto-iterate launch failed: {e}")
+
+
 async def _advance_pipeline(project_id: str):
     """Spawn agents for any newly-ready pipeline tasks."""
     pipeline_specs = _load_pipelines_yaml().get("pipelines", {}) or {}
@@ -888,6 +951,8 @@ async def _advance_pipeline(project_id: str):
         return
 
     if not ready:
+        # No ready tasks — check if phased-producer just completed and auto-iterate is on
+        await _maybe_auto_iterate(project_id)
         return
 
     for task in ready:

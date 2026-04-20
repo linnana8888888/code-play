@@ -891,19 +891,18 @@ async def _maybe_relaunch_cyclic(project_id: str, pipeline_specs: dict) -> None:
 
 
 async def _maybe_auto_iterate(project_id: str):
-    """Auto-launch iterate_artifact when phased-producer completes.
+    """Notify the human when phased-producer completes, prompting V1 review.
 
-    Fires only when: all project tasks are COMPLETED, iterate is not already
-    running, and the project has auto_iterate enabled.
+    If auto_iterate is enabled on the project AND goals exist, auto-launch
+    iterate_artifact. Otherwise, broadcast a v1_review_ready event so the
+    human can review, set goals, and manually trigger iteration.
     """
     with get_studio_db() as db:
         row = db.execute(
             "SELECT auto_iterate, iterate_enabled FROM projects WHERE id = ?",
             (project_id,),
         ).fetchone()
-    if not row or not row["auto_iterate"]:
-        return
-    if row["iterate_enabled"]:
+    if not row or row["iterate_enabled"]:
         return
 
     all_tasks = task_queue.list_tasks(project_id=project_id)
@@ -918,18 +917,37 @@ async def _maybe_auto_iterate(project_id: str):
     if not has_phased:
         return
 
-    logger.info(f"[{project_id}] phased-producer complete — auto-launching iterate_artifact")
-    try:
-        await run_pipeline(
-            "iterate_artifact",
-            PipelineRunBody(project_id=project_id, input_text=""),
-        )
-        await ws_manager.broadcast({
-            "type": "pipeline_auto_launched",
-            "data": {"project_id": project_id, "pipeline": "iterate_artifact"},
-        })
-    except Exception as e:
-        logger.warning(f"[{project_id}] Auto-iterate launch failed: {e}")
+    # Auto-iterate only if the human opted in AND goals are already set
+    if row["auto_iterate"]:
+        try:
+            ensure_goals_md(project_id)
+            logger.info(f"[{project_id}] phased-producer complete + goals set — auto-launching iterate_artifact")
+            await run_pipeline(
+                "iterate_artifact",
+                PipelineRunBody(project_id=project_id, input_text=""),
+            )
+            await ws_manager.broadcast({
+                "type": "pipeline_auto_launched",
+                "data": {"project_id": project_id, "pipeline": "iterate_artifact"},
+            })
+            return
+        except GoalsBootstrapError:
+            pass  # Fall through to v1_review_ready — goals not set yet
+
+    # Default: notify human that V1 is ready for review + goals setup
+    logger.info(f"[{project_id}] phased-producer complete — V1 ready for human review")
+    await ws_manager.broadcast({
+        "type": "v1_review_ready",
+        "data": {
+            "project_id": project_id,
+            "message": "V1 build complete. Review the game, then set GOALS.md and trigger iteration.",
+            "actions": {
+                "review": f"/api/projects/{project_id}",
+                "set_goals": f"Write GOALS.md with iteration targets before starting iterate_artifact",
+                "iterate": f"/api/pipelines/advance?project_id={project_id}&force_phase=iterate_artifact",
+            },
+        },
+    })
 
 
 async def _advance_pipeline(project_id: str):

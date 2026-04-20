@@ -1,0 +1,144 @@
+# Path-Scoped Rules
+# Auto-injected into an agent's system prompt when its task references files
+# matching the glob pattern. Advisory only — does not enforce permissions.
+#
+# Format:
+#   - pattern: "glob/pattern/**"
+#     label: "Short name for this rule set"
+#     rules: |
+#       Markdown block injected into the system prompt.
+#
+# The runtime matches the task prompt + any file paths in context messages
+# against these patterns. All matching rule blocks are injected once, deduped.
+#
+# Pattern syntax: Python fnmatch (*, **, ?). Paths are relative to project root.
+# Use forward slashes — the runtime normalizes before matching.
+
+rules:
+
+  # --- Game build output (web) ---
+  - pattern: "artifacts/*/dist/**"
+    label: "Web Game Build"
+    rules: |
+      **Web Game Build Rules:**
+      - Output must be self-contained: index.html at root, /assets/ with relative paths
+      - No node_modules, no bundler required at runtime
+      - `window.__game` test hook must be exposed with the shape from tech_plan_v1
+      - Performance targets: <3s first playable, 60fps, <5MB total assets, <500KB JS gzipped
+      - Zero uncaught console errors on load
+      - Every non-CC0 asset listed in CREDITS.md
+
+  # --- Game build output (Unity) ---
+  - pattern: "artifacts/*/unity/**"
+    label: "Unity Build"
+    rules: |
+      **Unity Build Rules:**
+      - WebGL build must be <50MB compressed
+      - No development build flags in release artifacts
+      - Il2CPP stripping enabled for release
+      - `GameStateReader` test hook on a persistent GameObject
+      - Addressables catalog must be local (not remote CDN) for itch.io/GH Pages
+
+  # --- Publish pipeline ---
+  - pattern: "artifacts/*/publish/**"
+    label: "Publish Artifacts"
+    rules: |
+      **Publish Rules:**
+      - Never overwrite a published manifest — create next version
+      - Title images: 630x500 for itch.io, 1920x1080 for GH Pages
+      - publish_manifest_v1.json must include: version, platform, url, sha256, timestamp
+      - Verify live URL returns 200 after publish — screenshot as evidence
+
+  # --- Prototype sandbox ---
+  - pattern: "prototypes/**"
+    label: "Prototype Sandbox"
+    rules: |
+      **Prototype Rules:**
+      - Throwaway code — speed over quality, no production patterns required
+      - Must stay isolated: no imports from src/ or artifacts/, no exports to them
+      - Every prototype file starts with: `// PROTOTYPE - NOT FOR PRODUCTION`
+      - Prototype Report (REPORT.md) required with PROCEED/PIVOT/KILL verdict
+      - Timebox: 2h for core mechanic proof, 4-8h for complex validation
+
+  # --- Runtime source code ---
+  - pattern: "src/runtime/**"
+    label: "Runtime Code"
+    rules: |
+      **Runtime Code Standards:**
+      - This is the agent execution engine — changes here affect ALL agent runs
+      - Max cyclomatic complexity: 10. Max function length: 40 lines.
+      - All async functions must handle cancellation (check task status)
+      - Budget enforcement must never be bypassed — token + USD limits are safety rails
+      - Tool executor governance tiers (builtin/pre_approved/restricted/blocked) are load-bearing
+
+  # --- Orchestrator source code ---
+  - pattern: "src/orchestrator/**"
+    label: "Orchestrator Code"
+    rules: |
+      **Orchestrator Code Standards:**
+      - Agent registry, task queue, pipeline engine — changes affect scheduling and routing
+      - Agent definitions are loaded from .md files with YAML frontmatter — preserve this pattern
+      - Task state transitions must be atomic (use DB transactions)
+      - Pipeline step ordering is defined in config/pipelines.yaml — runtime reads, never writes
+
+  # --- Agent persona files ---
+  - pattern: "agents/**/*.md"
+    label: "Agent Personas"
+    rules: |
+      **Agent Persona File Rules:**
+      - YAML frontmatter required: name, description, color, emoji, vibe
+      - Body is the system prompt — write in second person ("You are **Name**")
+      - Must include: Identity & Scope, Done When, Communication Style, Anti-Patterns
+      - No model-specific instructions (no "as Claude..." or "use GPT for...")
+      - Out-of-scope section must name which other agents handle adjacent work
+
+  # --- Pipeline and config ---
+  - pattern: "config/**"
+    label: "Configuration"
+    rules: |
+      **Config File Rules:**
+      - agents.yaml: model field uses provider/model-id format (e.g., "anthropic/anthropic.claude-sonnet-4-6")
+      - governance.yaml: 4 tiers are load-bearing — adding to restricted/blocked requires justification
+      - pipelines.yaml: step ordering is the canonical execution sequence — changes need producer sign-off
+      - path_rules.yaml: rules are advisory, injected into prompts — not enforced at tool level
+
+  # --- Skills ---
+  - pattern: "skills/**"
+    label: "Skills"
+    rules: |
+      **Skill File Rules:**
+      - Skills are markdown files injected into agent system prompts via skill_registry
+      - Must have YAML frontmatter with: name, description, builtin (true/false)
+      - Non-builtin skills need governance approval before injection
+      - Keep skills focused — one skill, one domain. Don't merge unrelated concerns.
+
+  # --- Tests ---
+  - pattern: "tests/**"
+    label: "Test Code"
+    rules: |
+      **Test Standards:**
+      - pytest with src-layout — ensure pythonpath is set in pytest.ini
+      - Test file naming: test_<module>.py mirroring src/ structure
+      - Integration tests hit real services (SQLite, file system) — no mocks for data layer
+      - Flaky tests: quarantine immediately, don't retry-loop around them
+
+  # --- Dashboard frontend ---
+  - pattern: "dashboard/**"
+    label: "Dashboard UI"
+    rules: |
+      **Dashboard Rules:**
+      - React + Vite — hot reload via WebSocket
+      - No direct agent runtime calls from frontend — go through FastAPI endpoints
+      - Approval queue UI must show: tool name, agent, params, risk level
+      - WebSocket events for real-time agent status updates
+
+  # --- Roblox game code ---
+  - pattern: "artifacts/*/roblox/**"
+    label: "Roblox Code"
+    rules: |
+      **Roblox Code Rules:**
+      - Server-authoritative for all gameplay state
+      - RemoteEvents: validate all incoming data server-side, never trust client
+      - No `wait()` in tight loops — use `task.wait()` or event-driven patterns
+      - No `loadstring()` — ever
+      - Kid-safe: no PII collection, no external URLs without whitelist, no chat manipulation

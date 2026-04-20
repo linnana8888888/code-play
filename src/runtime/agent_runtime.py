@@ -21,6 +21,7 @@ from src.runtime.tool_executor import tool_executor
 from src.runtime.session_store import session_store
 from src.runtime.workspace import workspace_manager
 from src.runtime.skill_registry import skill_registry
+from src.runtime.path_rules import match_rules as match_path_rules
 from src.orchestrator.agent_registry import registry
 from src.orchestrator.task_queue import task_queue
 from src.database import get_studio_db
@@ -271,6 +272,16 @@ class AgentRuntime:
             skill_content = skill_registry.get_injectable_content(defn.id, defn.skills)
             if skill_content:
                 system_content += f"\n\n{skill_content}"
+
+        # Inject path-scoped rules based on file references in task + context
+        path_rules_text = task_prompt
+        if context_messages:
+            for msg in context_messages:
+                if isinstance(msg.get("content"), str):
+                    path_rules_text += "\n" + msg["content"]
+        path_rules = match_path_rules(path_rules_text)
+        if path_rules:
+            system_content += f"\n\n{path_rules}"
 
         messages.append({"role": "system", "content": system_content})
 

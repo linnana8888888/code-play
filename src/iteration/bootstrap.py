@@ -12,11 +12,26 @@ start so the failure surfaces BEFORE any tasks spawn.
 from __future__ import annotations
 
 import logging
+import subprocess
 from pathlib import Path
 
 from src.memory.project_memory import project_memory
 
 logger = logging.getLogger(__name__)
+
+
+def _ensure_repo_fresh(repo_path: Path) -> None:
+    """Pull latest if repo_path is a git checkout."""
+    if not (repo_path / ".git").exists():
+        return
+    try:
+        subprocess.run(
+            ["git", "pull", "--ff-only"],
+            cwd=repo_path, capture_output=True, text=True, timeout=30,
+        )
+        logger.info("Bootstrap: pulled latest for %s", repo_path)
+    except Exception as exc:
+        logger.warning("Bootstrap: git pull failed for %s: %s", repo_path, exc)
 
 
 class GoalsBootstrapError(Exception):
@@ -48,7 +63,10 @@ def ensure_goals_md(project_id: str) -> None:
             "GOALS.md so it can be auto-seeded.",
         )
 
-    goals_file = Path(repo_raw.strip()).expanduser() / "GOALS.md"
+    repo_path = Path(repo_raw.strip()).expanduser()
+    _ensure_repo_fresh(repo_path)
+
+    goals_file = repo_path / "GOALS.md"
     if not goals_file.is_file():
         raise GoalsBootstrapError(
             f"iterate_artifact requires GOALS.md — not in memory, and not "

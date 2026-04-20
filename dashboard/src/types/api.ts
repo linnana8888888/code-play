@@ -22,6 +22,31 @@ export interface ProjectCreate {
   goal?: string;
   create_repo?: boolean;
   require_roster_approval?: boolean;
+  game_slug?: string;
+  pipeline?: string;
+}
+
+export interface GameSource {
+  kind: string;
+  repo?: string | null;
+  path?: string | null;
+}
+
+export interface GameVersion {
+  label: string;
+  ref: string;
+  status: string;
+  branch?: string | null;
+  entry?: string | null;
+  notes?: string;
+}
+
+export interface GameEntry {
+  slug: string;
+  title: string;
+  status: string;
+  source: GameSource;
+  versions: GameVersion[];
 }
 
 export type FailureCategory =

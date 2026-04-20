@@ -28,6 +28,7 @@ import type {
   AgentProposal,
   ProposalStatus,
   BudgetDecisionPayload,
+  GameEntry,
 } from "../types/api";
 
 const BASE = "/api";
@@ -49,6 +50,10 @@ function qs(params: Record<string, string | number | undefined>): string {
   if (!entries.length) return "";
   return "?" + new URLSearchParams(entries.map(([k, v]) => [k, String(v)])).toString();
 }
+
+/* ── Games (registry) ── */
+export const getGames = () => req<GameEntry[]>("/games");
+export const getGame = (slug: string) => req<GameEntry>(`/games/${slug}`);
 
 /* ── Projects ── */
 export const getProjects = () => req<Project[]>("/projects");

@@ -24,6 +24,8 @@ from pydantic import BaseModel
 
 from src.settings import settings
 from src.database import init_studio_db, init_project_db, get_studio_db, get_project_db
+from src.game_registry import list_games as _list_games, get_game as _get_game, get_active_version
+from src.game_resolver import resolve_game_repo
 from src.models.projects import Project, ProjectCreate
 from src.models.tasks import TaskCreate, TaskStatus, TaskUpdate
 from src.models.agents import AgentStatus
@@ -303,13 +305,53 @@ def _publish_artifacts_to_repo(project_id: str, repo_name: str) -> tuple[bool, s
         return False, f"publish exception: {exc}"
 
 
+# ── Game registry ──────────────────────────────────────────────────────
+
+from dataclasses import asdict
+
+
+@app.get("/api/games")
+def list_games_api():
+    return [asdict(g) for g in _list_games()]
+
+
+@app.get("/api/games/{slug}")
+def get_game_api(slug: str):
+    game = _get_game(slug)
+    if not game:
+        raise HTTPException(404, f"Game '{slug}' not found in games/ registry")
+    return asdict(game)
+
+
 @app.post("/api/projects", response_model=Project)
 async def create_project(body: ProjectCreate):
     project_id = f"proj-{uuid.uuid4().hex[:8]}"
     now = datetime.now(timezone.utc).isoformat()
 
     repo_url, repo_name = (None, None)
-    if body.create_repo:
+    game_slug = body.game_slug
+    pipeline = body.pipeline
+    auto_iterate = body.auto_iterate
+
+    # ── Game-linked project: resolve repo, override defaults ──
+    artifact_repo_path: str | None = None
+    if game_slug:
+        game = _get_game(game_slug)
+        if not game:
+            raise HTTPException(404, f"Game '{game_slug}' not found in games/ registry")
+        try:
+            local_path = await asyncio.to_thread(resolve_game_repo, game)
+            artifact_repo_path = str(local_path.resolve())
+        except Exception as exc:
+            raise HTTPException(500, f"Failed to resolve game repo for '{game_slug}': {exc}")
+        repo_url = game.source.repo or body.repo_url
+        if not pipeline or pipeline == "phased-producer":
+            pipeline = "iterate_artifact"
+        auto_iterate = True
+
+    if not repo_url and body.repo_url:
+        repo_url = body.repo_url
+    if body.create_repo and not repo_url:
         repo_url, repo_name = await asyncio.to_thread(_create_github_repo, body.name, body.description)
 
     with get_studio_db() as db:
@@ -317,12 +359,18 @@ async def create_project(body: ProjectCreate):
             "INSERT INTO projects (id, name, description, goal, tech_stack, repo_url, repo_name, require_roster_approval, auto_iterate, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (project_id, body.name, body.description, body.goal, body.tech_stack, repo_url, repo_name,
              1 if body.require_roster_approval else 0,
-             1 if body.auto_iterate else 0,
+             1 if auto_iterate else 0,
              now, now),
         )
 
     # Init project memory DB
     init_project_db(project_id)
+
+    # ── Seed memory for game-linked projects ──
+    if game_slug and artifact_repo_path:
+        project_memory.write(project_id, "artifact", "artifact_repo_path", artifact_repo_path, created_by="game_resolver")
+        with get_studio_db() as db:
+            db.execute("UPDATE projects SET iterate_enabled = 1 WHERE id = ?", (project_id,))
 
     project = Project(
         id=project_id,
@@ -334,7 +382,7 @@ async def create_project(body: ProjectCreate):
         repo_url=repo_url,
         repo_name=repo_name,
         require_roster_approval=body.require_roster_approval,
-        auto_iterate=body.auto_iterate,
+        auto_iterate=auto_iterate,
         created_at=datetime.fromisoformat(now),
         updated_at=datetime.fromisoformat(now),
     )
@@ -342,19 +390,19 @@ async def create_project(body: ProjectCreate):
     await ws_manager.broadcast({"type": "project_created", "data": project.model_dump(mode="json")})
 
     # Auto-launch pipeline (producer drives the team from here)
-    if body.pipeline:
+    if pipeline:
         try:
             await run_pipeline(
-                body.pipeline,
+                pipeline,
                 PipelineRunBody(project_id=project_id, input_text=body.goal or body.description),
             )
             await ws_manager.broadcast({
                 "type": "pipeline_auto_launched",
-                "data": {"project_id": project_id, "pipeline": body.pipeline},
+                "data": {"project_id": project_id, "pipeline": pipeline},
             })
-            logger.info(f"[{project_id}] Auto-launched pipeline '{body.pipeline}'")
+            logger.info(f"[{project_id}] Auto-launched pipeline '{pipeline}'")
         except Exception as e:
-            logger.warning(f"[{project_id}] Auto-launch pipeline '{body.pipeline}' failed: {e}")
+            logger.warning(f"[{project_id}] Auto-launch pipeline '{pipeline}' failed: {e}")
 
     return project
 

@@ -29,3 +29,5 @@ class ProjectCreate(BaseModel):
     require_roster_approval: bool = True  # new projects default ON; back-compat handled at migration level
     pipeline: str = "phased-producer"
     auto_iterate: bool = False
+    game_slug: str | None = None
+    repo_url: str | None = None

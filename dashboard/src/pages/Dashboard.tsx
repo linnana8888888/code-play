@@ -138,10 +138,11 @@ export default function Dashboard() {
         onCreate={async (data, opts) => {
           const p = await create(data);
           if (opts.autoLaunch) {
+            const pipeline = data.pipeline ?? "phased-producer";
             try {
-              await runPipeline("phased-producer", p.id, data.goal ?? data.description ?? "");
+              await runPipeline(pipeline, p.id, data.goal ?? data.description ?? "");
             } catch (e) {
-              console.error("auto-launch phased-producer failed", e);
+              console.error(`auto-launch ${pipeline} failed`, e);
               alert(`Project created, but pipeline launch failed: ${e instanceof Error ? e.message : e}`);
             }
           }

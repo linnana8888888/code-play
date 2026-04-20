@@ -314,9 +314,11 @@ async def create_project(body: ProjectCreate):
 
     with get_studio_db() as db:
         db.execute(
-            "INSERT INTO projects (id, name, description, goal, tech_stack, repo_url, repo_name, require_roster_approval, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO projects (id, name, description, goal, tech_stack, repo_url, repo_name, require_roster_approval, auto_iterate, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (project_id, body.name, body.description, body.goal, body.tech_stack, repo_url, repo_name,
-             1 if body.require_roster_approval else 0, now, now),
+             1 if body.require_roster_approval else 0,
+             1 if body.auto_iterate else 0,
+             now, now),
         )
 
     # Init project memory DB
@@ -332,11 +334,28 @@ async def create_project(body: ProjectCreate):
         repo_url=repo_url,
         repo_name=repo_name,
         require_roster_approval=body.require_roster_approval,
+        auto_iterate=body.auto_iterate,
         created_at=datetime.fromisoformat(now),
         updated_at=datetime.fromisoformat(now),
     )
 
     await ws_manager.broadcast({"type": "project_created", "data": project.model_dump(mode="json")})
+
+    # Auto-launch pipeline (producer drives the team from here)
+    if body.pipeline:
+        try:
+            await run_pipeline(
+                body.pipeline,
+                PipelineRunBody(project_id=project_id, input_text=body.goal or body.description),
+            )
+            await ws_manager.broadcast({
+                "type": "pipeline_auto_launched",
+                "data": {"project_id": project_id, "pipeline": body.pipeline},
+            })
+            logger.info(f"[{project_id}] Auto-launched pipeline '{body.pipeline}'")
+        except Exception as e:
+            logger.warning(f"[{project_id}] Auto-launch pipeline '{body.pipeline}' failed: {e}")
+
     return project
 
 
@@ -344,6 +363,8 @@ def _project_row_to_dict(row) -> dict:
     d = dict(row)
     if "require_roster_approval" in d:
         d["require_roster_approval"] = bool(d["require_roster_approval"])
+    if "auto_iterate" in d:
+        d["auto_iterate"] = bool(d["auto_iterate"])
     return d
 
 
@@ -1033,6 +1054,66 @@ async def _maybe_relaunch_cyclic(project_id: str, pipeline_specs: dict) -> None:
         })
 
 
+async def _maybe_auto_iterate(project_id: str):
+    """Notify the human when phased-producer completes, prompting V1 review.
+
+    If auto_iterate is enabled on the project AND goals exist, auto-launch
+    iterate_artifact. Otherwise, broadcast a v1_review_ready event so the
+    human can review, set goals, and manually trigger iteration.
+    """
+    with get_studio_db() as db:
+        row = db.execute(
+            "SELECT auto_iterate, iterate_enabled FROM projects WHERE id = ?",
+            (project_id,),
+        ).fetchone()
+    if not row or row["iterate_enabled"]:
+        return
+
+    all_tasks = task_queue.list_tasks(project_id=project_id)
+    if not all_tasks:
+        return
+    if not all(t.status == TaskStatus.COMPLETED for t in all_tasks):
+        return
+
+    has_phased = any(
+        (t.created_by or "").startswith("pipeline:phased-producer") for t in all_tasks
+    )
+    if not has_phased:
+        return
+
+    # Auto-iterate only if the human opted in AND goals are already set
+    if row["auto_iterate"]:
+        try:
+            ensure_goals_md(project_id)
+            logger.info(f"[{project_id}] phased-producer complete + goals set — auto-launching iterate_artifact")
+            await run_pipeline(
+                "iterate_artifact",
+                PipelineRunBody(project_id=project_id, input_text=""),
+            )
+            await ws_manager.broadcast({
+                "type": "pipeline_auto_launched",
+                "data": {"project_id": project_id, "pipeline": "iterate_artifact"},
+            })
+            return
+        except GoalsBootstrapError:
+            pass  # Fall through to v1_review_ready — goals not set yet
+
+    # Default: notify human that V1 is ready for review + goals setup
+    logger.info(f"[{project_id}] phased-producer complete — V1 ready for human review")
+    await ws_manager.broadcast({
+        "type": "v1_review_ready",
+        "data": {
+            "project_id": project_id,
+            "message": "V1 build complete. Review the game, then set GOALS.md and trigger iteration.",
+            "actions": {
+                "review": f"/api/projects/{project_id}",
+                "set_goals": f"Write GOALS.md with iteration targets before starting iterate_artifact",
+                "iterate": f"/api/pipelines/advance?project_id={project_id}&force_phase=iterate_artifact",
+            },
+        },
+    })
+
+
 async def _advance_pipeline(project_id: str):
     """Spawn agents for any newly-ready pipeline tasks."""
     pipeline_specs = _load_pipelines_yaml().get("pipelines", {}) or {}
@@ -1052,6 +1133,8 @@ async def _advance_pipeline(project_id: str):
         return
 
     if not ready:
+        # No ready tasks — check if phased-producer just completed and auto-iterate is on
+        await _maybe_auto_iterate(project_id)
         return
 
     async def _stall(task, reason: str, hint: str | None = None):

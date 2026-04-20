@@ -90,7 +90,7 @@ Roblox DataStore v1 saves: `best_score`, `tutorial_seen`. Nothing else. No mid-r
 
 ## 🤝 Handoff
 
-- **Upstream:** `mechanics_v1` (win/lose conditions), `hud_spec_v1` (what's on each screen).
+- **Upstream:** `ux_spec_v1` (state list, transition triggers from interaction patterns), `mechanics_v1` (win/lose conditions), `hud_spec_v1` (what's on each screen).
 - **Downstream:** `frontend-developer` / `roblox-systems-scripter` (implement the state machine + transition registry), `qa-engineer` (tests each transition row).
 - **Contract:** the transition table is the test matrix. qa-engineer drives each input and asserts the resulting state.
 

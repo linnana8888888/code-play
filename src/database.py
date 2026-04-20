@@ -267,6 +267,7 @@ def init_studio_db():
         _migrate_add_column(db, "projects", "auto_synthesis", "INTEGER DEFAULT 0")
         _migrate_add_column(db, "tasks", "metadata", "TEXT")
         _migrate_add_column(db, "tasks", "expected_outputs", "TEXT")
+        _migrate_add_column(db, "projects", "auto_iterate", "INTEGER DEFAULT 0")
 
 
 def _migrate_add_column(db, table: str, column: str, col_type: str):

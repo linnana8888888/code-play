@@ -16,3 +16,4 @@ node_modules/
 # Publisher build output — rebuildable from pinned refs in games/<slug>.yaml.
 # Keep artifacts/<slug>/publish/ (manifests + live screenshots = audit trail).
 artifacts/*/dist/
+artifacts/*/*.rbxlx

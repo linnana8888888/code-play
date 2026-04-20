@@ -21,6 +21,8 @@ from src.runtime.tool_executor import tool_executor
 from src.runtime.session_store import session_store
 from src.runtime.workspace import workspace_manager
 from src.runtime.skill_registry import skill_registry
+from src.runtime.path_rules import match_rules as match_path_rules
+from src.runtime.artifact_templates import get_template_for_task
 from src.orchestrator.agent_registry import registry
 from src.orchestrator.task_queue import task_queue
 from src.database import get_studio_db
@@ -84,6 +86,9 @@ class AgentRuntime:
                 workspace_manager.create(instance.project_id, instance.id)
             except Exception as e:
                 logger.warning(f"[{instance.id}] Workspace creation failed (non-fatal): {e}")
+
+        # Track which path-scoped rule labels have been injected (avoids duplicates)
+        self._injected_path_labels: set[str] = set()
 
         # Resume from saved session or build fresh conversation
         if session_id:
@@ -195,6 +200,19 @@ class AgentRuntime:
                         "content": result.content,
                     })
 
+                # Mid-loop path-scoped rule injection — scan tool results for
+                # new file paths and inject any rule sets not seen yet.
+                tool_text = "\n".join(r.content for r in tool_results if r.content)
+                new_rules, new_labels = match_path_rules(
+                    tool_text, exclude_labels=self._injected_path_labels
+                )
+                if new_rules:
+                    self._injected_path_labels |= new_labels
+                    conversation.append({
+                        "role": "system",
+                        "content": new_rules,
+                    })
+
                 # Persist session after each tool iteration
                 try:
                     session_id = session_store.save(
@@ -282,6 +300,28 @@ class AgentRuntime:
             system_content += (
                 "\n\n## Available skills (invoke via `skill_invoke(skill_id)`):\n"
                 + catalog
+            )
+
+        # Inject path-scoped rules based on file references in task + context
+        path_rules_text = task_prompt
+        if context_messages:
+            for msg in context_messages:
+                if isinstance(msg.get("content"), str):
+                    path_rules_text += "\n" + msg["content"]
+        path_rules, initial_labels = match_path_rules(path_rules_text)
+        if path_rules:
+            system_content += f"\n\n{path_rules}"
+        self._injected_path_labels = initial_labels
+
+        # Inject artifact output template if task references a known artifact
+        template_content = get_template_for_task(task_prompt)
+        if template_content:
+            system_content += (
+                "\n\n## Output Template\n"
+                "Use this template structure for your artifact output. "
+                "Fill in the {{placeholders}} with actual values. "
+                "You may add sections if needed but preserve all existing sections.\n\n"
+                + template_content
             )
 
         messages.append({"role": "system", "content": system_content})

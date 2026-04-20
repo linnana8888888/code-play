@@ -10,8 +10,6 @@ pipelines:
         agent: game-designer
         task: "Draft 3 distinct concept directions for: {input}. For each: one-line pitch, core loop (2-3 sentences), target feel. Save to memory as artifact key 'concept_options_v1'."
         output: concepts
-        expected_outputs:
-          - {kind: memory_key, type: artifact, key: concept_options_v1, min_bytes: 500}
 
       - id: gate-concept
         type: human-gate
@@ -19,19 +17,46 @@ pipelines:
         review_of: concept
         task: "Review the 3 concept directions. Pick one, request changes, or regenerate."
 
+      - id: cd-concept-check
+        agent: creative-director
+        depends_on: [gate-concept]
+        task: |
+          Read concept_options_v1 from memory (the human just approved one direction).
+          Evaluate against the Vision Articulation Framework:
+            1. Does the chosen concept deliver a compelling core fantasy?
+            2. Can you derive 3-5 falsifiable pillars from this direction?
+            3. Does the unique hook pass the "and also" test?
+            4. Is the target audience clear and the aesthetic direction age-appropriate?
+          Issue verdict: [CD-CONCEPT]: APPROVE | CONCERNS | REJECT
+          If CONCERNS: name the specific pillar or fantasy gap and suggest a fix.
+        output: cd_concept_verdict
+
       - id: mechanics
         agent: game-designer
-        depends_on: [gate-concept]
+        depends_on: [cd-concept-check]
         task: "Expand the approved concept (memory key: concept_options_v1, see review notes for chosen direction) into a mechanics doc: player verbs, progression, win/lose conditions, 2-3 signature systems. Save to memory as artifact key 'mechanics_v1'."
         output: mechanics
-        expected_outputs:
-          - {kind: memory_key, type: artifact, key: mechanics_v1, min_bytes: 500}
 
       - id: gate-mechanics
         type: human-gate
         depends_on: [mechanics]
         review_of: mechanics
         task: "Review the mechanics doc. Approve, or request changes with specific feedback."
+
+      - id: cd-mechanics-check
+        agent: creative-director
+        depends_on: [gate-mechanics]
+        task: |
+          Read mechanics_v1 + concept_options_v1 from memory.
+          Evaluate against pillars and player psychology:
+            1. Does the core loop serve the target MDA aesthetics?
+            2. Do micro/meso/macro loops create the intended emotional arc?
+            3. Is the difficulty curve shaped for flow state (sawtooth, not flat)?
+            4. Do the balance choices match the target player experience?
+            5. Is the tuning table complete with kid-appropriate ranges?
+          Issue verdict: [CD-MECHANICS]: APPROVE | CONCERNS | REJECT
+          If CONCERNS: name the specific MDA misalignment or flow-state gap.
+        output: cd_mechanics_verdict
 
       - id: style-research
         agent: style-researcher
@@ -51,8 +76,6 @@ pipelines:
             - "Don't do this" list: 3-5 anti-patterns to avoid.
           Save to memory as artifact key 'style_research_v1'.
         output: style_research
-        expected_outputs:
-          - {kind: memory_key, type: artifact, key: style_research_v1, min_bytes: 800}
 
       - id: look-and-feel
         agent: technical-artist
@@ -78,8 +101,6 @@ pipelines:
                  - References (list the asset_ids).
           Save the final brief to memory as artifact key 'laf_brief_v1'.
         output: look_and_feel
-        expected_outputs:
-          - {kind: memory_key, type: artifact, key: laf_brief_v1, min_bytes: 600}
 
       - id: gate-laf
         type: human-gate
@@ -87,9 +108,23 @@ pipelines:
         review_of: look-and-feel
         task: "Review the look-and-feel brief against the style research. Approve, or request changes."
 
+      - id: cd-laf-check
+        agent: creative-director
+        depends_on: [gate-laf]
+        task: |
+          Read laf_brief_v1 + style_research_v1 + concept_options_v1 from memory.
+          Evaluate visual/audio coherence with creative vision:
+            1. Does the visual direction reinforce the pillars?
+            2. Is there visual/audio coherence — does it feel like one game?
+            3. Are palette, proportions, and UI chrome age-appropriate for kids 6-12?
+            4. Does the art direction strengthen or weaken competitive positioning?
+          Issue verdict: [CD-LAF]: APPROVE | CONCERNS | REJECT
+          If CONCERNS: name the specific pillar-visual mismatch.
+        output: cd_laf_verdict
+
       - id: tech-plan
         agent: tech-lead
-        depends_on: [gate-laf]
+        depends_on: [cd-laf-check]
         task: |
           Read concept_options_v1 + mechanics_v1 + style_research_v1 + laf_brief_v1 from memory.
           Pick ONE engine from the project's tech_stack list (or infer from research if 3D is
@@ -103,8 +138,6 @@ pipelines:
               state } so the QA step can assert state.
           Keep it to ≤ 1 page. Save to memory as artifact key 'tech_plan_v1'.
         output: tech_plan
-        expected_outputs:
-          - {kind: memory_key, type: artifact, key: tech_plan_v1, min_bytes: 400}
 
       - id: gate-tech
         type: human-gate
@@ -131,39 +164,43 @@ pipelines:
 
           Save the final HTML to memory as artifact key 'game_html_v1'.
         output: code
-        expected_outputs:
-          - {kind: memory_key, type: artifact, key: game_html_v1, min_bytes: 2000}
 
-      - id: instrument
+      - id: telemetry-spec
         agent: telemetry-engineer
         depends_on: [build]
         task: |
-          Read 'game_html_v1' + 'mechanics_v1' + 'tech_plan_v1' from memory. Patch
-          the HTML in-place to emit the 8-event default catalogue (session_start,
-          first_playable, tutorial_step_completed, death, retry, win, quit,
-          session_end) via `fetch('/telemetry', {method:'POST', keepalive:true})`.
-
-          Rules:
-            - Expose a TRACK(name, payload) helper on window.__game.
-            - session_start fires AFTER the first player input, not on load
-              (title-screen opt-out).
-            - No PII: never send names, emails, IPs, screen text.
-              ua_hash = sha256(navigator.userAgent).slice(0,8).
-            - Rate-limit: ≤ 2 events/sec per session (drop the rest, don't queue).
-            - keepalive:true on every fetch so session_end survives page close.
-
-          Overwrite 'game_html_v1' in memory with the patched HTML and write the
-          event schema to 'telemetry_spec_v1':
-            { events: [{name, fires_when, payload_keys, sample_rate}],
-              endpoint, session_id_strategy, kid_safety_notes }.
+          Read mechanics_v1 + tech_plan_v1 + game_html_v1 from memory. Produce a
+          telemetry specification for this game's first release:
+            1. Map each player verb in mechanics_v1 to an event from the 8-event
+               catalogue (session_start, first_playable, tutorial_step_completed,
+               death, level_completed, item_acquired, session_end, custom).
+            2. For each event: define payload schema (properties, types, examples).
+            3. Identify 3-5 KPIs derivable from these events (session length,
+               tutorial completion rate, death rate per minute, etc.).
+            4. Specify the telemetry sink (telemetry/*.json files for local
+               iteration; analytics endpoint for production).
+          Save to memory as artifact key 'telemetry_spec_v1'.
         output: telemetry_spec
-        expected_outputs:
-          - {kind: memory_key, type: artifact, key: telemetry_spec_v1, min_bytes: 300}
-          - {kind: memory_key, type: artifact, key: game_html_v1, min_bytes: 2000}
+
+      - id: telemetry-instrument
+        agent: frontend-developer
+        depends_on: [telemetry-spec]
+        task: |
+          Read telemetry_spec_v1 + game_html_v1 from memory. Instrument the game
+          build with telemetry event calls matching the spec:
+            1. Add a lightweight emit function that writes events to the telemetry
+               sink defined in the spec (JSON file for local, fetch for remote).
+            2. Wire each specified event to its trigger point in game code.
+            3. Preserve window.__game test hook — telemetry must not break QA.
+            4. Verify: load the instrumented build, trigger one event, confirm
+               the JSON payload matches the spec schema.
+          Save the updated build to memory as artifact key 'game_html_v1'
+          (overwrite — the instrumented version IS the shipping version).
+        output: instrumented_code
 
       - id: qa-playtest
         agent: qa-engineer
-        depends_on: [instrument]
+        depends_on: [telemetry-instrument]
         task: |
           Read game_html_v1 + mechanics_v1 from memory. Launch the HTML in a headless browser
           via the playwright_browser tool. Verify:
@@ -179,8 +216,6 @@ pipelines:
           Save a structured report to memory as 'qa_report_v1':
             { verdict: pass|fail, checks: [{name, pass, evidence_path, note}], console_errors: […] }.
         output: qa_report
-        expected_outputs:
-          - {kind: memory_key, type: artifact, key: qa_report_v1, min_bytes: 300}
 
       - id: gate-qa
         type: human-gate
@@ -194,10 +229,8 @@ pipelines:
       - id: review
         agent: code-reviewer
         depends_on: [gate-qa]
-        task: "Lint report only — review the prototype (memory key: game_html_v1) for bugs, performance, security. QA already validated gameplay; this is for code-quality concerns only. Save findings as memory artifact key 'code_review_v1'."
+        task: "Lint report only — review the prototype (memory key: game_html_v1) for bugs, performance, security. QA already validated gameplay; this is for code-quality concerns only."
         output: review
-        expected_outputs:
-          - {kind: memory_key, type: artifact, key: code_review_v1, min_bytes: 200}
 
       - id: scaffold-iteration
         agent: rapid-prototyper
@@ -228,59 +261,10 @@ pipelines:
 
           Save a one-line report as memory artifact key 'iteration_scaffold_v1'.
         output: iteration_scaffold
-        expected_outputs:
-          - {kind: memory_key, type: artifact, key: iteration_scaffold_v1, min_bytes: 50}
-
-      - id: dashboard-init
-        agent: metrics-dashboard-builder
-        depends_on: [scaffold-iteration]
-        task: |
-          The artifact repo now has telemetry/ (from scaffold-iteration) and the
-          instrumented game emits the 8-event catalogue. Stand up the analytics
-          store + single-HTML dashboard.
-
-          Write these files into memory[`artifact_repo_path`] via
-          external_repo_commit (do NOT shell git/python):
-            - tools/metrics_rollup.py — idempotent; walks telemetry/*.json,
-              upserts rows into metrics.sqlite (events + sessions rollup tables).
-              Dedup by (session_id, name, ts).
-            - dashboard.html — single file, loads sql.js + uPlot from CDN,
-              fetch()es metrics.sqlite next to itself, renders 4 charts:
-                1) sessions/day (last 14d), 2) session-length histogram,
-                3) tutorial → first_playable → win funnel,
-                4) top-5 death causes (from `death.cause` payload).
-              Cold load ≤ 1s, transfer ≤ 2MB, no React, no build step.
-            - metrics.sqlite — empty schema (events, sessions), committed so
-              the dashboard loads cleanly on an empty artifact repo.
-
-          Save to memory: 'metrics_store_spec_v1' (DDL + rollup contract) and
-          'dashboard_html_v1' (path to the committed file).
-        output: dashboard
-        expected_outputs:
-          - {kind: memory_key, type: artifact, key: metrics_store_spec_v1, min_bytes: 100}
-          - {kind: memory_key, type: artifact, key: dashboard_html_v1, min_bytes: 50}
-
-      - id: blurb
-        agent: analytics-reporter
-        depends_on: [dashboard-init]
-        task: |
-          Write 'publish_blurb_v1' for this ship. ≤ 80 words. Numbers-driven.
-
-          Read from memory: mechanics_v1, laf_brief_v1, qa_report_v1,
-          telemetry_spec_v1. Lead with the player-verb hook, one-sentence
-          differentiation, one metric that signals "we actually playtested"
-          (pull from qa_report_v1 evidence or reference the instrumented
-          funnel). Kid-audience tone; itch.io listing voice; no enterprise speak.
-
-          Save as 'publish_blurb_v1'. The publisher will paste this into the
-          itch long-desc intro.
-        output: blurb
-        expected_outputs:
-          - {kind: memory_key, type: artifact, key: publish_blurb_v1, min_bytes: 100}
 
       - id: publish-prep
         agent: publisher
-        depends_on: [blurb]
+        depends_on: [scaffold-iteration]
         task: |
           Ship-gate preparation. Source of truth is games/<slug>.yaml — read it
           first to locate the repo and resolve the version the pipeline is
@@ -289,16 +273,29 @@ pipelines:
           internal path. Freeze the resolved sha — never ship a moving branch tip.
 
           Also read from memory: concept_options_v1, mechanics_v1, laf_brief_v1,
-          qa_report_v1, game_html_v1, publish_blurb_v1.
+          qa_report_v1, game_html_v1.
 
-          Run the pre-flight checklist:
+          Run the pre-flight checklist. Common items apply to every target;
+          target-specific items only apply when the corresponding target is in
+          the approved list.
+
+          Common:
             1. games/<slug>.yaml exists and the target version has a resolvable ref
                (git rev-parse succeeds in the cloned source).
-            2. HTML validates; no file:// or localhost references.
-            3. Every asset_id referenced in laf_brief_v1 maps to an entry in
+            2. Every asset_id referenced in laf_brief_v1 maps to an entry in
                skills/asset-sources.md with a compatible license (CC0 / CC-BY / Kenney).
-            4. qa_report_v1 verdict is "pass".
-            5. QA screenshots exist under the resolved source's qa/ dir.
+            3. qa_report_v1 verdict is "pass".
+            4. QA screenshots exist under the resolved source's qa/ dir.
+
+          HTML-target-only (itch.io, gh-pages):
+            H1. HTML validates; no file:// or localhost references.
+
+          Roblox-only (source.kind: rojo):
+            R1. games/<slug>.yaml has a roblox: block with universe_id + place_id.
+            R2. The env var named by roblox.api_key_env is set (never log the value).
+            R3. `rojo build --output artifacts/<slug>/dist/<label>/<slug>.rbxlx`
+                succeeds and the resulting file is non-empty and starts with `<roblox `.
+            R4. The prior manifest's version_number is recorded (for copySourceVersion rollback).
 
           Then generate THREE twisted title candidates. The working slug from the
           index is the engineering codename, not the ship name — bend it into
@@ -308,22 +305,24 @@ pipelines:
 
           Synthesize listing metadata (tagline ≤ 60 chars, short desc ≤ 140,
           long desc ≤ 4000 markdown, 5-10 tags, cover image spec, screenshot
-          references from qa/). Generate a flat itch-compatible package at
-          artifacts/<slug>/dist/<label>/ and zip it to
-          artifacts/<slug>/dist/<label>.zip.
+          references from qa/). Generate the platform-appropriate package:
+            - HTML targets: flat itch-compatible dir at artifacts/<slug>/dist/<label>/
+              and a zip at artifacts/<slug>/dist/<label>.zip.
+            - Roblox: a raw .rbxlx at artifacts/<slug>/dist/<label>/<slug>.rbxlx
+              (no zip — Open Cloud wants the file directly).
 
-          Targets for v1: ["itch.io", "gh-pages"]. Roblox target is accepted only
-          if source produces a .rbxl.
+          Targets for v1: ["itch.io", "gh-pages", "roblox"]. Roblox is first-class
+          when source.kind is "rojo" and games/<slug>.yaml has a roblox: block;
+          it's simply skipped otherwise.
 
           Save publish_plan_v1 to memory with:
             { slug, version_label, resolved_ref, source_repo, slug_options, chosen_slug,
               metadata, package_path, package_sha256, package_bytes, targets,
-              preflight_results, estimated_urls }.
+              preflight_results, estimated_urls, roblox: {universe_id, place_id,
+              prior_version_number} | null }.
 
           DO NOT PUBLISH. Stop here and wait for gate-publish.
         output: publish_plan
-        expected_outputs:
-          - {kind: memory_key, type: artifact, key: publish_plan_v1, min_bytes: 400}
 
       - id: gate-publish
         type: human-gate
@@ -347,24 +346,415 @@ pipelines:
           target in parallel:
             - itch.io via itchio_publish (butler push + butler status).
             - gh-pages via gh_pages_publish (commit docs/<slug>/ on gh-pages branch).
-            - roblox via roblox_publish (Open Cloud PATCH place — only if approved).
-          For each target: HEAD the URL until 200, Playwright-load it headless,
-          take a live screenshot under assets/publish/<slug>/, note any console
-          errors.
+            - roblox via roblox_publish — wraps a single Open Cloud call:
+                POST https://apis.roblox.com/universes/v1/{universe_id}/places/{place_id}/versions?versionType=Published
+                Headers:
+                  x-api-key: $<value of games/<slug>.yaml roblox.api_key_env>
+                  Content-Type: application/octet-stream
+                Body: raw bytes of artifacts/<slug>/dist/<label>/<slug>.rbxlx
+                Expected response: {"versionNumber": N}. Record N in the manifest.
+                On non-2xx, surface the response body verbatim — auth/quota/scope
+                errors are the common Roblox failure modes.
+
+          For each target: verify liveness.
+            - HTML (itch.io, gh-pages): HEAD the URL until 200, Playwright-load
+              it headless, take a live screenshot under assets/publish/<slug>/,
+              note any console errors.
+            - Roblox: HEAD https://www.roblox.com/games/{place_id} until 200
+              (allow up to 2 min for first-publish cache warm-up), Playwright-load
+              the listing page headless, screenshot it. Do NOT try to join the
+              running experience — there's no headless Roblox client; listing
+              render + matching version_number is the verification.
 
           Write publish_manifest_v1 to memory with slug, version_label, resolved_ref,
           source_repo, chosen_title, published_at, targets (name/url/status/bytes/
-          live_shot), compliance_rating, assets_licensed.
+          live_shot + Roblox extras: universe_id, place_id, version_number,
+          prior_version_number), compliance_rating, assets_licensed.
 
           Then patch games/<slug>.yaml IN PLACE: set the shipped version's
           published.<target> to the live URL and flip its status to "shipped".
-          Append a row to docs/published-games.md.
+          For Roblox, also write published.roblox_version_number so the next
+          publish knows what to roll back to via copySourceVersion. Append a
+          row to docs/published-games.md.
 
           Post ONE message to the project channel: "🎪 Shipped: <title> — <primary_url>
           — <live_screenshot>". Nothing else.
         output: manifest
-        expected_outputs:
-          - {kind: memory_key, type: artifact, key: publish_manifest_v1, min_bytes: 200}
+
+  phased-producer-race:
+    name: "Phased Producer (A/B build race)"
+    description: "Same as phased-producer but fans out the build step to two parallel agents on different models with a pick gate."
+    steps:
+      - id: concept
+        agent: game-designer
+        task: "Draft 3 distinct concept directions for: {input}. For each: one-line pitch, core loop (2-3 sentences), target feel. Save to memory as artifact key 'concept_options_v1'."
+        output: concepts
+
+      - id: gate-concept
+        type: human-gate
+        depends_on: [concept]
+        review_of: concept
+        task: "Review the 3 concept directions. Pick one, request changes, or regenerate."
+
+      - id: cd-concept-check
+        agent: creative-director
+        depends_on: [gate-concept]
+        task: |
+          Read concept_options_v1 from memory (the human just approved one direction).
+          Evaluate against the Vision Articulation Framework:
+            1. Does the chosen concept deliver a compelling core fantasy?
+            2. Can you derive 3-5 falsifiable pillars from this direction?
+            3. Does the unique hook pass the "and also" test?
+            4. Is the target audience clear and the aesthetic direction age-appropriate?
+          Issue verdict: [CD-CONCEPT]: APPROVE | CONCERNS | REJECT
+          If CONCERNS: name the specific pillar or fantasy gap and suggest a fix.
+        output: cd_concept_verdict
+
+      - id: mechanics
+        agent: game-designer
+        depends_on: [cd-concept-check]
+        task: "Expand the approved concept into a mechanics doc. Save as 'mechanics_v1'."
+        output: mechanics
+
+      - id: gate-mechanics
+        type: human-gate
+        depends_on: [mechanics]
+        review_of: mechanics
+        task: "Review the mechanics doc."
+
+      - id: cd-mechanics-check
+        agent: creative-director
+        depends_on: [gate-mechanics]
+        task: |
+          Read mechanics_v1 + concept_options_v1 from memory.
+          Evaluate against pillars and player psychology:
+            1. Does the core loop serve the target MDA aesthetics?
+            2. Do micro/meso/macro loops create the intended emotional arc?
+            3. Is the difficulty curve shaped for flow state (sawtooth, not flat)?
+            4. Do the balance choices match the target player experience?
+            5. Is the tuning table complete with kid-appropriate ranges?
+          Issue verdict: [CD-MECHANICS]: APPROVE | CONCERNS | REJECT
+          If CONCERNS: name the specific MDA misalignment or flow-state gap.
+        output: cd_mechanics_verdict
+
+      - id: style-research
+        agent: style-researcher
+        depends_on: [cd-mechanics-check]
+        task: "Roblox-style research, save as 'style_research_v1'."
+        output: style_research
+
+      - id: look-and-feel
+        agent: technical-artist
+        depends_on: [style-research]
+        task: "Read style_research_v1 first; produce 'laf_brief_v1' matching it."
+        output: look_and_feel
+
+      - id: gate-laf
+        type: human-gate
+        depends_on: [look-and-feel]
+        review_of: look-and-feel
+        task: "Review the look-and-feel brief."
+
+      - id: cd-laf-check
+        agent: creative-director
+        depends_on: [gate-laf]
+        task: |
+          Read laf_brief_v1 + style_research_v1 + concept_options_v1 from memory.
+          Evaluate visual/audio coherence with creative vision:
+            1. Does the visual direction reinforce the pillars?
+            2. Is there visual/audio coherence — does it feel like one game?
+            3. Are palette, proportions, and UI chrome age-appropriate for kids 6-12?
+            4. Does the art direction strengthen or weaken competitive positioning?
+          Issue verdict: [CD-LAF]: APPROVE | CONCERNS | REJECT
+          If CONCERNS: name the specific pillar-visual mismatch.
+        output: cd_laf_verdict
+
+      - id: tech-plan
+        agent: tech-lead
+        depends_on: [cd-laf-check]
+        task: "Engine + layout + asset loader + input model + loop shape. Save as 'tech_plan_v1'."
+        output: tech_plan
+
+      - id: gate-tech
+        type: human-gate
+        depends_on: [tech-plan]
+        review_of: tech-plan
+        task: "Review the tech plan."
+
+      # Two builders run in parallel on different models, each writing to a
+      # namespaced artifact key so they don't clobber one another.
+      - id: build-a
+        agent: frontend-developer
+        depends_on: [gate-tech]
+        model_override: "openai/gpt-5-2025-08-07"
+        task: |
+          Build the game per tech_plan_v1. Save HTML to memory artifact 'game_html_v1@a'.
+          Expose window.__game = { player, enemies, projectiles, state }.
+        output: code_a
+
+      - id: build-b
+        agent: frontend-developer
+        depends_on: [gate-tech]
+        model_override: "anthropic/anthropic.claude-opus-4-7"
+        task: |
+          Build the game per tech_plan_v1. Save HTML to memory artifact 'game_html_v1@b'.
+          Expose window.__game = { player, enemies, projectiles, state }.
+        output: code_b
+
+      - id: gate-build-pick
+        type: human-gate
+        depends_on: [build-a, build-b]
+        review_of: build-a
+        task: "Play both candidate builds side-by-side. Pick A or B — the winning artifact will be promoted to 'game_html_v1' for downstream QA."
+
+      - id: telemetry-spec
+        agent: telemetry-engineer
+        depends_on: [gate-build-pick]
+        task: |
+          Read mechanics_v1 + tech_plan_v1 + game_html_v1 from memory. Produce a
+          telemetry specification: map player verbs to the 8-event catalogue,
+          define payload schemas, identify 3-5 KPIs, specify telemetry sink.
+          Save to memory as artifact key 'telemetry_spec_v1'.
+        output: telemetry_spec
+
+      - id: telemetry-instrument
+        agent: frontend-developer
+        depends_on: [telemetry-spec]
+        task: |
+          Read telemetry_spec_v1 + game_html_v1 from memory. Instrument the game
+          with telemetry event calls matching the spec. Preserve window.__game.
+          Save updated build as artifact key 'game_html_v1' (overwrite).
+        output: instrumented_code
+
+      - id: qa-playtest
+        agent: qa-engineer
+        depends_on: [telemetry-instrument]
+        task: "Playtest game_html_v1 against mechanics_v1. Save 'qa_report_v1'."
+        output: qa_report
+
+      - id: gate-qa
+        type: human-gate
+        depends_on: [qa-playtest]
+        review_of: qa-playtest
+        task: "Review QA evidence + play the game. Approve or request changes."
+
+      - id: review
+        agent: code-reviewer
+        depends_on: [gate-qa]
+        task: "Lint report on game_html_v1 (code quality/security only)."
+        output: review
+
+      - id: scaffold-iteration
+        agent: rapid-prototyper
+        depends_on: [review]
+        task: |
+          Shipping done. Scaffold iteration kit so this artifact can be improved
+          via iterate_artifact.
+
+          1. Call the `scaffold_iteration` tool with
+             {artifact_dir: memory[`artifact_repo_path`]}. It writes the 4-file
+             kit and persists paths to memory. Do NOT import the scaffolder
+             module directly — sandbox can't reach the code-play repo.
+          2. Read GOALS.md (path: memory[`goals_path`]) via `file_read`, tune
+             the 5 thresholds to plausible numbers for this game's loop, rewrite.
+          3. Call `external_repo_commit` with repo_path + the list of scaffolded
+             files + message "scaffold iteration kit v1" to stage and commit.
+
+          Save one-line note as memory key 'iteration_scaffold_v1'.
+        output: iteration_scaffold
+
+      - id: publish-prep
+        agent: publisher
+        depends_on: [scaffold-iteration]
+        task: |
+          Ship-gate preparation. Source of truth is games/<slug>.yaml — read it
+          first to locate the repo and resolve the version the pipeline is
+          shipping. For source.kind=external, shallow-clone the repo at the
+          version's ref into a temp worktree; for kind=internal, read from the
+          internal path. Freeze the resolved sha — never ship a moving branch tip.
+
+          Also read from memory: concept_options_v1, mechanics_v1, laf_brief_v1,
+          qa_report_v1, game_html_v1.
+
+          Run the pre-flight checklist. Common items apply to every target;
+          target-specific items only apply when the corresponding target is in
+          the approved list.
+
+          Common:
+            1. games/<slug>.yaml exists and the target version has a resolvable ref
+               (git rev-parse succeeds in the cloned source).
+            2. Every asset_id referenced in laf_brief_v1 maps to an entry in
+               skills/asset-sources.md with a compatible license (CC0 / CC-BY / Kenney).
+            3. qa_report_v1 verdict is "pass".
+            4. QA screenshots exist under the resolved source's qa/ dir.
+
+          HTML-target-only (itch.io, gh-pages):
+            H1. HTML validates; no file:// or localhost references.
+
+          Roblox-only (source.kind: rojo):
+            R1. games/<slug>.yaml has a roblox: block with universe_id + place_id.
+            R2. The env var named by roblox.api_key_env is set (never log the value).
+            R3. `rojo build --output artifacts/<slug>/dist/<label>/<slug>.rbxlx`
+                succeeds and the resulting file is non-empty and starts with `<roblox `.
+            R4. The prior manifest's version_number is recorded (for copySourceVersion rollback).
+
+          Then generate THREE twisted title candidates. The working slug from the
+          index is the engineering codename, not the ship name — bend it into
+          something memorable (pun, metaphor, cute noun pairing). ≤ 22 characters
+          each. Respect kids-audience tone. Write a one-line rationale per
+          candidate and mark your preferred pick.
+
+          Synthesize listing metadata (tagline ≤ 60 chars, short desc ≤ 140,
+          long desc ≤ 4000 markdown, 5-10 tags, cover image spec, screenshot
+          references from qa/). Generate the platform-appropriate package:
+            - HTML targets: flat itch-compatible dir at artifacts/<slug>/dist/<label>/
+              and a zip at artifacts/<slug>/dist/<label>.zip.
+            - Roblox: a raw .rbxlx at artifacts/<slug>/dist/<label>/<slug>.rbxlx
+              (no zip — Open Cloud wants the file directly).
+
+          Targets for v1: ["itch.io", "gh-pages", "roblox"]. Roblox is first-class
+          when source.kind is "rojo" and games/<slug>.yaml has a roblox: block;
+          it's simply skipped otherwise.
+
+          Save publish_plan_v1 to memory with:
+            { slug, version_label, resolved_ref, source_repo, slug_options, chosen_slug,
+              metadata, package_path, package_sha256, package_bytes, targets,
+              preflight_results, estimated_urls, roblox: {universe_id, place_id,
+              prior_version_number} | null }.
+
+          DO NOT PUBLISH. Stop here and wait for gate-publish.
+        output: publish_plan
+
+      - id: gate-publish
+        type: human-gate
+        depends_on: [publish-prep]
+        review_of: publish-prep
+        task: |
+          Ship gate. Review publish_plan_v1:
+            - Confirm slug + version_label + resolved_ref match intent.
+            - Pick one of the three twisted title candidates (or reject and ask for
+              three new ones).
+            - Review metadata, cover mock, screenshots.
+            - Confirm target list (defaults: itch.io + gh-pages).
+          Approve to publish, skip a specific target, or request changes. This is
+          the moment when a public URL is created with your handle on it.
+
+      - id: publish
+        agent: publisher
+        depends_on: [gate-publish]
+        task: |
+          Execute publish_plan_v1 with the approved title. Push to each approved
+          target in parallel:
+            - itch.io via itchio_publish (butler push + butler status).
+            - gh-pages via gh_pages_publish (commit docs/<slug>/ on gh-pages branch).
+            - roblox via roblox_publish — wraps a single Open Cloud call:
+                POST https://apis.roblox.com/universes/v1/{universe_id}/places/{place_id}/versions?versionType=Published
+                Headers:
+                  x-api-key: $<value of games/<slug>.yaml roblox.api_key_env>
+                  Content-Type: application/octet-stream
+                Body: raw bytes of artifacts/<slug>/dist/<label>/<slug>.rbxlx
+                Expected response: {"versionNumber": N}. Record N in the manifest.
+                On non-2xx, surface the response body verbatim — auth/quota/scope
+                errors are the common Roblox failure modes.
+
+          For each target: verify liveness.
+            - HTML (itch.io, gh-pages): HEAD the URL until 200, Playwright-load
+              it headless, take a live screenshot under assets/publish/<slug>/,
+              note any console errors.
+            - Roblox: HEAD https://www.roblox.com/games/{place_id} until 200
+              (allow up to 2 min for first-publish cache warm-up), Playwright-load
+              the listing page headless, screenshot it. Do NOT try to join the
+              running experience — there's no headless Roblox client; listing
+              render + matching version_number is the verification.
+
+          Write publish_manifest_v1 to memory with slug, version_label, resolved_ref,
+          source_repo, chosen_title, published_at, targets (name/url/status/bytes/
+          live_shot + Roblox extras: universe_id, place_id, version_number,
+          prior_version_number), compliance_rating, assets_licensed.
+
+          Then patch games/<slug>.yaml IN PLACE: set the shipped version's
+          published.<target> to the live URL and flip its status to "shipped".
+          For Roblox, also write published.roblox_version_number so the next
+          publish knows what to roll back to via copySourceVersion. Append a
+          row to docs/published-games.md.
+
+          Post ONE message to the project channel: "🎪 Shipped: <title> — <primary_url>
+          — <live_screenshot>". Nothing else.
+        output: manifest
+
+  new-game:
+    name: "New Game Production"
+    description: "Full pipeline from concept to deployed prototype"
+    steps:
+      - id: concept
+        agent: game-designer
+        task: "Produce mechanics_v1 (pitch, core loop, scene list, flavor text, tuning table) from concept: {input}"
+        output: mechanics_v1
+
+      - id: prototype
+        agent: frontend-developer
+        depends_on: [concept]
+        task: "Build a playable web prototype implementing mechanics_v1 core loop. Use the tech_stack specified in the project (Phaser, Three.js, Pixi.js, Babylon.js, or plain web). Keep it a single HTML file when possible."
+        output: prototype_code
+
+      - id: review
+        agent: code-reviewer
+        depends_on: [prototype]
+        task: "Shippability + kid-safety review of prototype against mechanics_v1"
+        output: review_feedback
+
+      - id: human-review
+        type: human-gate
+        depends_on: [prototype, review]
+        task: "Review prototype + review feedback. Approve to continue."
+
+  quick-prototype:
+    name: "Quick Prototype"
+    description: "Fast prototype from a one-line idea — parallel art + build after design"
+    steps:
+      - id: design
+        agent: game-designer
+        task: "Create a minimal GDD for: {input}. Focus on core loop only. Save to memory as artifact key 'gdd_v1'."
+        output: gdd
+
+      - id: art-brief
+        agent: technical-artist
+        depends_on: [design]
+        task: "Based on the GDD in memory (key: gdd_v1), draft a short art brief: color palette (3-5 hex codes), sprite style, UI font suggestion. Save to memory as artifact key 'art_brief_v1'."
+        output: art_brief
+
+      - id: build
+        agent: frontend-developer
+        depends_on: [design]
+        task: "Build a playable web prototype from the GDD (memory key: gdd_v1). Use the project's tech_stack (Phaser, Three.js, Pixi.js, Babylon.js, or plain web). Prefer a single HTML file. Save the final HTML to memory as artifact key 'game_html_v1'."
+        output: code
+
+      - id: review
+        agent: code-reviewer
+        depends_on: [build]
+        task: "Review the HTML prototype in memory (key: game_html_v1) for bugs, performance, and security. Short report only."
+        output: review
+
+  roblox-experience:
+    name: "Roblox Experience"
+    description: "Pipeline for Roblox game development"
+    steps:
+      - id: design
+        agent: roblox-experience-designer
+        task: "Design Roblox experience for: {input}"
+        output: design_doc
+
+      - id: script
+        agent: roblox-systems-scripter
+        depends_on: [design]
+        task: "Implement the core systems in Luau"
+        output: scripts
+
+      - id: review
+        agent: code-reviewer
+        depends_on: [script]
+        task: "Review Luau scripts for security and performance"
+        output: review
 
   iterate_artifact:
     name: "Iterate on an existing game (playtest → postmortem → propose → implement, looped)"
@@ -401,52 +791,6 @@ pipelines:
           Required memory output: artifact key `telemetry_{{iteration_tag}}`
           (written by the tool).
         output: telemetry
-        expected_outputs:
-          - {kind: memory_key, type: artifact, key: "telemetry_{{iteration_tag}}", min_bytes: 100}
-
-      - id: dashboard-refresh
-        agent: metrics-dashboard-builder
-        depends_on: [playtest]
-        task: |
-          The playtest just wrote new telemetry/*.json to the artifact repo.
-          Re-run tools/metrics_rollup.py (via external_repo_commit with a
-          run-script step, or inline the rollup and rewrite metrics.sqlite) so
-          the new session rows land in the store. Commit metrics.sqlite back to
-          the iteration branch. Dashboard.html does not change this cycle.
-
-          Save 'metrics_store_refresh_v{{cycle_n}}' = { rows_added,
-          sessions_added, generated_at }.
-
-          If tools/metrics_rollup.py is missing (pre-analytics artifact), fail
-          the task with a clear message — don't silently skip; the phased-
-          producer pipeline should have set this up.
-        output: dashboard_refresh
-        expected_outputs:
-          - {kind: memory_key, type: artifact, key: "metrics_store_refresh_v{{cycle_n}}", min_bytes: 40}
-
-      - id: feedback-synthesis
-        agent: player-feedback-synthesizer
-        depends_on: [playtest]
-        task: |
-          Digest player comments for cycle {{cycle_n}}. Conditional: if the
-          project has no publish_manifest_v1 in memory (not yet shipped), save
-          'player_feedback_v{{cycle_n}}' = { skipped: true, reason:
-          "not_published" } and return — do NOT fabricate comments.
-
-          If published, scrape comments from the URLs in publish_manifest_v1
-          (itch.io page, GH Pages issues, Roblox experience reviews). Include
-          studio-DM snippets with player feedback since last cycle. Scrub PII:
-          names → handles, emails → redacted.
-
-          Produce 3-5 themes, each with ≥ 3 backing verbatim quotes. Tag each
-          quote kid/parent/unknown. For each theme, add a
-          'direction_to_proposal' hint (designer|ux|artist|proto) so the next
-          proposal step can pick it up.
-
-          Save as 'player_feedback_v{{cycle_n}}'.
-        output: player_feedback
-        expected_outputs:
-          - {kind: memory_key, type: artifact, key: "player_feedback_v{{cycle_n}}", min_bytes: 40}
 
       - id: postmortem
         agent: analytics-reporter
@@ -469,17 +813,8 @@ pipelines:
           All metric names you mention must pass validate_goals_md — same
           vocabulary as GOALS.md. Do not invent fps, drop_rate, etc.
 
-          Optional inputs (read if present, don't block if missing — these
-          steps run in parallel with you):
-            - 'player_feedback_v{{cycle_n}}' — if non-empty, weave 1-2 quoted
-              themes into the problems section and tag their direction_to_proposal.
-            - 'metrics_store_refresh_v{{cycle_n}}' — if present, link the
-              committed dashboard.html in the summary for the human gate.
-
           Save to memory as artifact 'postmortem_{{iteration_tag}}'.
         output: postmortem
-        expected_outputs:
-          - {kind: memory_key, type: artifact, key: "postmortem_{{iteration_tag}}", min_bytes: 600}
 
       # Four proposers fan out in parallel — deliberately no depends_on between
       # them. Each reads the same postmortem and pitches one change.
@@ -488,299 +823,109 @@ pipelines:
         depends_on: [postmortem]
         task: |
           Read 'postmortem_{{iteration_tag}}' + 'goals_md' + 'mechanics_v1' from memory.
-          Propose 5-8 distinct MECHANICS-level ideas for cycle {{cycle_n}}+1. Each
-          idea targets a miss in the postmortem — skip ideas you would rank below 6/10.
+          Propose ONE mechanics-level change for cycle {{cycle_n}}+1 that targets the
+          single most-impactful miss in the postmortem.
 
-          OUTPUT CONTRACT — emit a single ```json fenced block, no prose outside it:
+          Format (≤ 300 words):
+            - Title (one line).
+            - Change (what, in code-change terms — file/system, new param, removed
+              behaviour, altered curve).
+            - Expected metric movement: name the §2 metric(s) this should move and
+              by how much (e.g. "accuracy: +0.05 on death runs").
+            - Risk: what could get worse (name a §2 metric).
 
-          ```json
-          {
-            "role": "designer",
-            "ideas": [
-              {
-                "id": "designer-1",
-                "title": "<one-line action>",
-                "hypothesis": "<if we change X then metric Y moves because ...>",
-                "expected_impact": {"metric": "<exact §2 metric name>", "delta": "<+0.05 / +15s / -2>"},
-                "risk": "<what could get worse; name a §2 metric>",
-                "change_summary": "<file/system touched + concrete edit in 1 sentence>"
-              }
-            ]
-          }
-          ```
-
-          Rules:
-            - 5-8 ideas. Span multiple misses, not 5 angles on the same miss.
-              Order best → worst by your own ranking.
-            - `expected_impact.metric` MUST pass validate_goals_md (same vocab
-              as the postmortem). Do not invent fps, drop_rate, etc.
-            - Ideas must be mechanics (spawn curves, damage values, win conditions,
-              progression). Not HUD (→ ux), not art (→ artist), not refactors (→ proto).
-            - If your JSON fails to parse downstream, the whole role drops out of the
-              human gate. Validate mentally before returning.
-
-          Save the JSON block verbatim (including fences) to artifact
-          'proposal_designer_{{iteration_tag}}'.
+          Save to memory as artifact 'proposal_designer_{{iteration_tag}}'.
         output: proposal_designer
-        expected_outputs:
-          - {kind: memory_key, type: artifact, key: "proposal_designer_{{iteration_tag}}", min_bytes: 400}
 
       - id: propose-ux
         agent: hud-designer
         depends_on: [postmortem]
         task: |
           Read 'postmortem_{{iteration_tag}}' + 'goals_md' + 'hud_spec_v1' from memory.
-          Propose 5-8 HUD / flow / legibility ideas for cycle {{cycle_n}}+1 — HUD
-          placement, pause behavior, win/lose tone, tutorial hints, feedback signals.
-          Not mechanics (→ designer), not juice FX (→ artist).
+          Propose ONE HUD / flow / legibility change (HUD element placement, pause
+          behavior, win/lose tone, tutorial hint, feedback signal) for cycle
+          {{cycle_n}}+1 that addresses a miss in the postmortem — not a mechanics
+          change, not new juice FX (that's propose-artist).
 
-          OUTPUT CONTRACT identical to propose-designer, except `"role": "ux"` and
-          `id` prefix `ux-1` … `ux-8`. 5-8 ideas, ranked best → worst, JSON fenced,
-          no prose outside. Metric names must pass validate_goals_md.
+          Format identical to propose-designer (Title, Change, Expected metric
+          movement, Risk). Cite §2 metrics.
 
-          Save to artifact 'proposal_ux_{{iteration_tag}}'.
+          Save as artifact 'proposal_ux_{{iteration_tag}}'.
         output: proposal_ux
-        expected_outputs:
-          - {kind: memory_key, type: artifact, key: "proposal_ux_{{iteration_tag}}", min_bytes: 400}
 
       - id: propose-artist
         agent: technical-artist
         depends_on: [postmortem]
         task: |
           Read 'postmortem_{{iteration_tag}}' + 'goals_md' + 'laf_brief_v1' from
-          memory. Propose 5-8 art / feedback / readability ideas for cycle
-          {{cycle_n}}+1 — silhouette, palette, animation, juice FX, camera shake.
+          memory. Propose ONE art / feedback / readability change for cycle
+          {{cycle_n}}+1 — silhouette, palette, animation, or juice FX.
 
-          OUTPUT CONTRACT identical to propose-designer, except `"role": "artist"`
-          and `id` prefix `artist-1` … `artist-8`. 5-8 ideas, ranked best → worst,
-          JSON fenced, no prose outside. Metric names must pass validate_goals_md.
+          Format identical to propose-designer. Cite §2 metrics.
 
-          Save to artifact 'proposal_artist_{{iteration_tag}}'.
+          Save as artifact 'proposal_artist_{{iteration_tag}}'.
         output: proposal_artist
-        expected_outputs:
-          - {kind: memory_key, type: artifact, key: "proposal_artist_{{iteration_tag}}", min_bytes: 400}
 
       - id: propose-proto
         agent: frontend-developer
         depends_on: [postmortem]
         task: |
           Read 'postmortem_{{iteration_tag}}' + 'goals_md' + 'game_html_v{{cycle_n}}'
-          from memory. Propose 5-8 code-level ideas for cycle {{cycle_n}}+1 —
-          refactors, tuning, bug fixes, perf wins, input handling. Not design.
+          from memory. Propose ONE code-level change (refactor, tuning, bug fix,
+          perf win) for cycle {{cycle_n}}+1 addressing a miss — not a design change.
 
-          OUTPUT CONTRACT identical to propose-designer, except `"role": "proto"`
-          and `id` prefix `proto-1` … `proto-8`. 5-8 ideas, ranked best → worst,
-          JSON fenced, no prose outside. Metric names must pass validate_goals_md.
+          Format identical to propose-designer. Cite §2 metrics.
 
-          Save to artifact 'proposal_proto_{{iteration_tag}}'.
+          Save as artifact 'proposal_proto_{{iteration_tag}}'.
         output: proposal_proto
-        expected_outputs:
-          - {kind: memory_key, type: artifact, key: "proposal_proto_{{iteration_tag}}", min_bytes: 400}
 
       - id: synthesis_gate
         type: human-gate
         depends_on: [propose-designer, propose-ux, propose-artist, propose-proto]
         review_of: propose-designer
         task: |
-          Review all 20-32 ideas across designer / ux / artist / proto against
-          'postmortem_{{iteration_tag}}'. Select the subset (any roles, any count)
-          you want implemented this cycle — or add your own ideas. Approve to hand
-          off to implement. Request changes to send every role back for a revised
-          batch of ideas. Reject all to halt the loop.
-          Selected ids + any human-added ideas land in 'selected_ideas_{{iteration_tag}}'.
+          Review all 4 proposals (propose-designer / propose-ux / propose-artist /
+          propose-proto) against 'postmortem_{{iteration_tag}}'. Pick ONE to
+          implement, request a revision on one, or reject all and halt the loop.
+          The gate's approval note is passed to the implement step as the brief.
 
-      # Cheap pre-flight estimator: reads the approved idea bundle + current
-      # code and projects token cost per idea + a size-balanced engineer split.
-      # Keeps this model deliberately small — the output is a budget forecast,
-      # not a design doc.
-      - id: estimate-implement
-        agent: tech-lead
+      - id: cd-proposal-check
+        agent: creative-director
         depends_on: [synthesis_gate]
-        model_override: "anthropic/anthropic.claude-haiku-4-5-20251001-v1:0"
         task: |
-          You are the budget estimator for cycle {{cycle_n}}+1. Your job is NOT
-          to design — it is to forecast how expensive each approved idea will be
-          to implement and to propose a parallel engineer split.
+          Read the human-picked proposal from synthesis_gate + concept_options_v1 +
+          mechanics_v1 + postmortem_{{iteration_tag}} from memory.
+          Evaluate whether the proposed change preserves creative identity:
+            1. Does this change reinforce or dilute the pillars?
+            2. Does the expected metric movement align with the game's emotional arc?
+            3. Could this change introduce ludonarrative dissonance?
+            4. For kid audiences: does this maintain age-appropriate tone and pacing?
+          Issue verdict: [CD-ITERATE]: APPROVE | CONCERNS | REJECT
+          If CONCERNS: name the pillar at risk and suggest a constraint for the
+          implementer to preserve creative intent.
+        output: cd_iterate_verdict
 
-          Read from memory:
-            - 'selected_ideas_{{iteration_tag}}' (JSON: {selected:[…], custom:[…]})
-            - 'game_html_v{{cycle_n}}' (current build, for scope estimation)
-            - 'tech_plan_v1', 'laf_brief_v1' (architectural context)
-
-          Also read the top-level file list at memory['artifact_repo_path'] via
-          the `external_repo_list` tool (or the bundled tool your runtime exposes).
-
-          For each idea (selected + custom), estimate:
-            - files_touched: which .mjs / .html / asset files it will edit
-            - est_tokens: realistic token budget to implement (read + think + edit + write)
-            - complexity: "low" (<40k) | "medium" (40-90k) | "high" (>90k)
-            - conflicts_with: ids of other ideas that edit the same function/region
-
-          Then compose a size-balanced split: 2-4 engineers, each gets ~80k-150k
-          worth of ideas, no engineer has two ideas that edit the same function.
-          Aim for 2 engineers if the total is under 300k, 3-4 if above.
-
-          OUTPUT CONTRACT — emit a single ```json fenced block, no prose outside:
-
-          ```json
-          {
-            "cycle_n_plus_1": {{cycle_n_plus_1}},
-            "ideas": [
-              {
-                "id": "<idea.id>",
-                "title": "<one-line>",
-                "files_touched": ["game.mjs", "hud.mjs"],
-                "est_tokens": 62000,
-                "complexity": "medium",
-                "conflicts_with": ["<other.id>"]
-              }
-            ],
-            "total_tokens_single": 245000,
-            "total_tokens_parallel": 280000,
-            "lead_coordinator_tokens": 35000,
-            "recommended_split": [
-              {"engineer_id": "eng-1", "idea_ids": ["…","…"], "est_tokens": 115000, "primary_files": ["game.mjs"]},
-              {"engineer_id": "eng-2", "idea_ids": ["…"], "est_tokens": 92000,  "primary_files": ["hud.mjs"]}
-            ],
-            "conflicts": [
-              {"idea_ids": ["a","b"], "file": "game.mjs", "line_region": "spawn()+xp()", "note": "both touch level-0 init; assign to same engineer"}
-            ],
-            "recommendation": "parallel|extend_cap|drop_ideas",
-            "recommendation_reason": "total 245k fits a 2-engineer split cleanly"
-          }
-          ```
-
-          Save the JSON block verbatim to artifact 'implementation_plan_{{iteration_tag}}'.
-        output: implementation_plan
-        expected_outputs:
-          - {kind: memory_key, type: artifact, key: "implementation_plan_{{iteration_tag}}", min_bytes: 400}
-
-      # Human reviews the forecast, picks one of three decision paths.
-      # Decision JSON lands in 'budget_decision_{{iteration_tag}}'. Approve
-      # forks the downstream plan:
-      #   parallel   → prep-brief + N implement-engineer-* fan-out
-      #   extend_cap → single engineer with bumped budget_max_tokens
-      #   drop_ideas → single engineer with reduced bundle
-      - id: budget_gate
-        type: human-gate
-        depends_on: [estimate-implement]
-        review_of: estimate-implement
-        task: |
-          Review the implementation plan (per-idea token estimate, proposed
-          split, conflicts). Pick ONE:
-            - Approve parallel split  → lead writes brief, N engineers run on
-              worktrees with fresh budget each, lead merges + smokes.
-            - Extend budget cap        → single engineer with a bumped 200k cap
-              (you pick the new cap; think 300–500k).
-            - Drop heavy ideas         → deselect ideas to fit the default cap.
-          Decision lands in 'budget_decision_{{iteration_tag}}'.
-
-      # Lead agent writes the shared design doc BEFORE engineers fan out. Every
-      # engineer sees the full idea list + shared contracts + their own scope
-      # card, so 4 parallel workers still produce one coherent cycle.
-      - id: prep-brief
-        agent: tech-lead
-        depends_on: [budget_gate]
-        task: |
-          You are the LEAD ENGINEER for cycle {{cycle_n}}+1. Read:
-            - 'selected_ideas_{{iteration_tag}}'
-            - 'implementation_plan_{{iteration_tag}}'
-            - 'budget_decision_{{iteration_tag}}' (decision.mode + split)
-            - 'game_html_v{{cycle_n}}', 'tech_plan_v1', 'laf_brief_v1'
-
-          Write 'implementation_brief_{{iteration_tag}}' — the design doc every
-          sub-engineer will follow. ≤ 800 words. Sections:
-
-            1. **Cycle hypothesis** — one paragraph: what pain we're closing and
-               the one-sentence bet per the postmortem.
-            2. **Full idea list** — every approved idea with a 1-line summary.
-               Mark which engineer owns each (from decision.split). Every
-               engineer must be aware of everyone else's scope, not just their own.
-            3. **Shared contracts** — event names to emit, helper modules to add
-               vs. extend, telemetry keys, UI state flags. Name the canonical
-               helper for any pattern 2+ ideas would duplicate.
-            4. **Per-engineer scope card** — for each eng-i:
-                 - Your ideas (ids + titles)
-                 - Your primary files
-                 - Adjacent engineers' ideas that share a file or concept, with
-                   "read before touching X" notes
-                 - Merge order hint (who edits the same function first)
-            5. **Don't-break list** — window.__game shape, 8-event telemetry
-               catalogue, ITERATION_CONTRACT.md invariants, GOALS.md metric names.
-
-          Save to artifact 'implementation_brief_{{iteration_tag}}'. When this
-          task completes, the orchestrator fans out N implement-engineer tasks
-          (one per split entry) that all depend on this brief + on budget_gate.
-        output: implementation_brief
-        expected_outputs:
-          - {kind: memory_key, type: artifact, key: "implementation_brief_{{iteration_tag}}", min_bytes: 600}
-
-      # Terminal step. Acts differently based on budget_decision.mode:
-      #   - parallel   → waits for all implement-engineer-{i} tasks, merges
-      #                  their branches, runs playtest_bot smoke, commits final
-      #                  game_html_v{{cycle_n_plus_1}}.
-      #   - extend_cap → runs with a bumped budget_max_tokens (orchestrator
-      #                  applies the override from budget_decision.extended_cap)
-      #                  and implements every selected idea itself.
-      #   - drop_ideas → runs with the reduced bundle from
-      #                  budget_decision.kept_ids, fits inside default 200k.
       - id: implement
         agent: frontend-developer
-        depends_on: [prep-brief]
+        depends_on: [cd-proposal-check]
         task: |
-          Terminal step for cycle {{cycle_n}}+1. Your behaviour is driven by
-          'budget_decision_{{iteration_tag}}'. Read it FIRST.
+          Implement the approved proposal from the synthesis_gate for cycle
+          {{cycle_n}}+1. Read these memory keys BEFORE editing: the chosen
+          'proposal_*_{{iteration_tag}}', 'game_html_v{{cycle_n}}', 'tech_plan_v1',
+          'laf_brief_v1'.
 
-          Always read: 'selected_ideas_{{iteration_tag}}',
-          'implementation_brief_{{iteration_tag}}', 'game_html_v{{cycle_n}}',
-          'tech_plan_v1', 'laf_brief_v1'.
+          Apply the proposal — do not rebuild from scratch. Preserve window.__game
+          shape so the next playtest bot can still drive the game.
 
-          ── If decision.mode == "parallel" ──
-          N implement-engineer-{i} sub-tasks have already finished and each has
-          committed to branch `iteration/eng-{i}-v{{cycle_n_plus_1}}` with its
-          results summarised in memory as `engineer_result_{i}_{{iteration_tag}}`.
+          Save the new build to memory as artifact 'game_html_v{{cycle_n_plus_1}}'.
+          Then call the `external_repo_commit` tool with:
+            - repo_path = memory[`artifact_repo_path`]
+            - files = [{path: "index.html", content: <the new game html>}]
+            - branch = "iteration/v{{cycle_n_plus_1}}"
+            - message = "iteration v{{cycle_n_plus_1}}: <one-line proposal title>"
 
-          You are the LEAD / MERGER:
-            1. Read every `engineer_result_{i}_{{iteration_tag}}`.
-            2. Use `external_repo_merge` (or sequential external_repo_commit
-               with the merged content) to bring every eng-{i} branch into a
-               fresh `iteration/v{{cycle_n_plus_1}}` branch.
-            3. Resolve conflicts by re-reading the brief's "merge order hint"
-               and picking the higher-impact edit; note every conflict in the
-               merge report.
-            4. Run a 1-run smoke via `iteration_runner` (runs=1, seconds=20,
-               tag=smoke-v{{cycle_n_plus_1}}). If it errors or the bot can't
-               reach first_playable, patch minimally to unblock — don't redo
-               the cycle's work.
-            5. Save the merged HTML to memory as
-               'game_html_v{{cycle_n_plus_1}}'.
-            6. Write 'merge_report_{{iteration_tag}}' with: ideas_landed_clean,
-               ideas_with_conflicts, smoke_outcome, anything_i_had_to_fix.
-            7. Call `external_repo_commit` with the merged index.html on branch
-               `iteration/v{{cycle_n_plus_1}}`, message
-               "iteration v{{cycle_n_plus_1}}: merge of {n} engineer branches".
-
-          Harmonize pass: scan the merged tree for duplication (same helper
-          defined twice), inconsistent event names, or orphaned telemetry. If
-          any found, fix inline and note in the merge report. That is your
-          PR-review pass.
-
-          ── If decision.mode == "extend_cap" ──
-          Your budget_max_tokens was raised via task metadata. Apply every idea
-          in selected_ideas + custom yourself, following the brief. Combine
-          changes where they touch the same system.
-
-          ── If decision.mode == "drop_ideas" ──
-          Read decision.kept_ids; only implement those ideas (ignore the rest).
-          Fits inside the default 200k.
-
-          ── All modes ──
-          Do not rebuild from scratch. Preserve window.__game shape so the next
-          playtest bot can drive the game. Save final to
-          'game_html_v{{cycle_n_plus_1}}' and commit via `external_repo_commit`
-          to branch `iteration/v{{cycle_n_plus_1}}`. The orchestrator will
-          relaunch the playtest step for cycle {{cycle_n_plus_1}} as soon as
-          this task completes.
+          Do NOT use bash/git directly — the sandbox can't reach the artifact
+          repo. `external_repo_commit` writes the files, stages them, and makes
+          a local commit (no push). The orchestrator will relaunch the playtest
+          step for cycle {{cycle_n_plus_1}} as soon as this task completes.
         output: build
-        expected_outputs:
-          - {kind: memory_key, type: artifact, key: "game_html_v{{cycle_n_plus_1}}", min_bytes: 2000}

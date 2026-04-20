@@ -1,0 +1,56 @@
+{
+  "name": "roblox-smoke-test",
+  "tree": {
+    "$className": "DataModel",
+    "ReplicatedStorage": {
+      "$className": "ReplicatedStorage",
+      "SmokeTest": {
+        "$path": "src/ReplicatedStorage/SmokeTest.luau"
+      },
+      "VersionStamp": {
+        "$className": "StringValue",
+        "$properties": {
+          "Value": "code-play publisher smoke test v1 — 2026-04-19"
+        }
+      }
+    },
+    "ServerScriptService": {
+      "$className": "ServerScriptService",
+      "Hello": {
+        "$path": "src/ServerScriptService/Hello.server.luau"
+      }
+    },
+    "Workspace": {
+      "$className": "Workspace",
+      "Baseplate": {
+        "$className": "Part",
+        "$properties": {
+          "Size": [512, 1, 512],
+          "Position": [0, -0.5, 0],
+          "Anchored": true,
+          "Locked": true,
+          "Color": [0.388, 0.372, 0.384],
+          "Material": "Plastic"
+        }
+      },
+      "SpawnLocation": {
+        "$className": "SpawnLocation",
+        "$properties": {
+          "Size": [6, 1, 6],
+          "Position": [0, 0.5, 0],
+          "Anchored": true,
+          "Color": [0.294, 0.592, 0.294],
+          "Material": "Plastic"
+        }
+      }
+    },
+    "Lighting": {
+      "$className": "Lighting",
+      "$properties": {
+        "Ambient": [0.196, 0.196, 0.196],
+        "Brightness": 2,
+        "Technology": "ShadowMap"
+      }
+    }
+  }
+}

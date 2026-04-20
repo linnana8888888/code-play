@@ -1,0 +1,21 @@
+# Maps artifact keys (as referenced in pipeline task prompts) to template files.
+# The agent runtime scans task prompts for artifact key patterns and injects
+# the matching template into the system prompt.
+
+artifact_templates:
+  concept_options_v1: templates/concept/concept_options_v1.md.tmpl
+  mechanics_v1: templates/concept/mechanics_v1.md.tmpl
+  style_research_v1: templates/research/style_research_v1.md.tmpl
+  trend_report_v1: templates/research/trend_report_v1.md.tmpl
+  laf_brief_v1: templates/design/laf_brief_v1.md.tmpl
+  hud_spec_v1: templates/design/hud_spec_v1.md.tmpl
+  screen_flow_v1: templates/design/screen_flow_v1.md.tmpl
+  audio_plan_v1: templates/design/audio_plan_v1.md.tmpl
+  juice_pass_v1: templates/design/juice_pass_v1.md.tmpl
+  tech_plan_v1: templates/engineering/tech_plan_v1.md.tmpl
+  implementation_brief_v1: templates/engineering/implementation_brief_v1.md.tmpl
+  code_review_v1: templates/engineering/code_review_v1.md.tmpl
+  qa_report_v1: templates/qa/qa_report_v1.md.tmpl
+  publish_plan_v1: templates/publish/publish_plan_v1.md.tmpl
+  production_status_v1: templates/production/production_status_v1.md.tmpl
+  telemetry_spec_v1: templates/analytics/telemetry_spec_v1.md.tmpl

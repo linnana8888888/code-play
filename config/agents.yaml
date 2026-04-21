@@ -42,18 +42,21 @@ agents:
     fallback_model: "anthropic/anthropic.claude-sonnet-4-6"
     description: "Mechanics + levels + flavor owner — produces mechanics_v1 for web + Roblox kid games"
     tools: [core, web_search, web_fetch, asset_search, asset_fetch]
+    skills: [superpowers:brainstorming, superpowers:writing-plans, design-consultation, product-management:feature-spec]
 
   game-audio-engineer:
     model: "anthropic/anthropic.claude-sonnet-4-6"
     fallback_model: "omlx/Qwen3.5-9B-MLX-4bit"
     description: "Picks 5-7 SFX from approved free pools + wires Web Audio API / Roblox SoundService"
     tools: [core, asset_search, asset_fetch]
+    skills: [superpowers:verification-before-completion]
 
   technical-artist:
     model: "anthropic/anthropic.claude-sonnet-4-6"
     fallback_model: "omlx/Qwen3.5-9B-MLX-4bit"
     description: "Palette + sprite atlas + hero glyph + 8-pool asset license audit for web/Roblox"
     tools: [core, web_search, web_fetch, asset_search, asset_fetch]
+    skills: [document-skills:canvas-design, superpowers:verification-before-completion]
 
   # Engineering (2026-04-19 audit):
   #   frontend-developer  → web game implementation per tech_plan_v1
@@ -73,12 +76,14 @@ agents:
     fallback_model: "openai/gpt-5-2025-08-07"
     description: "Web game implementer — builds game_html_v1 per tech_plan_v1 (Three.js/canvas + DOM UI)"
     tools: [core, web_search, web_fetch, asset_search, asset_fetch, external_repo_commit]
+    skills: [superpowers:test-driven-development, superpowers:systematic-debugging, document-skills:frontend-design]
 
   code-reviewer:
     model: "anthropic/anthropic.claude-sonnet-4-6"
     fallback_model: "anthropic/anthropic.claude-haiku-4-5-20251001-v1:0"
     description: "Shippability + kid-safety review of web/Roblox game code against tech_plan_v1; absorbed lightweight security checklist"
     tools: [core]
+    skills: [superpowers:receiving-code-review, superpowers:requesting-code-review, superpowers:verification-before-completion]
 
   # Unity (2026-04-20 — new engine tier for Unity game production)
   #   unity-specialist          → MonoBehaviour/DOTS, subsystems, best practices
@@ -108,6 +113,7 @@ agents:
     fallback_model: "anthropic/anthropic.claude-sonnet-4-6"
     description: "Unity C# gameplay implementation — mechanics, state machines, data-driven design (ScriptableObjects), frame-rate independent logic"
     tools: [core, external_repo_commit]
+    skills: [superpowers:test-driven-development, superpowers:systematic-debugging]
 
   # Roblox
   roblox-systems-scripter:
@@ -135,6 +141,7 @@ agents:
     fallback_model: "anthropic/anthropic.claude-sonnet-4-6"
     description: "Playtest web games against the mechanics spec using a headless browser"
     tools: [core, playwright_browser, mcp:playwright, iteration_runner, generate_bot, update_criterion_status]
+    skills: [superpowers:systematic-debugging, superpowers:test-driven-development, document-skills:webapp-testing, superpowers:verification-before-completion]
 
   game-performance-tester:
     model: "anthropic/anthropic.claude-sonnet-4-6"
@@ -147,6 +154,7 @@ agents:
     fallback_model: "anthropic/anthropic.claude-sonnet-4-6"
     description: "Final ship/no-ship gate — cross-checks QA + perf evidence, owns web a11y + Roblox accessibility guide checks, defaults to HOLD"
     tools: [core, playwright_browser, mcp:playwright, update_criterion_status]
+    skills: [superpowers:verification-before-completion]
 
   # Research
   style-researcher:
@@ -160,6 +168,7 @@ agents:
     fallback_model: "anthropic/anthropic.claude-sonnet-4-6"
     description: "Teardown popular games → actionable mechanic steal-list for ideation before concept lock"
     tools: [core, web_search, web_fetch]
+    skills: [product-management:competitive-analysis, superpowers:brainstorming]
 
   # Leadership (2026-04-20 — new tier: vision + architecture ownership)
   #   creative-director    → vision guardian, pillar arbiter, scope cut, conflict resolution
@@ -169,12 +178,14 @@ agents:
     fallback_model: "anthropic/anthropic.claude-sonnet-4-6"
     description: "Vision guardian — pillar methodology, MDA framework, player psychology, scope arbitration, cross-discipline conflict resolution"
     tools: [core, propose_agent]
+    skills: [superpowers:brainstorming, design-consultation, product-management:competitive-analysis]
 
   technical-director:
     model: "anthropic/anthropic.claude-opus-4-7"
     fallback_model: "anthropic/anthropic.claude-sonnet-4-6"
     description: "Architecture owner — technology evaluation, performance budgets, risk register, ADR format, cross-system integration"
     tools: [core, web_search, web_fetch, propose_agent]
+    skills: [superpowers:writing-plans, superpowers:brainstorming]
 
   # Engineering leadership
   tech-lead:
@@ -182,6 +193,7 @@ agents:
     fallback_model: "anthropic/anthropic.claude-sonnet-4-6"
     description: "Per-project engineering plan — picks engine, stack, module layout, coding standards; produces tech_plan_v1"
     tools: [core, web_search, web_fetch]
+    skills: [superpowers:writing-plans, superpowers:brainstorming, product-management:feature-spec]
 
   # Stealth/experimental tier removed 2026-04-19 — OpenRouter was retired from the
   # router on 2026-04-17 so stealth-experiment had no working backend. The
@@ -201,6 +213,7 @@ agents:
     fallback_model: "omlx/Qwen3.5-9B-MLX-4bit"
     description: "Lays out title + HUD + pause + win/lose screens for kid web/Roblox games; produces hud_spec_v1"
     tools: [core, web_search, web_fetch]
+    skills: [document-skills:frontend-design, design-consultation]
 
   screen-flow-designer:
     model: "anthropic/anthropic.claude-sonnet-4-6"
@@ -213,6 +226,7 @@ agents:
     fallback_model: "anthropic/anthropic.claude-opus-4-7"
     description: "Trend + behavior research for kid (6-12) web/Roblox game landscape; produces trend_report_v1"
     tools: [core, web_search, web_fetch]
+    skills: [product-management:competitive-analysis, superpowers:brainstorming]
 
   juice-polisher:
     model: "anthropic/anthropic.claude-sonnet-4-6"
@@ -232,6 +246,7 @@ agents:
     fallback_model: "anthropic/anthropic.claude-sonnet-4-6"
     description: "End-to-end process owner — drives phased-producer/iterate_artifact, verifies artifacts, prepares human-gate packets, reports status"
     tools: [core, update_criterion_status, propose_agent]
+    skills: [product-management:roadmap-management, product-management:feature-spec, superpowers:verification-before-completion]
 
   # Publishing — ship gate for QA'd builds (added 2026-04-18)
   # Twisted title generation + itch.io + GH Pages + Roblox Open Cloud (v2).
@@ -249,6 +264,7 @@ agents:
     fallback_model: "anthropic/anthropic.claude-sonnet-4-6"
     description: "One-session playable spikes — playcentric iteration, throwaway-ok code"
     tools: [core, web_search, web_fetch, asset_search, asset_fetch, external_repo_commit, scaffold_iteration]
+    skills: [superpowers:brainstorming, playground:playground, superpowers:systematic-debugging]
 
   # Compliance tier removed 2026-04-19 — target platforms (itch.io, GH Pages,
   # Roblox Creator Platform) run their own kids/content compliance review, so
@@ -275,12 +291,14 @@ agents:
     fallback_model: "omlx/Qwen3.5-9B-MLX-4bit"
     description: "Owns metrics.sqlite (events + sessions rollup) and dashboard.html (4 charts, ≤1s cold load); produces metrics_store_spec_v1 + dashboard_html_v1"
     tools: [core]
+    skills: [data:data-visualization, data:interactive-dashboard-builder]
 
   analytics-reporter:
     model: "openai/gpt-5-2025-08-07"
     fallback_model: "anthropic/anthropic.claude-sonnet-4-6"
     description: "Writes the 4-section iteration postmortem + goal hit/miss table + trend_v1 + publish_blurb_v{N}; numbers-driven, ≤600 words"
     tools: [core]
+    skills: [data:data-visualization]
 
   player-feedback-synthesizer:
     model: "anthropic/anthropic.claude-sonnet-4-6"

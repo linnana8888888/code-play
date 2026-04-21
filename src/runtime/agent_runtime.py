@@ -357,9 +357,10 @@ class AgentRuntime:
 
     @staticmethod
     def _resolve_mcp_sentinel(tools: list[str]) -> list[str]:
-        if "mcp" not in tools:
-            return tools
         from src.runtime.mcp_bridge import mcp_bridge
+        has_mcp = any(t == "mcp" or t.startswith("mcp:") for t in tools)
+        if not has_mcp:
+            return tools
         live = list(mcp_bridge.tools.keys())
         out: list[str] = []
         seen: set[str] = set()
@@ -367,6 +368,12 @@ class AgentRuntime:
             if t == "mcp":
                 for name in live:
                     if name not in seen:
+                        out.append(name)
+                        seen.add(name)
+            elif t.startswith("mcp:"):
+                prefix = f"mcp__{t[4:]}__"
+                for name in live:
+                    if name.startswith(prefix) and name not in seen:
                         out.append(name)
                         seen.add(name)
             elif t not in seen:

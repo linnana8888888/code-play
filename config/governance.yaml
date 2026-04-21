@@ -11,7 +11,9 @@
 # or `tools: [builtin, git_push]` to grant builtins plus a specific restricted extra.
 
 builtin:
-  # Core Claude-Code-parity tools — every agent gets these by default.
+  # Every tool in `core` + the role-specific extras below.
+  # `tools: [builtin]` in agents.yaml still expands to this full set for
+  # backward compat; prefer `tools: [core, ...]` for scoped assignments.
   # File & shell
   - file_read
   - file_write
@@ -41,10 +43,7 @@ builtin:
   - task_create
   # Claude Code skills
   - skill_invoke
-  # Shared asset pools — kenney, itch, polyhaven, ambientcg, quaternius,
-  # pixabay (key), freesound (key), oga (CC0-filter).
-  # Non-CC0 content downloads require accept_attribution=true and auto-append
-  # to CREDITS.md at the project root.
+  # Shared asset pools
   - asset_search
   - asset_fetch
   # Headless browser for QA playtests
@@ -54,6 +53,30 @@ builtin:
   - document_write
   - document_read
   - propose_agent
+
+# Lean tier — file, search, git, collab, memory, docs. No web, no assets,
+# no browser, no criterion status, no agent proposals. Use `tools: [core]`
+# in agents.yaml for agents that only read/write code + memory.
+core:
+  - file_read
+  - file_write
+  - file_edit
+  - bash_execute
+  - grep
+  - glob
+  - git_status
+  - git_add
+  - git_commit
+  - git_diff
+  - channel_post
+  - channel_read
+  - escalate
+  - memory_read
+  - memory_write
+  - memory_search
+  - task_create
+  - document_write
+  - document_read
 
 pre_approved:
   # User's existing Claude Code skills/plugins — allowed without prompt.

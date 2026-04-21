@@ -13,13 +13,13 @@
 # Only use OpenRouter for stealth/experimental models not available via LEGO proxy.
 #
 # Tools:
-#   `tools: [builtin]`                    → every builtin + pre_approved tool.
-#   `tools: [builtin, mcp]`               → builtins + every discovered Claude Code plugin MCP tool.
-#                                            Parity with the Claude Code CLI.
-#   `tools: [builtin, mcp, git_push, …]`  → builtins + mcp plus one or more restricted extras (still gated).
-#   `tools: [file_read, channel_post, …]` → explicit subset (no shorthand expansion).
-# The `mcp` token is a late-binding sentinel — resolved at prompt build time against
-# the live `mcp_bridge` catalog so agents see every MCP tool discovered at boot.
+#   `tools: [core]`                       → lean tier: file, git, search, collab, memory, docs (19 tools)
+#   `tools: [builtin]`                    → full tier: core + web + assets + browser + criteria (28+7 tools)
+#   `tools: [core, web_search, web_fetch]`→ core + explicit extras
+#   `tools: [core, mcp:playwright]`       → core + only Playwright MCP tools
+#   `tools: [core, mcp]`                  → core + ALL MCP tools (avoid — ~105KB of schemas)
+#   `mcp:<server>` resolves at prompt-build time to tools matching `mcp__<server>__*`.
+# Prefer `core` + explicit extras over `builtin` to keep context lean.
 
 defaults:
   model: "omlx/Qwen3.5-9B-MLX-4bit"
@@ -41,19 +41,19 @@ agents:
     model: "openai/gpt-5-2025-08-07"
     fallback_model: "anthropic/anthropic.claude-sonnet-4-6"
     description: "Mechanics + levels + flavor owner — produces mechanics_v1 for web + Roblox kid games"
-    tools: [builtin, mcp]
+    tools: [core, web_search, web_fetch, asset_search, asset_fetch]
 
   game-audio-engineer:
     model: "anthropic/anthropic.claude-sonnet-4-6"
     fallback_model: "omlx/Qwen3.5-9B-MLX-4bit"
     description: "Picks 5-7 SFX from approved free pools + wires Web Audio API / Roblox SoundService"
-    tools: [builtin, mcp]
+    tools: [core, asset_search, asset_fetch]
 
   technical-artist:
     model: "anthropic/anthropic.claude-sonnet-4-6"
     fallback_model: "omlx/Qwen3.5-9B-MLX-4bit"
     description: "Palette + sprite atlas + hero glyph + 8-pool asset license audit for web/Roblox"
-    tools: [builtin, mcp]
+    tools: [core, web_search, web_fetch, asset_search, asset_fetch]
 
   # Engineering (2026-04-19 audit):
   #   frontend-developer  → web game implementation per tech_plan_v1
@@ -72,13 +72,13 @@ agents:
     model: "anthropic/anthropic.claude-sonnet-4-6"
     fallback_model: "openai/gpt-5-2025-08-07"
     description: "Web game implementer — builds game_html_v1 per tech_plan_v1 (Three.js/canvas + DOM UI)"
-    tools: [builtin, mcp, external_repo_commit]
+    tools: [core, web_search, web_fetch, asset_search, asset_fetch, external_repo_commit]
 
   code-reviewer:
     model: "anthropic/anthropic.claude-sonnet-4-6"
     fallback_model: "anthropic/anthropic.claude-haiku-4-5-20251001-v1:0"
     description: "Shippability + kid-safety review of web/Roblox game code against tech_plan_v1; absorbed lightweight security checklist"
-    tools: [builtin, mcp]
+    tools: [core]
 
   # Unity (2026-04-20 — new engine tier for Unity game production)
   #   unity-specialist          → MonoBehaviour/DOTS, subsystems, best practices
@@ -89,42 +89,42 @@ agents:
     model: "anthropic/anthropic.claude-sonnet-4-6"
     fallback_model: "omlx/Qwen3.5-9B-MLX-4bit"
     description: "Unity engine expert — MonoBehaviour/DOTS, Addressables, Input System, URP/HDRP, GC management, platform builds"
-    tools: [builtin]
+    tools: [core]
 
   unity-shader-specialist:
     model: "anthropic/anthropic.claude-sonnet-4-6"
     fallback_model: "omlx/Qwen3.5-9B-MLX-4bit"
     description: "Shader Graph, custom HLSL, VFX Graph, URP/HDRP customization, mobile/WebGL shader performance"
-    tools: [builtin]
+    tools: [core]
 
   unity-ui-specialist:
     model: "anthropic/anthropic.claude-sonnet-4-6"
     fallback_model: "omlx/Qwen3.5-9B-MLX-4bit"
     description: "UI Toolkit (USS/UXML), UGUI, data binding/MVVM, responsive layout, accessibility (WCAG AA), localization"
-    tools: [builtin]
+    tools: [core]
 
   gameplay-programmer:
     model: "openai/gpt-5-2025-08-07"
     fallback_model: "anthropic/anthropic.claude-sonnet-4-6"
     description: "Unity C# gameplay implementation — mechanics, state machines, data-driven design (ScriptableObjects), frame-rate independent logic"
-    tools: [builtin, external_repo_commit]
+    tools: [core, external_repo_commit]
 
   # Roblox
   roblox-systems-scripter:
     model: "omlx/Qwen3.5-9B-MLX-4bit"
     description: "Roblox Luau scripting specialist"
-    tools: [builtin, mcp]
+    tools: [core, mcp:Roblox-Studio]
 
   roblox-experience-designer:
     model: "omlx/Qwen3.5-9B-MLX-4bit"
     description: "Roblox engagement and monetization specialist"
-    tools: [builtin, mcp]
+    tools: [core, web_search, web_fetch, mcp:Roblox-Studio]
 
   roblox-avatar-creator:
     model: "anthropic/anthropic.claude-sonnet-4-6"
     fallback_model: "omlx/Qwen3.5-9B-MLX-4bit"
     description: "Roblox UGC / avatar pipeline specialist — rigging, Classic + Layered Clothing, Creator Marketplace submission"
-    tools: [builtin, mcp]
+    tools: [core, asset_search, asset_fetch, mcp:Roblox-Studio]
 
   # Testing — 3-role game-focused taxonomy (2026-04-18):
   #   qa-engineer              → functional playtest (does it work?)
@@ -134,32 +134,32 @@ agents:
     model: "openai/gpt-5-2025-08-07"
     fallback_model: "anthropic/anthropic.claude-sonnet-4-6"
     description: "Playtest web games against the mechanics spec using a headless browser"
-    tools: [builtin, mcp, playwright_browser, iteration_runner, generate_bot]
+    tools: [core, playwright_browser, mcp:playwright, iteration_runner, generate_bot, update_criterion_status]
 
   game-performance-tester:
     model: "anthropic/anthropic.claude-sonnet-4-6"
     fallback_model: "omlx/Qwen3.5-9B-MLX-4bit"
     description: "Runtime performance QA — frame rate, load time, heap on web (playwright) + static/microprofiler reasoning on Roblox"
-    tools: [builtin, mcp, playwright_browser]
+    tools: [core, playwright_browser, mcp:playwright]
 
   game-release-gate:
     model: "anthropic/anthropic.claude-opus-4-7"
     fallback_model: "anthropic/anthropic.claude-sonnet-4-6"
     description: "Final ship/no-ship gate — cross-checks QA + perf evidence, owns web a11y + Roblox accessibility guide checks, defaults to HOLD"
-    tools: [builtin, mcp, playwright_browser]
+    tools: [core, playwright_browser, mcp:playwright, update_criterion_status]
 
   # Research
   style-researcher:
     model: "anthropic/anthropic.claude-opus-4-7"
     fallback_model: "anthropic/anthropic.claude-sonnet-4-6"
     description: "Research visual style references from live Roblox/web games"
-    tools: [builtin, mcp]
+    tools: [core, web_search, web_fetch]
 
   mechanic-researcher:
     model: "anthropic/anthropic.claude-opus-4-7"
     fallback_model: "anthropic/anthropic.claude-sonnet-4-6"
     description: "Teardown popular games → actionable mechanic steal-list for ideation before concept lock"
-    tools: [builtin, mcp]
+    tools: [core, web_search, web_fetch]
 
   # Leadership (2026-04-20 — new tier: vision + architecture ownership)
   #   creative-director    → vision guardian, pillar arbiter, scope cut, conflict resolution
@@ -168,20 +168,20 @@ agents:
     model: "anthropic/anthropic.claude-opus-4-7"
     fallback_model: "anthropic/anthropic.claude-sonnet-4-6"
     description: "Vision guardian — pillar methodology, MDA framework, player psychology, scope arbitration, cross-discipline conflict resolution"
-    tools: [builtin]
+    tools: [core, propose_agent]
 
   technical-director:
     model: "anthropic/anthropic.claude-opus-4-7"
     fallback_model: "anthropic/anthropic.claude-sonnet-4-6"
     description: "Architecture owner — technology evaluation, performance budgets, risk register, ADR format, cross-system integration"
-    tools: [builtin]
+    tools: [core, web_search, web_fetch, propose_agent]
 
   # Engineering leadership
   tech-lead:
     model: "openai/gpt-5-2025-08-07"
     fallback_model: "anthropic/anthropic.claude-sonnet-4-6"
     description: "Per-project engineering plan — picks engine, stack, module layout, coding standards; produces tech_plan_v1"
-    tools: [builtin, mcp]
+    tools: [core, web_search, web_fetch]
 
   # Stealth/experimental tier removed 2026-04-19 — OpenRouter was retired from the
   # router on 2026-04-17 so stealth-experiment had no working backend. The
@@ -200,25 +200,25 @@ agents:
     model: "anthropic/anthropic.claude-sonnet-4-6"
     fallback_model: "omlx/Qwen3.5-9B-MLX-4bit"
     description: "Lays out title + HUD + pause + win/lose screens for kid web/Roblox games; produces hud_spec_v1"
-    tools: [builtin, mcp]
+    tools: [core, web_search, web_fetch]
 
   screen-flow-designer:
     model: "anthropic/anthropic.claude-sonnet-4-6"
     fallback_model: "omlx/Qwen3.5-9B-MLX-4bit"
     description: "Owns the 5-state machine + transition table + input bindings; produces screen_flow_v1"
-    tools: [builtin, mcp]
+    tools: [core]
 
   player-researcher:
     model: "anthropic/anthropic.claude-sonnet-4-6"
     fallback_model: "anthropic/anthropic.claude-opus-4-7"
     description: "Trend + behavior research for kid (6-12) web/Roblox game landscape; produces trend_report_v1"
-    tools: [builtin, mcp]
+    tools: [core, web_search, web_fetch]
 
   juice-polisher:
     model: "anthropic/anthropic.claude-sonnet-4-6"
     fallback_model: "omlx/Qwen3.5-9B-MLX-4bit"
     description: "Post-QA game-juice pass (shake/particles/hit-stop/AV sync); 5-10 file:line deltas; produces juice_pass_v1"
-    tools: [builtin, mcp]
+    tools: [core]
 
   # Production (2026-04-19 audit — collapsed 3 orphan personas into 1 process owner):
   #   producer → drives phased-producer or iterate_artifact end-to-end; tracks
@@ -231,7 +231,7 @@ agents:
     model: "openai/gpt-5-2025-08-07"
     fallback_model: "anthropic/anthropic.claude-sonnet-4-6"
     description: "End-to-end process owner — drives phased-producer/iterate_artifact, verifies artifacts, prepares human-gate packets, reports status"
-    tools: [builtin, mcp]
+    tools: [core, update_criterion_status, propose_agent]
 
   # Publishing — ship gate for QA'd builds (added 2026-04-18)
   # Twisted title generation + itch.io + GH Pages + Roblox Open Cloud (v2).
@@ -241,14 +241,14 @@ agents:
     model: "anthropic/anthropic.claude-sonnet-4-6"
     fallback_model: "omlx/Qwen3.5-9B-MLX-4bit"
     description: "Packages approved builds, generates twisted title candidates, publishes to itch.io + GH Pages + Roblox, verifies live URLs, records manifest"
-    tools: [builtin, mcp, itchio_publish, gh_pages_publish, roblox_publish, playwright_browser, git_push]
+    tools: [core, web_fetch, playwright_browser, mcp:playwright, itchio_publish, gh_pages_publish, roblox_publish, git_push]
 
   # Engineering — rapid prototyping (imported from agency-agents — P0 batch)
   rapid-prototyper:
     model: "openai/gpt-5-2025-08-07"
     fallback_model: "anthropic/anthropic.claude-sonnet-4-6"
     description: "One-session playable spikes — playcentric iteration, throwaway-ok code"
-    tools: [builtin, mcp, external_repo_commit, scaffold_iteration]
+    tools: [core, web_search, web_fetch, asset_search, asset_fetch, external_repo_commit, scaffold_iteration]
 
   # Compliance tier removed 2026-04-19 — target platforms (itch.io, GH Pages,
   # Roblox Creator Platform) run their own kids/content compliance review, so
@@ -268,22 +268,22 @@ agents:
     model: "anthropic/anthropic.claude-sonnet-4-6"
     fallback_model: "omlx/Qwen3.5-9B-MLX-4bit"
     description: "Instruments game_html + Roblox ServerScripts with the 8-event default catalogue; produces telemetry_spec_v1/_diff_v1; kid-safe, no PII, ≤2 events/sec"
-    tools: [builtin, mcp]
+    tools: [core]
 
   metrics-dashboard-builder:
     model: "anthropic/anthropic.claude-sonnet-4-6"
     fallback_model: "omlx/Qwen3.5-9B-MLX-4bit"
     description: "Owns metrics.sqlite (events + sessions rollup) and dashboard.html (4 charts, ≤1s cold load); produces metrics_store_spec_v1 + dashboard_html_v1"
-    tools: [builtin, mcp]
+    tools: [core]
 
   analytics-reporter:
     model: "openai/gpt-5-2025-08-07"
     fallback_model: "anthropic/anthropic.claude-sonnet-4-6"
     description: "Writes the 4-section iteration postmortem + goal hit/miss table + trend_v1 + publish_blurb_v{N}; numbers-driven, ≤600 words"
-    tools: [builtin, mcp]
+    tools: [core]
 
   player-feedback-synthesizer:
     model: "anthropic/anthropic.claude-sonnet-4-6"
     fallback_model: "omlx/Qwen3.5-9B-MLX-4bit"
     description: "Digests itch.io/GH Pages/Roblox comments + studio DMs into 3-5 themes with ≥3 backing quotes each; produces player_feedback_v{N}"
-    tools: [builtin, mcp, playwright_browser]
+    tools: [core, web_fetch, playwright_browser, mcp:playwright]

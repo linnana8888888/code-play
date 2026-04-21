@@ -28,23 +28,24 @@ class AgentRegistry:
             self._agent_config = data.get("agents", {})
             self._defaults = data.get("defaults", {})
 
-        # Preload governance tiers so `tools: [builtin]` can expand to the real list.
+        # Preload governance tiers so `tools: [builtin]` / `tools: [core]` can
+        # expand to concrete tool lists.
         self._builtin_tools: list[str] = []
+        self._core_tools: list[str] = []
         gov_path = Path(f"{settings.config_dir}/governance.yaml")
         if gov_path.exists():
             with open(gov_path) as f:
                 gov = yaml.safe_load(f) or {}
             self._builtin_tools = list(gov.get("builtin", [])) + list(gov.get("pre_approved", []))
+            self._core_tools = list(gov.get("core", []))
 
     def _expand_tools(self, tools: list[str]) -> list[str]:
         """Expand shorthands into concrete tool names.
 
-        - `builtin` expands eagerly to the governance builtin+pre_approved list.
-        - `mcp` is preserved as a literal sentinel. MCP tools are discovered
-          asynchronously after boot (`main.py` kicks `mcp_bridge.discover_tools()`
-          well after `registry.load_agents()`), so the live list isn't known here.
-          `AgentRuntime._get_agent_tools()` resolves the sentinel at prompt-build
-          time against `mcp_bridge.tools` so every agent sees the full surface.
+        - `builtin` expands to the governance builtin+pre_approved list (full surface).
+        - `core` expands to the lean governance core list (file/git/memory/collab only).
+        - `mcp` / `mcp:<server>` are preserved as literal sentinels — resolved at
+          prompt-build time by `AgentRuntime._resolve_mcp_sentinel()`.
         """
         if not tools:
             return []
@@ -56,6 +57,11 @@ class AgentRegistry:
                     if bt not in seen:
                         out.append(bt)
                         seen.add(bt)
+            elif t == "core":
+                for ct in self._core_tools:
+                    if ct not in seen:
+                        out.append(ct)
+                        seen.add(ct)
             elif t not in seen:
                 out.append(t)
                 seen.add(t)

@@ -1983,10 +1983,34 @@ const { chromium } = require('playwright');
         return content
 
     async def _tool_repo_file_write(self, args: dict, **ctx) -> str:
+        MAX_CHANGE_RATIO = 0.40
         path = self._safe_repo_path(args["repo_path"], args["path"])
+        new_content = args["content"]
+
+        if path.exists():
+            try:
+                old_content = path.read_text(encoding="utf-8")
+                if old_content:
+                    from difflib import SequenceMatcher
+                    ratio = SequenceMatcher(None, old_content, new_content).quick_ratio()
+                    change_pct = 1.0 - ratio
+                    if change_pct > MAX_CHANGE_RATIO:
+                        old_lines = old_content.count("\n")
+                        new_lines = new_content.count("\n")
+                        raise ValueError(
+                            f"DIFF GUARD: write blocked — {args['path']} changed "
+                            f"{change_pct:.0%} ({old_lines} → {new_lines} lines). "
+                            f"Make targeted edits, not full rewrites. Read the file "
+                            f"first with repo_file_read and modify only what changed."
+                        )
+            except ValueError:
+                raise
+            except Exception:
+                pass
+
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(args["content"], encoding="utf-8")
-        return f"Wrote {len(args['content'])} chars to {args['path']}"
+        path.write_text(new_content, encoding="utf-8")
+        return f"Wrote {len(new_content)} chars to {args['path']}"
 
     async def _tool_repo_file_list(self, args: dict, **ctx) -> str:
         repo = Path(args["repo_path"]).resolve()
@@ -2034,16 +2058,53 @@ const { chromium } = require('playwright');
                     raise RuntimeError(f"Could not checkout or create branch {branch}: {out2}")
             results["branch"] = branch
 
+        MAX_CHANGE_RATIO = 0.40
+
         written_rel: list[str] = []
+        diff_warnings: list[str] = []
         for entry in files:
             rel = entry["path"]
             target = (repo_path / rel).resolve()
             if not str(target).startswith(str(repo_path)):
                 raise PermissionError(f"Path traversal blocked: {rel}")
+
+            # Diff guard: compare old vs new before overwriting
+            old_content = ""
+            if target.exists():
+                try:
+                    old_content = target.read_text(encoding="utf-8")
+                except Exception:
+                    pass
+            new_content = entry["content"]
+            if old_content:
+                from difflib import SequenceMatcher
+                ratio = SequenceMatcher(None, old_content, new_content).quick_ratio()
+                change_pct = 1.0 - ratio
+                if change_pct > MAX_CHANGE_RATIO:
+                    old_lines = old_content.count("\n")
+                    new_lines = new_content.count("\n")
+                    diff_warnings.append(
+                        f"{rel}: {change_pct:.0%} changed "
+                        f"({old_lines} → {new_lines} lines)"
+                    )
+
             target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text(entry["content"], encoding="utf-8")
+            target.write_text(new_content, encoding="utf-8")
             written_rel.append(rel)
         results["written"] = written_rel
+
+        if diff_warnings:
+            # Revert written files and abort
+            for rel in written_rel:
+                await _run(f'git checkout -- "{rel}"')
+            warning_text = "; ".join(diff_warnings)
+            raise ValueError(
+                f"DIFF GUARD: commit blocked — files changed more than "
+                f"{MAX_CHANGE_RATIO:.0%}: {warning_text}. "
+                f"Make targeted edits instead of full rewrites. "
+                f"Use repo_file_read to get the current content and "
+                f"modify only what the task requires."
+            )
 
         paths_arg = " ".join(f'"{p}"' for p in written_rel)
         code, out = await _run(f"git add {paths_arg}")

@@ -624,24 +624,47 @@ export default function SpecDiffGrid({
       />
 
       {confirming === "approve" ? (
-        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-success/40 bg-success/10 px-3 py-2">
-          <span className="text-xs text-success">
+        <div className="space-y-2 rounded-lg border border-success/40 bg-success/10 px-3 py-2">
+          <p className="text-xs font-semibold text-success">
             Confirm: hand off {totalPicked} idea{totalPicked === 1 ? "" : "s"} to implement?
-          </span>
-          <button
-            onClick={() => onApprove({ selected: selectedIdeas, custom: customIdeas })}
-            disabled={busy}
-            className="rounded-lg bg-success px-3 py-1 text-xs font-semibold text-bg hover:bg-success/90 disabled:opacity-50"
-          >
-            {busy ? "Sending…" : "✓ Confirm approve"}
-          </button>
-          <button
-            onClick={onCancelConfirm}
-            disabled={busy}
-            className="rounded-lg bg-bg-hover px-3 py-1 text-xs font-medium text-text-muted hover:text-text"
-          >
-            Cancel
-          </button>
+          </p>
+          <ul className="space-y-1">
+            {selectedIdeas.map((i) => (
+              <li key={i.id} className="flex items-center gap-2 text-[11px]">
+                <span className={`shrink-0 rounded px-1 py-0.5 text-[9px] font-medium ${ROLE_COLORS[i.role].chip}`}>
+                  {i.role}
+                </span>
+                <span className="text-text">{i.title}</span>
+                {i.expected_impact?.metric && (
+                  <span className="text-success/70">↑ {i.expected_impact.metric}</span>
+                )}
+              </li>
+            ))}
+            {customIdeas.map((c) => (
+              <li key={c.id} className="flex items-center gap-2 text-[11px]">
+                <span className="shrink-0 rounded bg-accent/15 px-1 py-0.5 text-[9px] font-medium text-accent">
+                  yours
+                </span>
+                <span className="text-text">{c.title}</span>
+              </li>
+            ))}
+          </ul>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              onClick={() => onApprove({ selected: selectedIdeas, custom: customIdeas })}
+              disabled={busy}
+              className="rounded-lg bg-success px-3 py-1 text-xs font-semibold text-bg hover:bg-success/90 disabled:opacity-50"
+            >
+              {busy ? "Sending…" : "✓ Confirm approve"}
+            </button>
+            <button
+              onClick={onCancelConfirm}
+              disabled={busy}
+              className="rounded-lg bg-bg-hover px-3 py-1 text-xs font-medium text-text-muted hover:text-text"
+            >
+              Cancel
+            </button>
+          </div>
         </div>
       ) : confirming === "revise" ? (
         <div className="flex flex-wrap items-center gap-2 rounded-lg border border-warning/40 bg-warning/10 px-3 py-2">
@@ -664,30 +687,52 @@ export default function SpecDiffGrid({
           </button>
         </div>
       ) : (
-        <div className="flex flex-wrap items-center gap-2">
-          <button
-            disabled={approveDisabled}
-            onClick={onArmApprove}
-            className="rounded-lg bg-success/20 px-3 py-1.5 text-xs font-medium text-success hover:bg-success/30 disabled:opacity-50"
-          >
-            Approve {totalPicked} idea{totalPicked === 1 ? "" : "s"}…
-          </button>
-          <button
-            disabled={reviseDisabled}
-            onClick={onArmRevise}
-            className="rounded-lg bg-warning/20 px-3 py-1.5 text-xs font-medium text-warning hover:bg-warning/30 disabled:opacity-50"
-          >
-            Request changes (all roles)…
-          </button>
-          {!gate.ready && (
-            <span className="text-[10px] italic text-text-muted">
-              Waiting on upstream — buttons enable when all 4 proposers finish.
-            </span>
-          )}
-          {gate.ready && totalPicked === 0 && (
-            <span className="text-[10px] italic text-text-muted">
-              Select at least one idea to approve, or add your own above.
-            </span>
+        <div className="space-y-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              disabled={approveDisabled}
+              onClick={onArmApprove}
+              className="rounded-lg bg-success/20 px-3 py-1.5 text-xs font-medium text-success hover:bg-success/30 disabled:opacity-50"
+            >
+              Approve {totalPicked} idea{totalPicked === 1 ? "" : "s"}…
+            </button>
+            <button
+              disabled={reviseDisabled}
+              onClick={onArmRevise}
+              className="rounded-lg bg-warning/20 px-3 py-1.5 text-xs font-medium text-warning hover:bg-warning/30 disabled:opacity-50"
+            >
+              Request changes (all roles)…
+            </button>
+            {!gate.ready && (
+              <span className="text-[10px] italic text-text-muted">
+                Waiting on upstream — buttons enable when all 4 proposers finish.
+              </span>
+            )}
+            {gate.ready && totalPicked === 0 && (
+              <span className="text-[10px] italic text-text-muted">
+                Select at least one idea to approve, or add your own above.
+              </span>
+            )}
+          </div>
+          {totalPicked > 0 && (
+            <div className="flex flex-wrap gap-1.5">
+              {selectedIdeas.map((i) => (
+                <span
+                  key={i.id}
+                  className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] ${ROLE_COLORS[i.role].border} ${ROLE_COLORS[i.role].chip}`}
+                >
+                  {i.role}: {i.title.length > 40 ? i.title.slice(0, 37) + "…" : i.title}
+                </span>
+              ))}
+              {customIdeas.map((c) => (
+                <span
+                  key={c.id}
+                  className="inline-flex items-center gap-1 rounded-full border border-accent/30 bg-accent/15 px-2 py-0.5 text-[10px] text-accent"
+                >
+                  yours: {c.title.length > 40 ? c.title.slice(0, 37) + "…" : c.title}
+                </span>
+              ))}
+            </div>
           )}
         </div>
       )}

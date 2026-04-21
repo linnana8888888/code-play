@@ -185,11 +185,11 @@ export default function ProjectView() {
               {project.iterate_enabled ? (
                 <button
                   onClick={onIterate}
-                  disabled={iterating || !!rosterPending || tasks.some((t) => t.title.includes("[iterate_artifact]") && t.status !== "done")}
+                  disabled={iterating || !!rosterPending || tasks.some((t) => t.title.includes("[iterate_artifact]") && !["completed", "failed"].includes(t.status))}
                   className="btn-accent"
                   title="Run iterate_artifact: playtest → postmortem → propose → implement"
                 >
-                  {iterating ? "Launching…" : rosterPending ? "Roster Pending…" : tasks.some((t) => t.title.includes("[iterate_artifact]") && t.status !== "done") ? "Iterating…" : "▶ Iterate"}
+                  {iterating ? "Launching…" : rosterPending ? "Roster Pending…" : tasks.some((t) => t.title.includes("[iterate_artifact]") && !["completed", "failed"].includes(t.status)) ? "Iterating…" : "▶ Iterate"}
                 </button>
               ) : null}
               <button

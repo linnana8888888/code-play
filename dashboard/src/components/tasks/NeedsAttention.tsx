@@ -6,6 +6,7 @@
  */
 import { useMemo, useState } from "react";
 import type { FailureCategory, Task } from "../../types/api";
+import { cancelBlockedTasks } from "../../api/client";
 import BlockedTaskActions from "./BlockedTaskActions";
 
 interface Props {
@@ -42,6 +43,20 @@ function toneCls(cat: FailureCategory): string {
 
 export default function NeedsAttention({ tasks, onRetried }: Props) {
   const [open, setOpen] = useState(false);
+  const [confirming, setConfirming] = useState(false);
+  const [dismissingAll, setDismissingAll] = useState(false);
+
+  async function doDismissAll() {
+    setDismissingAll(true);
+    try {
+      await cancelBlockedTasks();
+      onRetried?.();
+    } finally {
+      setDismissingAll(false);
+      setConfirming(false);
+    }
+  }
+
   const blocked = useMemo(
     () => tasks.filter((t) => t.status === "blocked"),
     [tasks],
@@ -80,13 +95,42 @@ export default function NeedsAttention({ tasks, onRetried }: Props) {
             )}
           </div>
         </div>
-        <button
-          onClick={() => setOpen((v) => !v)}
-          className="btn-ghost shrink-0"
-          aria-expanded={open}
-        >
-          {open ? "Hide" : "Review"}
-        </button>
+        <div className="flex shrink-0 items-center gap-2">
+          {confirming ? (
+            <>
+              <span className="text-[11px] text-danger">Dismiss {blocked.length} blocked?</span>
+              <button
+                onClick={doDismissAll}
+                disabled={dismissingAll}
+                className="rounded-lg bg-danger px-2 py-0.5 text-[11px] font-semibold text-bg hover:bg-danger/90 disabled:opacity-50"
+              >
+                {dismissingAll ? "Dismissing…" : "Confirm"}
+              </button>
+              <button
+                onClick={() => setConfirming(false)}
+                className="btn-ghost text-[11px]"
+              >
+                Cancel
+              </button>
+            </>
+          ) : (
+            <>
+              <button
+                onClick={() => setConfirming(true)}
+                className="rounded-lg border border-danger/40 px-2 py-0.5 text-[11px] text-danger hover:bg-danger/10"
+              >
+                Dismiss all
+              </button>
+              <button
+                onClick={() => setOpen((v) => !v)}
+                className="btn-ghost"
+                aria-expanded={open}
+              >
+                {open ? "Hide" : "Review"}
+              </button>
+            </>
+          )}
+        </div>
       </div>
 
       {open && (

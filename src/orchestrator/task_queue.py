@@ -278,6 +278,47 @@ class TaskQueue:
                 )
         return (failures, should_block)
 
+    def cancel_task(self, task_id: str) -> Task | None:
+        """Cancel a blocked/failed/pending task by marking it failed+cancelled."""
+        task = self.get(task_id)
+        if not task:
+            return None
+        if task.status in (TaskStatus.COMPLETED,):
+            return task
+        result = dict(task.result) if task.result else {}
+        result["cancelled"] = True
+        result["cancelled_at"] = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(timezone.utc).isoformat()
+        with get_studio_db() as db:
+            db.execute(
+                "UPDATE tasks SET status = ?, result = ?, updated_at = ? WHERE id = ?",
+                (TaskStatus.FAILED.value, json.dumps(result), now, task_id),
+            )
+        return self.get(task_id)
+
+    def cancel_all_blocked(self, project_id: str | None = None) -> int:
+        """Bulk-cancel all blocked tasks. Returns count."""
+        now = datetime.now(timezone.utc).isoformat()
+        with get_studio_db() as db:
+            if project_id:
+                rows = db.execute(
+                    "SELECT id, result FROM tasks WHERE status = 'blocked' AND project_id = ?",
+                    (project_id,),
+                ).fetchall()
+            else:
+                rows = db.execute(
+                    "SELECT id, result FROM tasks WHERE status = 'blocked'"
+                ).fetchall()
+            for row in rows:
+                result = json.loads(row["result"]) if row["result"] else {}
+                result["cancelled"] = True
+                result["cancelled_at"] = now
+                db.execute(
+                    "UPDATE tasks SET status = ?, result = ?, updated_at = ? WHERE id = ?",
+                    (TaskStatus.FAILED.value, json.dumps(result), now, row["id"]),
+                )
+        return len(rows)
+
     def get_ready_tasks(self, project_id: str) -> list[Task]:
         """Get pending tasks whose dependencies are all completed."""
         pending = self.list_tasks(project_id=project_id, status=TaskStatus.PENDING)

@@ -100,6 +100,13 @@ export const retryTask = (
     `/tasks/${id}/retry`,
     { method: "POST", body: JSON.stringify(body) },
   );
+export const cancelTask = (id: string) =>
+  req<{ status: string; task_id: string }>(`/tasks/${id}/cancel`, { method: "POST" });
+export const cancelBlockedTasks = (projectId?: string) =>
+  req<{ status: string; cancelled: number }>(
+    `/tasks/cancel-blocked${projectId ? `?project_id=${projectId}` : ""}`,
+    { method: "POST" },
+  );
 
 /* ── Models ── */
 export const getAvailableModels = () => req<ModelOption[]>("/models/available");

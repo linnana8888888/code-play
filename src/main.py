@@ -1413,6 +1413,35 @@ async def retry_task(task_id: str, body: TaskRetryBody | None = None):
     return {"status": "ok", "task_id": task_id, "new_cap": cap}
 
 
+@app.post("/api/tasks/{task_id}/cancel")
+async def cancel_task(task_id: str):
+    """Cancel a blocked/failed/pending task — marks it failed with cancelled flag."""
+    task = task_queue.get(task_id)
+    if not task:
+        raise HTTPException(404, "Task not found")
+    if task.status == TaskStatus.COMPLETED:
+        raise HTTPException(400, f"Task {task_id} is already completed.")
+    cancelled = task_queue.cancel_task(task_id)
+    if not cancelled:
+        raise HTTPException(500, "Cancel failed")
+    await ws_manager.broadcast({
+        "type": "task_updated",
+        "data": cancelled.model_dump(mode="json"),
+    })
+    return {"status": "ok", "task_id": task_id}
+
+
+@app.post("/api/tasks/cancel-blocked")
+async def cancel_blocked_tasks(project_id: str | None = None):
+    """Bulk-cancel all blocked tasks, optionally scoped to a project."""
+    count = task_queue.cancel_all_blocked(project_id)
+    await ws_manager.broadcast({
+        "type": "tasks_bulk_cancelled",
+        "data": {"count": count, "project_id": project_id},
+    })
+    return {"status": "ok", "cancelled": count}
+
+
 # ==================== Tasks ====================
 
 @app.post("/api/pipelines/advance")

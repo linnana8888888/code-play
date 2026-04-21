@@ -15,7 +15,7 @@
  */
 import { useState } from "react";
 import type { Task, FailureCategory } from "../../types/api";
-import { retryTask } from "../../api/client";
+import { retryTask, cancelTask } from "../../api/client";
 
 interface Props {
   task: Task;
@@ -66,7 +66,21 @@ export default function BlockedTaskActions({ task, onRetried, compact }: Props) 
 
   const [newCap, setNewCap] = useState<number>(suggested);
   const [busy, setBusy] = useState(false);
+  const [dismissing, setDismissing] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+
+  async function doDismiss() {
+    setDismissing(true);
+    setErr(null);
+    try {
+      await cancelTask(task.id);
+      onRetried?.();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setDismissing(false);
+    }
+  }
 
   async function doRetry(cap?: number) {
     setBusy(true);
@@ -147,10 +161,17 @@ export default function BlockedTaskActions({ task, onRetried, compact }: Props) 
             >
               {busy ? "Lifting…" : `Lift & retry (${fmtTokens(newCap)})`}
             </button>
+            <button
+              onClick={doDismiss}
+              disabled={dismissing}
+              className="rounded-lg border border-border px-2 py-0.5 text-[11px] text-text-muted hover:bg-bg-hover disabled:opacity-50"
+            >
+              {dismissing ? "Dismissing…" : "Dismiss"}
+            </button>
           </div>
         </div>
       ) : (
-        <div className="mt-2">
+        <div className="mt-2 flex items-center gap-1.5">
           <button
             onClick={() => doRetry()}
             disabled={busy}
@@ -167,6 +188,13 @@ export default function BlockedTaskActions({ task, onRetried, compact }: Props) 
               : cat === "permanent"
                 ? "Force retry"
                 : "Retry"}
+          </button>
+          <button
+            onClick={doDismiss}
+            disabled={dismissing}
+            className="rounded-lg border border-border px-2 py-0.5 text-[11px] text-text-muted hover:bg-bg-hover disabled:opacity-50"
+          >
+            {dismissing ? "Dismissing…" : "Dismiss"}
           </button>
         </div>
       )}

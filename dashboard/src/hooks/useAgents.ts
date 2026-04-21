@@ -5,6 +5,7 @@ import {
   getInstances,
   spawnAgent,
   terminateAgent,
+  sweepInstances,
 } from "../api/client";
 import type { AgentDefinition, AgentInstance } from "../types/api";
 
@@ -40,5 +41,15 @@ export function useAgents() {
     );
   };
 
-  return { definitions, categories, instances, loading, refresh, spawn, terminate };
+  const sweep = async (projectId?: string) => {
+    await sweepInstances(projectId);
+    setInstances((prev) =>
+      prev.filter((i) => {
+        if (projectId && i.project_id !== projectId) return true;
+        return !["terminated", "completed", "failed"].includes(i.status);
+      }),
+    );
+  };
+
+  return { definitions, categories, instances, loading, refresh, spawn, terminate, sweep };
 }

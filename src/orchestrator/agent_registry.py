@@ -273,6 +273,29 @@ class AgentRegistry:
     def terminate(self, instance_id: str):
         self.update_status(instance_id, AgentStatus.TERMINATED)
 
+    def sweep_finished(self, project_id: str | None = None) -> int:
+        """Remove terminated/completed/failed instances from memory and DB."""
+        finished = {AgentStatus.TERMINATED, AgentStatus.COMPLETED, AgentStatus.FAILED}
+        to_remove = [
+            iid for iid, inst in self._instances.items()
+            if inst.status in finished
+            and (project_id is None or inst.project_id == project_id)
+        ]
+        for iid in to_remove:
+            del self._instances[iid]
+        with get_studio_db() as db:
+            if project_id:
+                cur = db.execute(
+                    "DELETE FROM agent_instances WHERE project_id = ? AND status IN ('terminated','completed','failed')",
+                    (project_id,),
+                )
+            else:
+                cur = db.execute(
+                    "DELETE FROM agent_instances WHERE status IN ('terminated','completed','failed')",
+                )
+            db_removed = cur.rowcount
+        return max(len(to_remove), db_removed)
+
     def _resolve_provider(self, model: str) -> str:
         """Extract provider from model string like 'openrouter/qwen/qwen3-coder:free'."""
         if model.startswith("openrouter/"):

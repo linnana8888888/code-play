@@ -157,6 +157,11 @@ export const spawnAgent = (agentType: string, projectId?: string) =>
 export const terminateAgent = (id: string) =>
   req<{ status: string }>(`/agents/${id}/terminate`, { method: "POST" });
 export const getAgentCost = (id: string) => req<AgentCost>(`/agents/${id}/cost`);
+export const sweepInstances = (projectId?: string) =>
+  req<{ removed: number }>(
+    `/agents/instances/sweep${qs({ project_id: projectId })}`,
+    { method: "DELETE" },
+  );
 
 /* ── Messages ── */
 export const getMessages = (projectId: string, channel: string) =>

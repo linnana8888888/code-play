@@ -55,7 +55,7 @@ export default function ProjectView() {
   const [iterating, setIterating] = useState(false);
   const [rosterPending, setRosterPending] = useState<RosterPending | null>(null);
   const { tasks, create: createTask, refresh: refreshTasks } = useTasks(id);
-  const { instances, terminate } = useAgents();
+  const { instances, terminate, sweep } = useAgents();
   const expandedId = searchParams.get("expanded") ?? undefined;
 
   useEffect(() => {
@@ -379,7 +379,7 @@ export default function ProjectView() {
       {section === "docs" && <DocsBrowser projectId={id} />}
 
       {section === "agents" && (
-        <InstanceList instances={projectInstances} onTerminate={terminate} />
+        <InstanceList instances={projectInstances} onTerminate={terminate} onSweep={() => sweep(id)} />
       )}
 
       {section === "channels" && (

@@ -816,6 +816,13 @@ async def get_agent_cost(instance_id: str):
     }
 
 
+@app.delete("/api/agents/instances/sweep")
+async def sweep_finished_instances(project_id: str = None):
+    """Remove terminated/completed/failed agent instances."""
+    removed = registry.sweep_finished(project_id=project_id)
+    return {"removed": removed}
+
+
 async def _run_agent_task(instance, task_prompt: str, session_id: str = None):
     """Background task: run agent to completion, broadcasting turns."""
     final_content = ""

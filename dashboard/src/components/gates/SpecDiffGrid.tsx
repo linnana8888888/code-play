@@ -111,6 +111,25 @@ function parseIdeas(raw: string | null, role: Role): Idea[] | null {
   }
 }
 
+function parseLegacyProposal(raw: string | null, role: Role): Idea | null {
+  if (!raw) return null;
+  const lines = raw.trim().split("\n");
+  let title = lines[0]?.replace(/^#+\s*/, "").replace(/^Title:\s*/i, "").trim() || `${role} proposal`;
+  if (title.length > 80) title = title.slice(0, 77) + "…";
+  const riskMatch = raw.match(/Risk[^:]*:\s*(.+)/i);
+  const changeMatch = raw.match(/Change[^:]*:\s*(.+)/i);
+  const metricMatch = raw.match(/Expected metric[^:]*:\s*(.+)/i);
+  return {
+    id: `${role}-legacy`,
+    role,
+    title,
+    hypothesis: undefined,
+    expected_impact: metricMatch ? { metric: metricMatch[1].slice(0, 80) } : undefined,
+    risk: riskMatch ? riskMatch[1].slice(0, 100) : undefined,
+    change_summary: changeMatch ? changeMatch[1].slice(0, 120) : undefined,
+  };
+}
+
 function fmt(n: number | undefined): string {
   if (n == null || !Number.isFinite(n)) return "—";
   if (Math.abs(n) >= 100) return n.toFixed(0);
@@ -309,12 +328,17 @@ export default function SpecDiffGrid({
     const out: Idea[] = [];
     for (const r of ROLES) {
       const parsed = parseIdeas(rawProposals[r], r);
-      if (parsed) out.push(...parsed);
+      if (parsed) {
+        out.push(...parsed);
+      } else {
+        const legacy = parseLegacyProposal(rawProposals[r], r);
+        if (legacy) out.push(legacy);
+      }
     }
     return out;
   }, [rawProposals]);
 
-  const unparsedRoles = useMemo(() => ROLES.filter((r) => rawProposals[r] && !parseIdeas(rawProposals[r], r)), [rawProposals]);
+  const unparsedRoles = useMemo(() => ROLES.filter((r) => rawProposals[r] && !parseIdeas(rawProposals[r], r) && !parseLegacyProposal(rawProposals[r], r)), [rawProposals]);
   const missingRoles = useMemo(() => ROLES.filter((r) => !rawProposals[r]), [rawProposals]);
   const tag = cycleN != null ? `v${cycleN}` : "—";
   const selectedIdeas = allIdeas.filter((i) => selectedIds.has(i.id));

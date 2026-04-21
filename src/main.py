@@ -845,6 +845,16 @@ async def _run_agent_task(instance, task_prompt: str, session_id: str = None):
                     "role": "user",
                     "content": f"[Project Briefing]\n{briefing}",
                 })
+            # Inject agent-type lessons (behavioral memory from past failures)
+            from src.memory.agent_lessons import agent_lessons
+            lessons_prompt = agent_lessons.format_for_prompt(
+                instance.project_id, instance.agent_type or "unknown"
+            )
+            if lessons_prompt:
+                context_messages.append({
+                    "role": "user",
+                    "content": f"[Agent Lessons — READ CAREFULLY]\n{lessons_prompt}",
+                })
 
         async for turn in agent_runtime.run(instance, task_prompt, context_messages, session_id):
             if turn.role == "assistant" and turn.content:
@@ -972,6 +982,17 @@ async def _run_agent_task(instance, task_prompt: str, session_id: str = None):
                         "hint": "Budget cap hit — open the task and Lift cap to retry, or close it if the agent spiralled.",
                     },
                 })
+                # Auto-extract lesson from budget failure
+                try:
+                    from src.memory.agent_lessons import agent_lessons
+                    agent_lessons.extract_from_failure(
+                        instance.project_id or "",
+                        instance.agent_type or "unknown",
+                        "budget_exhausted", [],
+                        task_prompt[:500],
+                    )
+                except Exception:
+                    pass
                 # Do NOT advance the pipeline — the task is waiting on a human.
                 return
             # Post-run output validation — catches silent-success runs where
@@ -991,6 +1012,17 @@ async def _run_agent_task(instance, task_prompt: str, session_id: str = None):
                 logger.warning(f"validate_outputs failed for {instance.task_id}: {exc}")
 
             if missing:
+                # Auto-extract lesson from output validation failure
+                try:
+                    from src.memory.agent_lessons import agent_lessons
+                    agent_lessons.extract_from_failure(
+                        instance.project_id or "",
+                        instance.agent_type or "unknown",
+                        "no_output", missing,
+                        task_prompt[:500],
+                    )
+                except Exception:
+                    pass
                 result = {
                     "failure_category": "no_output",
                     "error": f"Agent returned cleanly but expected outputs missing: {'; '.join(missing[:5])}",
@@ -1549,6 +1581,49 @@ async def get_messages(project_id: str, channel: str = "general", limit: int = 5
 @app.get("/api/messages/channels")
 async def list_channels(project_id: str):
     return message_bus.list_channels(project_id)
+
+
+# ==================== Agent Lessons ====================
+
+@app.get("/api/projects/{project_id}/agent-lessons")
+async def list_agent_lessons(project_id: str, agent_type: str = None):
+    from src.memory.agent_lessons import agent_lessons
+    if agent_type:
+        return agent_lessons.get_lessons(project_id, agent_type)
+    all_entries = project_memory.list_by_type(project_id, "agent_lesson")
+    results = []
+    for e in all_entries:
+        try:
+            data = json.loads(e["content"])
+            data["_key"] = e["key"]
+            results.append(data)
+        except (json.JSONDecodeError, KeyError):
+            continue
+    return results
+
+
+class AgentLessonBody(BaseModel):
+    agent_type: str
+    lesson: str
+    severity: str = "warning"
+
+
+@app.post("/api/projects/{project_id}/agent-lessons")
+async def add_agent_lesson(project_id: str, body: AgentLessonBody):
+    from src.memory.agent_lessons import agent_lessons
+    key = agent_lessons.add_human_lesson(
+        project_id, body.agent_type, body.lesson, body.severity
+    )
+    return {"status": "ok", "key": key}
+
+
+@app.delete("/api/projects/{project_id}/agent-lessons/{lesson_key:path}")
+async def delete_agent_lesson(project_id: str, lesson_key: str):
+    from src.memory.agent_lessons import agent_lessons
+    deleted = agent_lessons.delete_lesson(project_id, lesson_key)
+    if not deleted:
+        raise HTTPException(404, f"Lesson '{lesson_key}' not found")
+    return {"status": "ok", "deleted": lesson_key}
 
 
 # ==================== Governance ====================

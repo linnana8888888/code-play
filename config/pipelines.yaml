@@ -33,6 +33,8 @@ pipelines:
             4. Is the target audience clear and the aesthetic direction age-appropriate?
           Issue verdict: [CD-CONCEPT]: APPROVE | CONCERNS | REJECT
           If CONCERNS: name the specific pillar or fantasy gap and suggest a fix.
+
+          Save your full verdict to memory as artifact key 'cd_concept_verdict'.
         output: cd_concept_verdict
         expected_outputs:
           - kind: memory_key
@@ -68,6 +70,8 @@ pipelines:
             5. Is the tuning table complete with kid-appropriate ranges?
           Issue verdict: [CD-MECHANICS]: APPROVE | CONCERNS | REJECT
           If CONCERNS: name the specific MDA misalignment or flow-state gap.
+
+          Save your full verdict to memory as artifact key 'cd_mechanics_verdict'.
         output: cd_mechanics_verdict
         expected_outputs:
           - kind: memory_key
@@ -144,6 +148,8 @@ pipelines:
             4. Does the art direction strengthen or weaken competitive positioning?
           Issue verdict: [CD-LAF]: APPROVE | CONCERNS | REJECT
           If CONCERNS: name the specific pillar-visual mismatch.
+
+          Save your full verdict to memory as artifact key 'cd_laf_verdict'.
         output: cd_laf_verdict
         expected_outputs:
           - kind: memory_key
@@ -279,7 +285,7 @@ pipelines:
       - id: review
         agent: code-reviewer
         depends_on: [gate-qa]
-        task: "Lint report only — review the prototype (memory key: game_html_v1) for bugs, performance, security. QA already validated gameplay; this is for code-quality concerns only."
+        task: "Lint report only — review the prototype (memory key: game_html_v1) for bugs, performance, security. QA already validated gameplay; this is for code-quality concerns only. Save your report to memory as artifact key 'code_review_v1'."
         output: review
         expected_outputs:
           - kind: memory_key
@@ -657,16 +663,20 @@ pipelines:
         agent: creative-director
         depends_on: [synthesis_gate]
         task: |
-          Read the human-picked proposal from synthesis_gate + concept_options_v1 +
-          mechanics_v1 + postmortem_{{iteration_tag}} from memory.
-          Evaluate whether the proposed change preserves creative identity:
+          Read 'selected_ideas_{{iteration_tag}}' from memory — it contains ALL
+          human-picked ideas (both agent proposals and custom ideas typed by the
+          human). Also read concept_options_v1 + mechanics_v1 +
+          postmortem_{{iteration_tag}}.
+          Evaluate whether EACH selected idea preserves creative identity:
             1. Does this change reinforce or dilute the pillars?
             2. Does the expected metric movement align with the game's emotional arc?
             3. Could this change introduce ludonarrative dissonance?
             4. For kid audiences: does this maintain age-appropriate tone and pacing?
-          Issue verdict: [CD-ITERATE]: APPROVE | CONCERNS | REJECT
+          Issue verdict per idea, then an overall: [CD-ITERATE]: APPROVE | CONCERNS | REJECT
           If CONCERNS: name the pillar at risk and suggest a constraint for the
           implementer to preserve creative intent.
+
+          Save your full verdict to memory as artifact key 'cd_iterate_verdict_{{iteration_tag}}'.
         output: cd_iterate_verdict
         expected_outputs:
           - kind: memory_key
@@ -677,12 +687,16 @@ pipelines:
         agent: frontend-developer
         depends_on: [cd-proposal-check]
         task: |
-          Implement the approved proposal from the synthesis_gate for cycle
-          {{cycle_n}}+1. Read these memory keys BEFORE editing: the chosen
-          'proposal_*_{{iteration_tag}}', 'game_html_v{{cycle_n}}', 'tech_plan_v1',
-          'laf_brief_v1'.
+          Implement ALL approved ideas for cycle {{cycle_n}}+1.
+          Read these memory keys BEFORE editing:
+            - 'selected_ideas_{{iteration_tag}}' (the full list of human-picked
+              ideas — includes both agent proposals AND custom human ideas)
+            - 'cd_iterate_verdict_{{iteration_tag}}' (CD review with per-idea notes)
+            - 'game_html_v{{cycle_n}}' (current build)
+            - 'tech_plan_v1', 'laf_brief_v1'
 
-          Apply the proposal — do not rebuild from scratch. Preserve window.__game
+          Implement EVERY idea in selected_ideas, not just the first one.
+          Apply changes — do not rebuild from scratch. Preserve window.__game
           shape so the next playtest bot can still drive the game.
 
           Save the new build to memory as artifact 'game_html_v{{cycle_n_plus_1}}'.

@@ -174,6 +174,8 @@ async def lifespan(app: FastAPI):
     # Wire message bus to WebSocket
     message_bus.set_ws_broadcast(ws_manager.broadcast)
 
+    _lint_pipeline_save_instructions()
+
     logger.info(f"Code PLAY studio ready on {settings.host}:{settings.port}")
     yield
 
@@ -1672,6 +1674,37 @@ def _load_pipelines_yaml():
             return yaml.safe_load(f) or {}
     except FileNotFoundError:
         return {}
+
+
+def _lint_pipeline_save_instructions():
+    """Warn at startup when a pipeline step expects a memory output but its
+    task description never tells the agent to save to that key.
+
+    Root cause of the cd-proposal-check stall: expected_outputs required
+    cd_iterate_verdict_v1 but the prompt never said "save to memory".
+    """
+    data = _load_pipelines_yaml()
+    for pname, pipeline in (data.get("pipelines") or {}).items():
+        for step in pipeline.get("steps") or []:
+            step_id = step.get("id", "?")
+            task_text = (step.get("task") or "").lower()
+            for eo in step.get("expected_outputs") or []:
+                if eo.get("kind") != "memory_key":
+                    continue
+                key = eo.get("key", "")
+                key_variants = {key.lower()}
+                for tpl in ("{{iteration_tag}}", "{{cycle_n_plus_1}}", "{{cycle_n}}"):
+                    key_variants |= {k.replace(tpl, "") for k in key_variants}
+                key_variants.discard("")
+                has_persist_verb = any(w in task_text for w in ("save", "write", "store"))
+                key_mentioned = any(v in task_text for v in key_variants)
+                if not has_persist_verb or not key_mentioned:
+                    logger.warning(
+                        "PIPELINE LINT [%s.%s]: expected_outputs requires memory key '%s' "
+                        "but task description does not tell the agent to save it. "
+                        "Agents will produce the output but not persist it.",
+                        pname, step_id, key,
+                    )
 
 
 @app.get("/api/pipelines")

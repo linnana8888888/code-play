@@ -693,7 +693,8 @@ pipelines:
               ideas — includes both agent proposals AND custom human ideas)
             - 'cd_iterate_verdict_{{iteration_tag}}' (CD review with per-idea notes)
             - 'game_html_v{{cycle_n}}' (current build)
-            - 'tech_plan_v1', 'laf_brief_v1'
+            - 'laf_brief_v1' (if available)
+            - 'tech_plan_v1' (if available — may not exist in iterate cycles)
 
           Implement EVERY idea in selected_ideas, not just the first one.
           Apply changes — do not rebuild from scratch. Preserve window.__game

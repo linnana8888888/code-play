@@ -75,14 +75,14 @@ agents:
     model: "anthropic/anthropic.claude-sonnet-4-6"
     fallback_model: "openai/gpt-5-2025-08-07"
     description: "Web game implementer — builds game_html_v1 per tech_plan_v1 (Three.js/canvas + DOM UI)"
-    tools: [core, web_search, web_fetch, asset_search, asset_fetch, external_repo_commit]
+    tools: [core, web_search, web_fetch, asset_search, asset_fetch, external_repo_commit, repo_file_read, repo_file_write, repo_file_list]
     skills: [superpowers:test-driven-development, superpowers:systematic-debugging, document-skills:frontend-design]
 
   code-reviewer:
     model: "anthropic/anthropic.claude-sonnet-4-6"
     fallback_model: "anthropic/anthropic.claude-haiku-4-5-20251001-v1:0"
     description: "Shippability + kid-safety review of web/Roblox game code against tech_plan_v1; absorbed lightweight security checklist"
-    tools: [core]
+    tools: [core, repo_file_read, repo_file_list]
     skills: [superpowers:receiving-code-review, superpowers:requesting-code-review, superpowers:verification-before-completion]
 
   # Unity (2026-04-20 — new engine tier for Unity game production)
@@ -112,7 +112,7 @@ agents:
     model: "openai/gpt-5-2025-08-07"
     fallback_model: "anthropic/anthropic.claude-sonnet-4-6"
     description: "Unity C# gameplay implementation — mechanics, state machines, data-driven design (ScriptableObjects), frame-rate independent logic"
-    tools: [core, external_repo_commit]
+    tools: [core, external_repo_commit, repo_file_read, repo_file_write, repo_file_list]
     skills: [superpowers:test-driven-development, superpowers:systematic-debugging]
 
   # Roblox
@@ -263,7 +263,7 @@ agents:
     model: "openai/gpt-5-2025-08-07"
     fallback_model: "anthropic/anthropic.claude-sonnet-4-6"
     description: "One-session playable spikes — playcentric iteration, throwaway-ok code"
-    tools: [core, web_search, web_fetch, asset_search, asset_fetch, external_repo_commit, scaffold_iteration]
+    tools: [core, web_search, web_fetch, asset_search, asset_fetch, external_repo_commit, scaffold_iteration, repo_file_read, repo_file_write, repo_file_list]
     skills: [superpowers:brainstorming, playground:playground, superpowers:systematic-debugging]
 
   # Compliance tier removed 2026-04-19 — target platforms (itch.io, GH Pages,
@@ -284,7 +284,7 @@ agents:
     model: "anthropic/anthropic.claude-sonnet-4-6"
     fallback_model: "omlx/Qwen3.5-9B-MLX-4bit"
     description: "Instruments game_html + Roblox ServerScripts with the 8-event default catalogue; produces telemetry_spec_v1/_diff_v1; kid-safe, no PII, ≤2 events/sec"
-    tools: [core]
+    tools: [core, repo_file_read, repo_file_write, repo_file_list, external_repo_commit]
 
   metrics-dashboard-builder:
     model: "anthropic/anthropic.claude-sonnet-4-6"

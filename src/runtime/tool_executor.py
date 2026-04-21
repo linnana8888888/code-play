@@ -764,6 +764,60 @@ class ToolExecutor:
             },
         })
 
+        # repo_file_read — read a file from the artifact repo (outside sandbox)
+        self._register("repo_file_read", self._tool_repo_file_read, {
+            "name": "repo_file_read",
+            "description": (
+                "Read a file from the project's artifact repository (outside the "
+                "agent sandbox). Use memory key 'artifact_repo_path' for the repo "
+                "root. Path is relative to repo root."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "repo_path": {"type": "string", "description": "Absolute path to the artifact repo root"},
+                    "path": {"type": "string", "description": "Relative file path within the repo"},
+                },
+                "required": ["repo_path", "path"],
+            },
+        })
+
+        # repo_file_write — write a file to the artifact repo (outside sandbox)
+        self._register("repo_file_write", self._tool_repo_file_write, {
+            "name": "repo_file_write",
+            "description": (
+                "Write a file to the project's artifact repository (outside the "
+                "agent sandbox). Does NOT commit — use external_repo_commit after. "
+                "Use memory key 'artifact_repo_path' for the repo root."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "repo_path": {"type": "string", "description": "Absolute path to the artifact repo root"},
+                    "path": {"type": "string", "description": "Relative file path within the repo"},
+                    "content": {"type": "string", "description": "File content to write"},
+                },
+                "required": ["repo_path", "path", "content"],
+            },
+        })
+
+        # repo_file_list — list files in the artifact repo
+        self._register("repo_file_list", self._tool_repo_file_list, {
+            "name": "repo_file_list",
+            "description": (
+                "List files in the project's artifact repository. Returns file "
+                "names and sizes. Use memory key 'artifact_repo_path' for the repo root."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "repo_path": {"type": "string", "description": "Absolute path to the artifact repo root"},
+                    "subdir": {"type": "string", "description": "Optional subdirectory to list (default: repo root)"},
+                },
+                "required": ["repo_path"],
+            },
+        })
+
         # scaffold_iteration — write the 4-file iteration kit into an artifact repo
         self._register("scaffold_iteration", self._tool_scaffold_iteration, {
             "name": "scaffold_iteration",
@@ -1908,6 +1962,45 @@ const { chromium } = require('playwright');
             "node_exit_code": result.node_exit_code,
             "stdout_tail": result.stdout_tail[-2000:],
         })
+
+    def _safe_repo_path(self, repo_path_str: str, relative: str) -> Path:
+        """Resolve a relative path within an artifact repo, preventing traversal."""
+        repo = Path(repo_path_str).resolve()
+        if not repo.is_dir():
+            raise FileNotFoundError(f"Repo not found: {repo}")
+        resolved = (repo / relative).resolve()
+        if not str(resolved).startswith(str(repo)):
+            raise PermissionError(f"Path traversal blocked: {relative}")
+        return resolved
+
+    async def _tool_repo_file_read(self, args: dict, **ctx) -> str:
+        path = self._safe_repo_path(args["repo_path"], args["path"])
+        if not path.exists():
+            raise FileNotFoundError(f"File not found: {args['path']} in {args['repo_path']}")
+        content = path.read_text(encoding="utf-8")
+        if len(content) > 200_000:
+            return content[:200_000] + f"\n\n... (truncated at 200k chars, full file is {len(content)} chars)"
+        return content
+
+    async def _tool_repo_file_write(self, args: dict, **ctx) -> str:
+        path = self._safe_repo_path(args["repo_path"], args["path"])
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(args["content"], encoding="utf-8")
+        return f"Wrote {len(args['content'])} chars to {args['path']}"
+
+    async def _tool_repo_file_list(self, args: dict, **ctx) -> str:
+        repo = Path(args["repo_path"]).resolve()
+        if not repo.is_dir():
+            raise FileNotFoundError(f"Repo not found: {repo}")
+        subdir = args.get("subdir")
+        root = (repo / subdir).resolve() if subdir else repo
+        if not str(root).startswith(str(repo)):
+            raise PermissionError(f"Path traversal blocked: {subdir}")
+        if not root.is_dir():
+            raise FileNotFoundError(f"Directory not found: {subdir}")
+
+        from src.runtime.workspace import list_project_files
+        return list_project_files(root, max_files=100)
 
     async def _tool_external_repo_commit(self, args: dict, **ctx) -> str:
         repo_path = Path(args["repo_path"]).resolve()

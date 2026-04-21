@@ -88,6 +88,9 @@ pre_approved:
   - iteration_runner       # run playtest_bot.mjs batch + rollup (wraps run_playtest_batch)
   - external_repo_commit   # write files + stage + local commit in an artifact repo outside the worktree
   - scaffold_iteration     # emit the 4-file iteration kit into an artifact repo (wraps scaffold_iteration_artifacts)
+  - repo_file_read         # read files from artifact repo (outside sandbox)
+  - repo_file_write        # write files to artifact repo (outside sandbox, no commit)
+  - repo_file_list         # list files in artifact repo
 
 # Claude Code plugin surface — auto-allowed by prefix.
 # Tools with names matching these prefixes bypass the approval queue on the

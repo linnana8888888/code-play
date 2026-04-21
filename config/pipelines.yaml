@@ -700,17 +700,24 @@ pipelines:
           Apply changes — do not rebuild from scratch. Preserve window.__game
           shape so the next playtest bot can still drive the game.
 
-          Save the new build to memory as artifact 'game_html_v{{cycle_n_plus_1}}'.
-          Then call the `external_repo_commit` tool with:
-            - repo_path = memory[`artifact_repo_path`]
-            - files = [{path: "index.html", content: <the new game html>}]
-            - branch = "iteration/v{{cycle_n_plus_1}}"
-            - message = "iteration v{{cycle_n_plus_1}}: <one-line proposal title>"
+          The game lives in the artifact repo at memory['artifact_repo_path'].
+          Use these tools to work with repo files:
+            - `repo_file_list` — list files in the repo
+            - `repo_file_read` — read any file (game.mjs, index.html, etc.)
+            - `repo_file_write` — write modified files back
+          All three take `repo_path` = memory['artifact_repo_path'].
 
-          Do NOT use bash/git directly — the sandbox can't reach the artifact
-          repo. `external_repo_commit` writes the files, stages them, and makes
-          a local commit (no push). The orchestrator will relaunch the playtest
-          step for cycle {{cycle_n_plus_1}} as soon as this task completes.
+          Workflow:
+            1. `repo_file_list` to see the file tree
+            2. `repo_file_read` the files you need to modify (game.mjs, index.html, etc.)
+            3. Make changes and `repo_file_write` each modified file
+            4. Also save the updated index.html to memory as artifact
+               'game_html_v{{cycle_n_plus_1}}'
+            5. `external_repo_commit` with all modified files, branch =
+               "iteration/v{{cycle_n_plus_1}}", message = "iteration
+               v{{cycle_n_plus_1}}: <one-line proposal title>"
+
+          Do NOT use bash/git directly — use the tools above.
         output: build
         expected_outputs:
           - kind: memory_key

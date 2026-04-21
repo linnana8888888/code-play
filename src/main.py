@@ -175,6 +175,7 @@ async def lifespan(app: FastAPI):
     message_bus.set_ws_broadcast(ws_manager.broadcast)
 
     _lint_pipeline_save_instructions()
+    _lint_pipeline_agent_tools()
 
     logger.info(f"Code PLAY studio ready on {settings.host}:{settings.port}")
     yield
@@ -1705,6 +1706,50 @@ def _lint_pipeline_save_instructions():
                         "Agents will produce the output but not persist it.",
                         pname, step_id, key,
                     )
+
+
+def _lint_pipeline_agent_tools():
+    """Warn at startup when a pipeline agent lacks tools its step needs.
+
+    Catches the class of bug where an agent is assigned to an iterate step
+    that reads/writes repo files but doesn't have repo_file_read in its
+    tool list — the agent stalls because it can't access game code.
+    """
+    REPO_TOOLS = {"repo_file_read", "repo_file_write", "repo_file_list"}
+    REPO_HINT_PHRASES = (
+        "repo_file_read", "repo_file_write", "repo_file_list",
+        "repo_file", "artifact repo", "artifact_repo_path",
+    )
+
+    data = _load_pipelines_yaml()
+    for pname, pipeline in (data.get("pipelines") or {}).items():
+        for step in pipeline.get("steps") or []:
+            step_id = step.get("id", "?")
+            step_type = step.get("type", "agent")
+            if step_type != "agent":
+                continue
+            agent_id = step.get("agent")
+            if not agent_id:
+                continue
+            task_text = (step.get("task") or "").lower()
+            needs_repo = any(phrase in task_text for phrase in REPO_HINT_PHRASES)
+            if not needs_repo:
+                continue
+            defn = registry.get_definition(agent_id)
+            if not defn:
+                logger.warning(
+                    "TOOL LINT [%s.%s]: agent '%s' not found in registry.",
+                    pname, step_id, agent_id,
+                )
+                continue
+            agent_tools = set(defn.tools or [])
+            missing = REPO_TOOLS - agent_tools
+            if missing:
+                logger.warning(
+                    "TOOL LINT [%s.%s]: task mentions repo_file tools but agent "
+                    "'%s' is missing: %s. Agent will stall on file access.",
+                    pname, step_id, agent_id, ", ".join(sorted(missing)),
+                )
 
 
 @app.get("/api/pipelines")

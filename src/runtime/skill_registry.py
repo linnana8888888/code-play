@@ -132,16 +132,20 @@ class SkillRegistry:
         """
         return sorted(self._builtin_skills)
 
-    def catalog_for_prompt(self, max_desc_chars: int = 120) -> str:
+    def catalog_for_prompt(self, max_desc_chars: int = 120, skill_ids: list[str] | None = None) -> str:
         """One-line-per-skill catalog for system-prompt injection.
 
-        Lists every registered skill — not just builtins — so the agent knows
-        which `skill_invoke(<id>)` calls the governance layer will accept.
-        Non-builtin skills still go through the approval queue at call time.
+        When `skill_ids` is given, only lists those skills (scoped catalog).
+        Otherwise lists every registered skill.
         Format: `- <id> — <description-truncated>`.
         """
+        if skill_ids is not None:
+            pool = [self._skills[sid] for sid in skill_ids if sid in self._skills]
+        else:
+            pool = list(self._skills.values())
+
         lines: list[str] = []
-        for skill in sorted(self._skills.values(), key=lambda s: s.id):
+        for skill in sorted(pool, key=lambda s: s.id):
             desc = (skill.description or "").strip().replace("\n", " ")
             if len(desc) > max_desc_chars:
                 desc = desc[: max_desc_chars - 1].rstrip() + "…"

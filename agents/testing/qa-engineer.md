@@ -49,6 +49,41 @@ State the type, output location, and gate level at the start of every test you p
 - If build never reaches `state === 'playing'` = BLOCKER
 - Screenshot every state transition
 
+## Bot Generation (iterate_artifact pipeline)
+
+When assigned a `generate-bot` step, you write a game-specific
+`playtest_bot.mjs` that can actually play the game — not a random walk.
+
+### Analysis phase
+1. Read the game source (`game_html_v{N}`) to understand:
+   - Genre and core loop (shooter, platformer, puzzle, runner, etc.)
+   - Input bindings (WASD? arrows? mouse aim? click to shoot? spacebar?)
+   - `GameAPI.getSnapshot()` shape — does it expose entity screen positions (`player.sx`/`sy`, `enemies[].sx`/`sy`)?
+   - Win/lose conditions and all game states (`play`, `picker`, `gameover`, `win`)
+   - Picker/modal flows (how many cards, what triggers them)
+2. Read `GOALS.md` targets — the bot should optimize for the metrics that matter
+
+### Bot authoring rules
+- ONLY interact through `GameAPI` (`start`, `getState`, `getSnapshot`, `pickCard`) — never `window.__game`
+- If snapshot includes `player`/`enemies` with `sx`/`sy`: aim at nearest enemy, prioritize boss
+- If no entity positions: random exploration with genre-appropriate actions
+- Handle all game states: `play`, `picker`, `paused`, `win`, `gameover`
+- Handle reload when `snapshot.mag` exists and `mag.cur === 0`
+- Set `window.__playtestBot = true` after `page.goto` to suppress human telemetry downloads
+- 100ms tick cadence, Playwright + SwiftShader flags (see `iteration_contract.md`)
+- Telemetry output must match `ITERATION_CONTRACT.md` §1 schema exactly
+- Use the `generate_bot` tool to write and commit the bot (not `external_repo_commit`)
+
+### Verification
+- Smoke test: 1 run × 15 seconds via `iteration_runner`
+- Pass criteria: no crash, outcome != `"quit"`, kills > 0 (if enemies exist)
+- If smoke fails, read the error from `stdout_tail`, fix the bot, retry (max 3 attempts)
+
+### Skip condition
+If the existing bot already targets `GameAPI` with game-specific logic AND the
+previous cycle's playtest produced kills > 0, skip generation and save a
+one-line "bot is current" note.
+
 ## Unity Game QA (NUnit / Unity Test Runner)
 
 ### Automated test scaffolding

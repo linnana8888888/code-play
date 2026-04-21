@@ -790,6 +790,37 @@ class ToolExecutor:
             },
         })
 
+        # generate_bot — QA engineer writes a game-specific playtest bot
+        self._register("generate_bot", self._tool_generate_bot, {
+            "name": "generate_bot",
+            "description": (
+                "Generate or update a game-specific playtest_bot.mjs in an "
+                "artifact repo. The QA engineer calls this after analyzing the "
+                "game's GameAPI shape to write a bot that can actually play the "
+                "game (targeting enemies, handling pickers, matching the input "
+                "scheme) instead of random-walking. Validates that the bot "
+                "references GameAPI (not window.__game), syntax-checks with "
+                "`node --check`, and commits the result."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "repo_path": {"type": "string", "description": "Absolute path to the game's artifact repo"},
+                    "game_analysis": {
+                        "type": "string",
+                        "description": (
+                            "Brief analysis of the game: genre, input scheme, "
+                            "GameAPI snapshot shape, win/lose conditions. Stored "
+                            "alongside the bot for future reference."
+                        ),
+                    },
+                    "bot_code": {"type": "string", "description": "Full content of playtest_bot.mjs"},
+                    "message": {"type": "string", "description": "Commit message for the bot update"},
+                },
+                "required": ["repo_path", "bot_code", "message"],
+            },
+        })
+
         # itchio_publish — butler push
         self._register("itchio_publish", self._tool_itchio_publish, {
             "name": "itchio_publish",
@@ -1968,6 +1999,87 @@ const { chromium } = require('playwright');
             "status": "ok",
             "artifact_dir": str(artifact_dir),
             "files": {k: str(v) for k, v in paths.items()} if isinstance(paths, dict) else None,
+        })
+
+    async def _tool_generate_bot(self, args: dict, **ctx) -> str:
+        repo_path = Path(args["repo_path"]).resolve()
+        bot_code = args["bot_code"]
+        message = args["message"]
+        game_analysis = args.get("game_analysis", "")
+
+        if not repo_path.exists():
+            raise FileNotFoundError(f"Repo not found: {repo_path}")
+
+        bot_path = repo_path / "playtest_bot.mjs"
+
+        if "window.__game" in bot_code and "GameAPI" not in bot_code:
+            return json.dumps({
+                "status": "error",
+                "error": (
+                    "Bot references window.__game but not GameAPI. "
+                    "Bots must interact through window.GameAPI only "
+                    "(see iteration_contract.md §1a)."
+                ),
+            })
+
+        bot_path.write_text(bot_code, encoding="utf-8")
+
+        async def _run(cmd: str, timeout: int = 60) -> tuple[int, str]:
+            proc = await asyncio.create_subprocess_shell(
+                cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd=str(repo_path),
+            )
+            out, err = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+            return proc.returncode, (out.decode(errors="replace") + err.decode(errors="replace"))
+
+        code, out = await _run(f'node --check "{bot_path}"')
+        if code != 0:
+            return json.dumps({
+                "status": "error",
+                "error": f"Syntax check failed: {out.strip()}",
+            })
+
+        if game_analysis:
+            analysis_path = repo_path / ".codeplay" / "bot_analysis.md"
+            analysis_path.parent.mkdir(parents=True, exist_ok=True)
+            analysis_path.write_text(game_analysis, encoding="utf-8")
+
+        if (repo_path / ".git").exists():
+            paths_to_add = ['"playtest_bot.mjs"']
+            if game_analysis:
+                paths_to_add.append('".codeplay/bot_analysis.md"')
+            code, out = await _run(f"git add {' '.join(paths_to_add)}")
+            if code != 0:
+                return json.dumps({"status": "error", "error": f"git add failed: {out}"})
+
+            msg_escaped = message.replace('"', '\\"')
+            code, out = await _run(f'git commit -m "{msg_escaped}"')
+            if code != 0 and "nothing to commit" not in out:
+                return json.dumps({"status": "error", "error": f"git commit failed: {out}"})
+
+            code, sha = await _run("git rev-parse HEAD")
+            commit_sha = sha.strip() if code == 0 else None
+        else:
+            commit_sha = None
+
+        project_id = ctx.get("project_id")
+        if project_id:
+            from src.memory.project_memory import project_memory
+            project_memory.write(
+                project_id,
+                mem_type="iteration",
+                key="playtest_bot_path",
+                content=str(bot_path),
+                created_by="generate_bot",
+            )
+
+        return json.dumps({
+            "status": "ok",
+            "bot_path": str(bot_path),
+            "commit": commit_sha,
+            "syntax_check": "passed",
         })
 
     async def _tool_itchio_publish(self, args: dict, **ctx) -> str:

@@ -26,8 +26,9 @@ defaults:
   fallback_model: "omlx/Qwen3.5-9B-MLX-4bit"
   temperature: 0.7
   max_tokens: 4096
-  budget_max_tokens: 200000    # 200k tokens per agent run
+  budget_max_tokens: 2000000   # 2M tokens — system prompt + tools consume ~600k baseline
   budget_max_usd: 1.00         # $1 per agent run (relevant for paid models)
+  skills: []                   # no plugin skills injected by default — saves ~2MB context per agent
 
 agents:
   # Game Development Core (2026-04-19 audit):
@@ -133,7 +134,7 @@ agents:
     model: "openai/gpt-5-2025-08-07"
     fallback_model: "anthropic/anthropic.claude-sonnet-4-6"
     description: "Playtest web games against the mechanics spec using a headless browser"
-    tools: [builtin, mcp, playwright_browser, iteration_runner]
+    tools: [builtin, mcp, playwright_browser, iteration_runner, generate_bot]
 
   game-performance-tester:
     model: "anthropic/anthropic.claude-sonnet-4-6"

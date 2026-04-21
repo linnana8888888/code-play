@@ -86,6 +86,8 @@ class AgentRegistry:
                     defn.tools = self._expand_tools(config["tools"])
                 if "skills" in config:
                     defn.skills = config["skills"]
+                elif "skills" in self._defaults:
+                    defn.skills = list(self._defaults["skills"])
                 if "budget_max_tokens" in config:
                     defn.budget_max_tokens = config["budget_max_tokens"]
                 if "budget_max_usd" in config:

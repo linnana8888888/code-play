@@ -883,6 +883,53 @@ async def _run_agent_task(instance, task_prompt: str, session_id: str = None):
 
         if instance.task_id:
             if terminated_for_budget:
+                # Before blocking, check if the agent already produced its
+                # deliverables before the budget killed it (zombie-task rescue).
+                outputs_present = False
+                try:
+                    current_task = task_queue.get(instance.task_id)
+                    if current_task and current_task.expected_outputs:
+                        repo_dir = None
+                        if instance.project_id:
+                            candidate = Path(settings.projects_dir) / instance.project_id
+                            if candidate.exists():
+                                repo_dir = candidate
+                        missing = validate_outputs(current_task, project_memory, repo_dir)
+                        outputs_present = len(missing) == 0
+                except Exception as exc:
+                    logger.warning(f"Zombie-task rescue check failed for {instance.task_id}: {exc}")
+
+                if outputs_present:
+                    logger.info(
+                        f"[{instance.task_id}] Budget exceeded but outputs already present — "
+                        f"completing task instead of blocking (zombie-task rescue)"
+                    )
+                    try:
+                        task_queue.update_status(
+                            instance.task_id,
+                            TaskStatus.COMPLETED,
+                            result={
+                                "summary": final_content[:20000],
+                                "agent_instance_id": instance.id,
+                                "rescued": True,
+                                "rescue_reason": "budget_exceeded_but_outputs_present",
+                            },
+                        )
+                        await ws_manager.broadcast({
+                            "type": "task_completed",
+                            "data": {
+                                "task_id": instance.task_id,
+                                "instance_id": instance.id,
+                                "rescued": True,
+                            },
+                        })
+                    except Exception as exc:
+                        logger.warning(f"Zombie-task rescue failed for {instance.task_id}: {exc}")
+                    # Advance the pipeline — the work is done.
+                    if instance.project_id:
+                        await _advance_pipeline(instance.project_id)
+                    return
+
                 prev_cap = instance.budget_max_tokens or 0
                 suggested_cap = max(prev_cap * 2, prev_cap + 100_000) if prev_cap else 300_000
                 result = {

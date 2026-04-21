@@ -284,18 +284,23 @@ class AgentRuntime:
         elif project_id:
             system_content += f"\n\n[Project ID: {project_id}]"
 
-        # Inject approved skills. When an agent doesn't declare any, auto-seed
-        # from the builtin set (governance + plugin-discovered) so every agent
-        # matches the Claude Code CLI surface by default.
-        effective_skills = defn.skills or skill_registry.get_builtin_skills()
+        # Inject approved skills. Agents declare which skills they need via
+        # `skills:` in agents.yaml. An explicit empty list means "no skills"
+        # (saves ~2MB context). Only fall back to all builtins when skills is
+        # truly unset (None), which shouldn't happen with the defaults in place.
+        effective_skills = defn.skills if defn.skills is not None else skill_registry.get_builtin_skills()
         if effective_skills:
             skill_content = skill_registry.get_injectable_content(defn.id, effective_skills)
             if skill_content:
                 system_content += f"\n\n{skill_content}"
 
-        # Always attach the skill catalog so the agent knows which ids
-        # `skill_invoke(...)` accepts even when the full body wasn't injected.
-        catalog = skill_registry.catalog_for_prompt()
+        # Attach a compact skill catalog so the agent can request skills on
+        # demand via `skill_invoke(...)`. Scope it to the agent's own skills
+        # to avoid bloating context with 400+ irrelevant entries.
+        if effective_skills:
+            catalog = skill_registry.catalog_for_prompt(skill_ids=effective_skills)
+        else:
+            catalog = ""
         if catalog:
             system_content += (
                 "\n\n## Available skills (invoke via `skill_invoke(skill_id)`):\n"

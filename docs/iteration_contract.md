@@ -44,13 +44,14 @@ window.GameAPI = {
    * Everything the bot needs to fill telemetry without DOM scraping. Shape:
    *
    *   {
-   *     schemaVersion: 1,
+   *     schemaVersion: 1 | 2,               // 2 adds entity positions (§1b)
    *     state, pickerOpen, score, hiScore,
    *     level:    { idx, name },
    *     xp:       { level, gained },
    *     counters: { shots, hits, kills, bossHits, bossKills, dashes, pickups, ... },
    *     events:   [ {t, type, ...}, ... ],   // last 400
-   *     mag?, combo?                         // game-specific extras allowed
+   *     mag?, combo?,                        // game-specific extras allowed
+   *     player?, enemies?, boss?, viewport?  // schemaVersion 2 (§1b)
    *   }
    *
    * Games without a given counter omit the key (bot treats missing as 0).
@@ -80,6 +81,51 @@ keep `__game` for dev panels but route every bot interaction through
 **Bump `version`** whenever the snapshot shape or method signatures change.
 Old bots detect the bump and should refuse to run rather than emit silently
 broken telemetry.
+
+## 1b. Entity snapshot extension (optional, `schemaVersion: 2`)
+
+Games that expose entity positions in screen space get dramatically better bot
+play (the QA engineer's bot-generation step targets enemies instead of random
+walking). This is opt-in: games that omit these fields still work with a
+random-exploration fallback.
+
+When `schemaVersion >= 2`, `getSnapshot()` MAY additionally include:
+
+```ts
+{
+  schemaVersion: 2,
+  // ... all schemaVersion 1 fields ...
+
+  player?: {
+    x: number, z: number,       // world position
+    hp: number, maxHp: number,
+    sx: number, sy: number,     // screen-space pixel coords (via Vector3.project)
+  },
+  enemies?: Array<{
+    kind: string,
+    hp: number,
+    x: number, z: number,
+    sx: number, sy: number,     // screen-space pixel coords
+  }>,
+  boss?: {
+    hp: number, maxHp: number,
+    x: number, z: number,
+    sx: number, sy: number,
+  } | null,
+  viewport?: { w: number, h: number },
+}
+```
+
+**Screen-space projection:** for Three.js games, use
+`pos.clone().project(camera)` → `sx = (v.x * 0.5 + 0.5) * w`,
+`sy = (-v.y * 0.5 + 0.5) * h`. For 2D canvas games, use the canvas-relative
+position directly. The bot reads `sx`/`sy` to aim the mouse — it never needs
+to know the camera or projection matrix.
+
+**Bot compatibility:** the QA engineer's `generate-bot` step inspects the
+snapshot shape at bot-generation time. If `player`/`enemies` fields are present,
+it writes a targeting bot. If absent, it falls back to genre-appropriate random
+exploration.
 
 ## 1. Telemetry schema (what `playtest_bot.mjs` writes per run)
 
@@ -202,6 +248,7 @@ Example: `median(session_duration_sec) >= 180`, `rate(levels_reached >= 2) >= 0.
 
 ## 5. Non-goals (for this first cut)
 
-- No per-player personalization. Bot is a single random-walk policy.
+- No per-player personalization. Bot policy is generated once per game by the
+  QA engineer during the first iterate cycle, then reused across runs.
 - No learning loop across runs. Each run is independent.
 - No cross-artifact comparisons. Scope = one artifact repo per pipeline run.

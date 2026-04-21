@@ -27,15 +27,21 @@ from src.memory.project_memory import project_memory
 TEMPLATE_DIR = Path(__file__).resolve().parents[2] / "templates" / "iteration"
 
 DEFAULT_GAME_HOOK = """\
-    // ── Default hook (customize per game) ────────────────────────────────────
-    // 1. Click the game's start button (adjust selector).
-    await page.click('#startBtn').catch(() => {});
+    // ── GameAPI-aware default hook ───────────────────────────────────────────
+    // Uses the standard GameAPI contract (iteration_contract.md §1a).
+    // The QA engineer's generate-bot step will replace this with game-specific
+    // logic after analyzing the game's genre and input scheme.
 
-    // 2. Wait for the game to enter play state. Adjust accessor.
+    // Mark as bot so the game doesn't trigger human telemetry downloads.
+    await page.evaluate(() => { window.__playtestBot = true; });
+
+    // Wait for GameAPI to exist (module load), then start through the contract.
+    await page.waitForFunction(() => !!window.GameAPI?.start, { timeout: 10_000 });
+    await page.evaluate(() => window.GameAPI.start({ seed: 0 }));
     await page.waitForFunction(
-      () => window.__game?.game?.state === 'play',
+      () => window.GameAPI.getState() === 'play',
       { timeout: 10_000 }
-    ).catch(() => {});
+    );
 
     const deadlineMs = Date.now() + seconds * 1000;
     botStartMs = Date.now();
@@ -44,53 +50,107 @@ DEFAULT_GAME_HOOK = """\
     const VW = 1280, VH = 800;
     await page.mouse.move(VW / 2, VH / 2);
     const held = new Set();
+    let shooting = false;
+    let shootReleaseAt = 0;
 
-    // 3. Random-walk action loop (WASD + mouse). Replace with game-specific
-    //    inputs if your game doesn't respond to WASD.
+    // Random-walk action loop (WASD + mouse). The QA engineer's generate-bot
+    // step replaces this with game-specific targeting logic.
     while (Date.now() < deadlineMs) {
-      const st = await page.evaluate(() =>
-        window.__game?.game?.state || 'unknown'
-      ).catch(() => 'unknown');
-      if (st === 'gameover' || st === 'win') break;
+      const snap = await page.evaluate(() => {
+        const api = window.GameAPI;
+        if (!api?.getSnapshot) return { state: api?.getState?.() ?? 'title' };
+        const s = api.getSnapshot();
+        return { state: api.getState(), player: s.player, enemies: s.enemies, boss: s.boss, mag: s.mag };
+      });
+
+      const { state } = snap;
+      if (state === 'gameover' || state === 'win') break;
+
+      if (state === 'picker') {
+        await sleep(300);
+        await page.evaluate(() => {
+          const n = document.querySelectorAll('#pickerCards button').length || 1;
+          window.GameAPI.pickCard(Math.floor(Math.random() * n));
+        });
+        actionTimes.push(Date.now());
+        await sleep(120);
+        continue;
+      }
+
+      const now = Date.now();
+
+      // If snapshot has entity positions, aim at nearest enemy
+      let target = null;
+      const px = snap.player?.sx ?? VW / 2;
+      const py = snap.player?.sy ?? VH / 2;
+      if (snap.boss) {
+        target = { sx: snap.boss.sx, sy: snap.boss.sy };
+      } else if (snap.enemies?.length) {
+        let bestDist = Infinity;
+        for (const e of snap.enemies) {
+          if (e.sx < 0 || e.sx > VW || e.sy < 0 || e.sy > VH) continue;
+          const dx = e.sx - px, dy = e.sy - py;
+          const d = dx * dx + dy * dy;
+          if (d < bestDist) { bestDist = d; target = { sx: e.sx, sy: e.sy }; }
+        }
+      }
+
+      const hasTarget = target != null;
+      const needsReload = snap.mag && snap.mag.cur === 0;
+      if (needsReload) {
+        await page.keyboard.press('KeyR');
+        actionTimes.push(now);
+        await sleep(100);
+        continue;
+      }
 
       const r = Math.random() * 100;
-      if (r < 45) {
+      if (hasTarget && r < 50) {
+        // Aim + shoot at target
+        const jx = Math.max(5, Math.min(VW - 5, target.sx + rand(-15, 15)));
+        const jy = Math.max(5, Math.min(VH - 5, target.sy + rand(-15, 15)));
+        await page.mouse.move(jx, jy);
+        if (!shooting) {
+          await page.mouse.down();
+          shooting = true;
+          shootReleaseAt = now + rand(200, 600);
+        }
+      } else if (r < 50 + 30) {
+        // Move (WASD random)
         for (const k of held) await page.keyboard.up(k).catch(() => {});
         held.clear();
         const key = pick(['KeyW', 'KeyA', 'KeyS', 'KeyD']);
-        await page.keyboard.down(key).catch(() => {});
+        await page.keyboard.down(key);
         held.add(key);
-        await sleep(rand(200, 800));
-      } else if (r < 75) {
-        await page.mouse.move(rand(40, VW - 40), rand(40, VH - 40)).catch(() => {});
-      } else if (r < 92) {
-        await page.mouse.down().catch(() => {});
-        await sleep(rand(100, 400));
-        await page.mouse.up().catch(() => {});
+        if (hasTarget) {
+          await page.mouse.move(
+            Math.max(5, Math.min(VW - 5, target.sx + rand(-20, 20))),
+            Math.max(5, Math.min(VH - 5, target.sy + rand(-20, 20))),
+          );
+        }
+      } else if (r < 50 + 30 + 12) {
+        // Shoot burst
+        if (!shooting) {
+          await page.mouse.down();
+          shooting = true;
+          shootReleaseAt = now + rand(100, 400);
+        }
       } else {
-        await page.keyboard.press('Space').catch(() => {});
+        // Random aim (exploration)
+        await page.mouse.move(rand(40, VW - 40), rand(40, VH - 40));
       }
-      actionTimes.push(Date.now());
+
+      if (shooting && now >= shootReleaseAt) {
+        await page.mouse.up();
+        shooting = false;
+      }
+
+      actionTimes.push(now);
       await sleep(100);
     }
 
     for (const k of held) await page.keyboard.up(k).catch(() => {});
-
-    // 4. Snapshot for telemetry. Populate window.__snapshot with counters/events.
-    await page.evaluate(() => {
-      const g = window.__game?.game;
-      if (!g) { window.__snapshot = null; return; }
-      const a = g.analytics || { counters: {}, events: [] };
-      window.__snapshot = {
-        outcome: g.state === 'win' ? 'win' : g.state === 'gameover' ? 'death' : 'timeout',
-        score: g.score | 0,
-        levelIdx: g.levelIdx | 0,
-        hi_score_beaten: (g.score | 0) > (g.hiScore | 0),
-        xp: g.xp?.snapshot?.() || null,
-        counters: { ...(a.counters || {}) },
-        events: (a.events || []).slice(-400),
-      };
-    }).catch(() => {});"""
+    if (shooting) await page.mouse.up().catch(() => {});"""
 
 
 def _render(

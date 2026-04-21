@@ -391,8 +391,53 @@ pipelines:
     cyclic: true
     terminal_step: implement
     steps:
+      - id: generate-bot
+        agent: qa-engineer
+        task: |
+          Generate a game-specific playtest bot for iteration {{iteration_tag}}
+          (cycle {{cycle_n}}).
+
+          First, check whether the current bot is already game-specific: read the
+          bot at memory key `playtest_bot_path`. If it already uses GameAPI (not
+          window.__game) and has game-specific targeting logic (e.g. enemy aim,
+          genre-appropriate inputs), AND the previous cycle's playtest succeeded
+          with kills > 0, skip generation — save a one-line "bot is current" note
+          as artifact `bot_generation_{{iteration_tag}}` and finish.
+
+          If the bot needs a rewrite (scaffolder default or previous failures):
+
+          Step 1: Read the game source from memory key `game_html_v{{cycle_n}}`.
+          Analyze: genre/core loop, input scheme (WASD/arrows/mouse/touch),
+          GameAPI.getSnapshot() shape (does it expose player/enemies with sx/sy?),
+          win/lose conditions, picker/modal flows.
+
+          Step 2: Write a game-specific bot using the `generate_bot` tool with:
+            - repo_path = memory[`artifact_repo_path`]
+            - bot_code = the full playtest_bot.mjs content
+            - game_analysis = your analysis from step 1
+            - message = "generate game-specific bot for {{iteration_tag}}"
+
+          The bot MUST:
+            - Use GameAPI.start(), getState(), getSnapshot(), pickCard() — never
+              window.__game
+            - Target enemies using screen coords (sx/sy) if snapshot exposes them
+            - Fall back to genre-appropriate random exploration otherwise
+            - Handle picker state (call GameAPI.pickCard with random index)
+            - Handle reload if snapshot.mag exists and mag.cur === 0
+            - Match the game's actual input scheme
+            - Write telemetry matching ITERATION_CONTRACT.md §1 schema
+            - Set window.__playtestBot = true after page.goto
+
+          Step 3: Smoke test — call `iteration_runner` with runs=1,
+          seconds_per_run=15. If the bot crashes or gets 0 kills in a game that
+          has enemies, read the error, fix the bot, retry (max 3 attempts).
+
+          Save report as memory artifact `bot_generation_{{iteration_tag}}`.
+        output: bot_generation
+
       - id: playtest
         agent: qa-engineer
+        depends_on: [generate-bot]
         task: |
           Run the playtest batch for iteration {{iteration_tag}} (cycle {{cycle_n}}).
 

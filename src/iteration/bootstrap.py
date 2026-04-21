@@ -85,3 +85,16 @@ def ensure_goals_md(project_id: str) -> None:
         project_id, "artifact", "goals_md", content, created_by="bootstrap"
     )
     logger.info(f"Bootstrap: seeded goals_md for {project_id} from {goals_file}")
+
+
+def ensure_briefing_md(project_id: str) -> None:
+    """Compile and store a fresh BRIEFING.md in project memory.
+
+    Always succeeds — assembles from whatever data is available.
+    Called at pipeline start so every agent in the cycle gets current context.
+    """
+    briefing = project_memory.compile_briefing(project_id)
+    project_memory.write(
+        project_id, "artifact", "briefing_md", briefing, created_by="bootstrap"
+    )
+    logger.info("Bootstrap: compiled briefing_md for %s (%d chars)", project_id, len(briefing))

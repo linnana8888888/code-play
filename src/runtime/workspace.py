@@ -131,5 +131,53 @@ class WorkspaceManager:
         return workspace_path
 
 
+def list_project_files(root: Path, max_files: int = 100) -> str:
+    """Produce an indented file-tree string for a project directory.
+
+    Excludes .git, node_modules, __pycache__, .venv, telemetry/, and
+    binary blobs. Returns a compact tree suitable for LLM context injection.
+    """
+    EXCLUDE = {".git", "node_modules", "__pycache__", ".venv", "telemetry", ".DS_Store"}
+    BINARY_SUFFIXES = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".mp3", ".wav", ".ogg", ".woff", ".woff2", ".ttf"}
+
+    if not root.is_dir():
+        return f"(directory not found: {root})"
+
+    lines: list[str] = []
+    count = 0
+
+    def _walk(directory: Path, prefix: str = "") -> None:
+        nonlocal count
+        if count >= max_files:
+            return
+        try:
+            entries = sorted(directory.iterdir(), key=lambda p: (not p.is_dir(), p.name.lower()))
+        except PermissionError:
+            return
+        for entry in entries:
+            if entry.name in EXCLUDE:
+                continue
+            if count >= max_files:
+                lines.append(f"{prefix}... ({max_files} file limit reached)")
+                return
+            if entry.is_dir():
+                lines.append(f"{prefix}{entry.name}/")
+                _walk(entry, prefix + "  ")
+            elif entry.suffix.lower() not in BINARY_SUFFIXES:
+                try:
+                    size = entry.stat().st_size
+                except OSError:
+                    size = 0
+                if size < 1024:
+                    size_str = f"{size}B"
+                else:
+                    size_str = f"{size / 1024:.1f}K"
+                lines.append(f"{prefix}{entry.name}  ({size_str})")
+                count += 1
+
+    _walk(root)
+    return "\n".join(lines) if lines else "(empty directory)"
+
+
 # Singleton
 workspace_manager = WorkspaceManager()

@@ -44,7 +44,7 @@ from src.memory.project_memory import project_memory
 from src.memory import criteria_store
 from src.memory import project_docs
 from src.memory import proposals_store
-from src.iteration.bootstrap import ensure_goals_md, GoalsBootstrapError
+from src.iteration.bootstrap import ensure_goals_md, ensure_briefing_md, GoalsBootstrapError
 from src.models.criteria import CriterionCreate, CriterionUpdate
 from src.models.proposals import (
     AgentProposalCreate,
@@ -836,6 +836,12 @@ async def _run_agent_task(instance, task_prompt: str, session_id: str = None):
                     "role": "user",
                     "content": f"[Project Context]\n{context_bundle}",
                 })
+            briefing = project_memory.read(instance.project_id, "artifact", "briefing_md")
+            if briefing:
+                context_messages.append({
+                    "role": "user",
+                    "content": f"[Project Briefing]\n{briefing}",
+                })
 
         async for turn in agent_runtime.run(instance, task_prompt, context_messages, session_id):
             if turn.role == "assistant" and turn.content:
@@ -1187,6 +1193,7 @@ async def _maybe_auto_iterate(project_id: str):
     if row["auto_iterate"]:
         try:
             ensure_goals_md(project_id)
+            ensure_briefing_md(project_id)
             logger.info(f"[{project_id}] phased-producer complete + goals set — auto-launching iterate_artifact")
             await run_pipeline(
                 "iterate_artifact",
@@ -1739,6 +1746,8 @@ async def run_pipeline(pipeline_name: str, body: PipelineRunBody):
             ensure_goals_md(project_id)
         except GoalsBootstrapError as exc:
             raise HTTPException(exc.status_code, str(exc))
+
+        ensure_briefing_md(project_id)
 
         # Flag the project as iterate-enabled and stamp cycle_n=1 in memory so
         # _maybe_relaunch_cyclic has a baseline to compare against.

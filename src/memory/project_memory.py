@@ -8,10 +8,12 @@ Each game project gets its own memory database for:
 """
 from __future__ import annotations
 
-import json
-from datetime import datetime, timezone
+import logging
+from pathlib import Path
 
-from src.database import get_project_db, init_project_db
+from src.database import get_project_db, get_studio_db, init_project_db
+
+logger = logging.getLogger(__name__)
 
 
 class ProjectMemory:
@@ -149,6 +151,91 @@ class ProjectMemory:
             return ""
 
         return "\n\n".join(sections)
+
+
+    def compile_briefing(self, project_id: str) -> str:
+        """Compile a rich BRIEFING.md from all available project state.
+
+        Designed to replace 200k+ tokens of agent file-discovery with a
+        single ~3-8k token document injected at spawn time.
+        """
+        from src.runtime.workspace import list_project_files
+
+        sections: list[str] = []
+
+        # ── 1. Project summary from studio DB ──
+        with get_studio_db() as db:
+            row = db.execute(
+                "SELECT name, description, goal, tech_stack FROM projects WHERE id = ?",
+                (project_id,),
+            ).fetchone()
+        if row:
+            sections.append(
+                f"# Project: {row['name']}\n\n"
+                f"{row['description'] or ''}\n\n"
+                f"- **Tech stack**: {row['tech_stack'] or 'not specified'}\n"
+                f"- **Goal**: {row['goal'] or 'not specified'}"
+            )
+
+        # ── 2. Iteration state ──
+        cycle_n = self.read(project_id, "cycle", "n")
+        if cycle_n:
+            sections.append(f"## Iteration cycle: {cycle_n}")
+
+        # ── 3. GOALS.md (full, not truncated) ──
+        goals = self.read(project_id, "artifact", "goals_md")
+        if goals:
+            sections.append(f"## Goals\n\n{goals.strip()}")
+
+        # ── 4. Artifact repo file tree ──
+        repo_path_raw = self.read(project_id, "artifact", "artifact_repo_path")
+        if repo_path_raw:
+            repo_path = Path(repo_path_raw.strip()).expanduser()
+            if repo_path.is_dir():
+                tree = list_project_files(repo_path)
+                sections.append(f"## File tree ({repo_path.name}/)\n\n```\n{tree}\n```")
+
+        # ── 5. Last postmortem ──
+        postmortem = self.read(project_id, "artifact", "postmortem_v1")
+        if postmortem:
+            trimmed = postmortem.strip()[:3000]
+            sections.append(f"## Last postmortem\n\n{trimmed}")
+
+        # ── 6. Active proposals (if any) ──
+        proposal_keys = [
+            "proposal_designer_v1", "proposal_ux_v1",
+            "proposal_proto_v1", "proposal_artist_v1",
+        ]
+        proposals = []
+        for key in proposal_keys:
+            content = self.read(project_id, "artifact", key)
+            if content:
+                label = key.replace("proposal_", "").replace("_v1", "")
+                proposals.append(f"### {label}\n{content.strip()[:800]}")
+        if proposals:
+            sections.append("## Active proposals\n\n" + "\n\n".join(proposals))
+
+        # ── 7. Decisions (full content) ──
+        decisions = self.list_by_type(project_id, "decision")
+        if decisions:
+            lines = ["## Key decisions"]
+            for d in decisions:
+                lines.append(f"- **{d['key']}**: {d['content']}")
+            sections.append("\n".join(lines))
+
+        # ── 8. Latest telemetry summary ──
+        for v in range(10, 0, -1):
+            telem = self.read(project_id, "artifact", f"telemetry_v{v}")
+            if telem:
+                sections.append(f"## Latest telemetry (v{v})\n\n{telem.strip()[:2000]}")
+                break
+
+        if not sections:
+            return f"# Project {project_id}\n\nNo briefing data available yet."
+
+        briefing = "\n\n---\n\n".join(sections)
+        logger.info("Compiled briefing for %s: %d chars", project_id, len(briefing))
+        return briefing
 
 
 # Singleton

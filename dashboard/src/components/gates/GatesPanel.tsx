@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import type { HumanGate, Project } from "../../types/api";
 import {
   getGates,
@@ -11,6 +11,7 @@ import {
   type AssetPreview,
   type IdeaPayload,
 } from "../../api/client";
+import { useWebSocket } from "../../api/websocket";
 import SpecDiffGrid from "./SpecDiffGrid";
 import BudgetGatePanel from "./BudgetGatePanel";
 
@@ -95,10 +96,23 @@ export default function GatesPanel({ projectId, initialExpandedId }: Props) {
     }
   }
 
+  const wsRefresh = useCallback(() => {
+    refresh();
+  }, [projectId]);
+
+  useWebSocket((event) => {
+    const e = event as { type?: string; data?: Record<string, unknown> };
+    if (!e.data) return;
+    if (e.data.project_id && e.data.project_id !== projectId) return;
+    const relevant = [
+      "gate_ready", "task_completed", "task_created", "task_updated",
+      "pipeline_started", "roster_proposed", "agent_spawned",
+    ];
+    if (relevant.includes(e.type || "")) wsRefresh();
+  });
+
   useEffect(() => {
     refresh();
-    const timer = setInterval(refresh, 4000);
-    return () => clearInterval(timer);
   }, [projectId]);
 
   useEffect(() => {
@@ -172,26 +186,7 @@ export default function GatesPanel({ projectId, initialExpandedId }: Props) {
     return () => clearTimeout(t);
   }, [lastDecision]);
 
-  const iterateEnabled = Boolean(project?.iterate_enabled);
-  const iterateHeader = iterateEnabled ? (
-    <div
-      className="flex items-center justify-between rounded-2xl border p-4"
-      style={{ borderColor: "var(--color-accent)", background: "var(--color-accent-tint)" }}
-    >
-      <div>
-        <p className="mono-label" style={{ color: "var(--color-accent-hover)" }}>
-          Iterate on this artifact
-        </p>
-        <p className="mt-1 text-xs text-text-muted">
-          Run the iterate_artifact pipeline: playtest → postmortem → propose ×4
-          → synthesis gate → implement. Loops up to the cycle budget (default 5).
-        </p>
-      </div>
-      <button onClick={onIterate} disabled={iterating} className="btn-accent">
-        {iterating ? "Launching…" : "▶ Iterate"}
-      </button>
-    </div>
-  ) : null;
+  const iterateHeader = null;
 
   const decisionBanner = lastDecision ? (
     <div

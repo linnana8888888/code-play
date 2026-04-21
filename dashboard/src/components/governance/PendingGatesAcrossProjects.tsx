@@ -1,6 +1,7 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { Link } from "react-router-dom";
 import { getProjects, getGates } from "../../api/client";
+import { useWebSocket } from "../../api/websocket";
 import type { HumanGate, Project } from "../../types/api";
 
 type GateRow = HumanGate & { project_id: string; project_name: string };
@@ -9,36 +10,38 @@ export default function PendingGatesAcrossProjects() {
   const [rows, setRows] = useState<GateRow[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
-  useEffect(() => {
-    let alive = true;
-    async function load() {
-      try {
-        const projects = await getProjects();
-        const perProject = await Promise.all(
-          projects.map(async (p: Project) => {
-            const gates = await getGates(p.id).catch(() => [] as HumanGate[]);
-            return gates.map((g) => ({
-              ...g,
-              project_id: p.id,
-              project_name: p.name,
-            }));
-          }),
-        );
-        if (!alive) return;
-        setRows(perProject.flat());
-        setErr(null);
-      } catch (e) {
-        if (!alive) return;
-        setErr(e instanceof Error ? e.message : String(e));
-      }
+  const load = useCallback(async () => {
+    try {
+      const projects = await getProjects();
+      const perProject = await Promise.all(
+        projects.map(async (p: Project) => {
+          const gates = await getGates(p.id).catch(() => [] as HumanGate[]);
+          return gates.map((g) => ({
+            ...g,
+            project_id: p.id,
+            project_name: p.name,
+          }));
+        }),
+      );
+      setRows(perProject.flat());
+      setErr(null);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
     }
-    load();
-    const t = setInterval(load, 4000);
-    return () => {
-      alive = false;
-      clearInterval(t);
-    };
   }, []);
+
+  useWebSocket((event) => {
+    const e = event as { type?: string };
+    const relevant = [
+      "gate_ready", "task_completed", "task_created", "task_updated",
+      "pipeline_started", "roster_proposed",
+    ];
+    if (relevant.includes(e.type || "")) load();
+  });
+
+  useEffect(() => {
+    load();
+  }, [load]);
 
   const ready = rows?.filter((g) => g.ready) ?? [];
   const waiting = rows?.filter((g) => !g.ready) ?? [];

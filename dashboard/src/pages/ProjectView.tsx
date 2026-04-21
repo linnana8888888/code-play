@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useParams, Link, useSearchParams } from "react-router-dom";
-import { getProject, runPipeline } from "../api/client";
+import { getProject, runPipeline, advancePipeline } from "../api/client";
 import { useTasks } from "../hooks/useTasks";
 import { useAgents } from "../hooks/useAgents";
 import { useWebSocket } from "../api/websocket";
@@ -9,6 +9,7 @@ import CreateTaskModal from "../components/tasks/CreateTaskModal";
 import NeedsAttention from "../components/tasks/NeedsAttention";
 import InstanceList from "../components/agents/InstanceList";
 import ChannelView from "../components/channels/ChannelView";
+import ActivityFeed from "../components/activity/ActivityFeed";
 import GatesPanel from "../components/gates/GatesPanel";
 import CriteriaPanel from "../components/project/CriteriaPanel";
 import DocsBrowser from "../components/docs/DocsBrowser";
@@ -31,6 +32,12 @@ interface SpawnFailedEntry {
   hint?: string;
 }
 
+interface RosterPending {
+  batch_id: string;
+  pipeline: string;
+  proposal_count: number;
+}
+
 export default function ProjectView() {
   const { id } = useParams<{ id: string }>();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -45,6 +52,8 @@ export default function ProjectView() {
   const [relaunchInput, setRelaunchInput] = useState("");
   const [relaunching, setRelaunching] = useState(false);
   const [relaunchMsg, setRelaunchMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
+  const [iterating, setIterating] = useState(false);
+  const [rosterPending, setRosterPending] = useState<RosterPending | null>(null);
   const { tasks, create: createTask, refresh: refreshTasks } = useTasks(id);
   const { instances, terminate } = useAgents();
   const expandedId = searchParams.get("expanded") ?? undefined;
@@ -64,6 +73,18 @@ export default function ProjectView() {
         review_of: e.data.review_of as string | undefined,
         title: e.data.title as string | undefined,
       });
+      return;
+    }
+    if (e.type === "roster_proposed") {
+      setRosterPending({
+        batch_id: String(e.data.batch_id),
+        pipeline: String(e.data.pipeline || ""),
+        proposal_count: Number(e.data.proposal_count || 0),
+      });
+      return;
+    }
+    if (e.type === "pipeline_started") {
+      setRosterPending(null);
       return;
     }
     if (e.type === "spawn_failed") {
@@ -95,10 +116,36 @@ export default function ProjectView() {
       await runPipeline("phased-producer", id, relaunchInput || project?.goal || "");
       setRelaunchMsg({ kind: "ok", text: "phased-producer launched — tasks queued." });
       setRelaunchInput("");
+      setTimeout(refreshTasks, 500);
     } catch (e) {
       setRelaunchMsg({ kind: "err", text: e instanceof Error ? e.message : String(e) });
     } finally {
       setRelaunching(false);
+    }
+  }
+
+  async function onIterate() {
+    if (!id) return;
+    setIterating(true);
+    setRelaunchMsg(null);
+    try {
+      const res = await advancePipeline(id, "iterate_artifact") as Record<string, unknown>;
+      if (res?.status === "pending_roster_approval") {
+        setRosterPending({
+          batch_id: String(res.batch_id || ""),
+          pipeline: String(res.pipeline || "iterate_artifact"),
+          proposal_count: Array.isArray(res.proposals) ? res.proposals.length : 0,
+        });
+        setRelaunchMsg({ kind: "ok", text: "Roster approval needed — review agent proposals before pipeline starts." });
+      } else {
+        setRelaunchMsg({ kind: "ok", text: "iterate_artifact launched — playtest → postmortem → propose → implement." });
+      }
+      setSection("tasks");
+      setTimeout(refreshTasks, 500);
+    } catch (e) {
+      setRelaunchMsg({ kind: "err", text: e instanceof Error ? e.message : String(e) });
+    } finally {
+      setIterating(false);
     }
   }
 
@@ -134,14 +181,39 @@ export default function ProjectView() {
                 )}
               </div>
             </div>
-            <button
-              onClick={() => setRelaunchOpen((v) => !v)}
-              className="btn-ghost shrink-0"
-              title="Re-run phased-producer with custom input"
-            >
-              {relaunchOpen ? "Cancel" : "↻ Relaunch"}
-            </button>
+            <div className="flex shrink-0 gap-2">
+              {project.iterate_enabled ? (
+                <button
+                  onClick={onIterate}
+                  disabled={iterating || !!rosterPending || tasks.some((t) => t.title.includes("[iterate_artifact]") && t.status !== "done")}
+                  className="btn-accent"
+                  title="Run iterate_artifact: playtest → postmortem → propose → implement"
+                >
+                  {iterating ? "Launching…" : rosterPending ? "Roster Pending…" : tasks.some((t) => t.title.includes("[iterate_artifact]") && t.status !== "done") ? "Iterating…" : "▶ Iterate"}
+                </button>
+              ) : null}
+              <button
+                onClick={() => setRelaunchOpen((v) => !v)}
+                className="btn-ghost"
+                title="Re-run phased-producer with custom input"
+              >
+                {relaunchOpen ? "Cancel" : "↻ Relaunch"}
+              </button>
+            </div>
           </div>
+
+          {relaunchMsg && (
+            <div
+              className="mt-3 rounded-xl border px-4 py-2.5 text-sm"
+              style={
+                relaunchMsg.kind === "ok"
+                  ? { borderColor: "var(--color-accent)", background: "var(--color-accent-tint)", color: "var(--color-accent-hover)" }
+                  : { borderColor: "var(--color-danger)", background: "#fee2e2", color: "#991b1b" }
+              }
+            >
+              {relaunchMsg.text}
+            </div>
+          )}
 
           {relaunchOpen && (
             <div className="mt-4 rounded-xl border border-border-strong bg-bg-subtle p-4">
@@ -157,19 +229,6 @@ export default function ProjectView() {
                 <button onClick={onRelaunch} disabled={relaunching} className="btn-primary">
                   {relaunching ? "Launching…" : "Launch"}
                 </button>
-                {relaunchMsg && (
-                  <span
-                    className="text-xs"
-                    style={{
-                      color:
-                        relaunchMsg.kind === "ok"
-                          ? "var(--color-accent-hover)"
-                          : "var(--color-danger)",
-                    }}
-                  >
-                    {relaunchMsg.text}
-                  </span>
-                )}
               </div>
             </div>
           )}
@@ -218,6 +277,31 @@ export default function ProjectView() {
           ))}
         </div>
       )}
+
+      {rosterPending ? (
+        <div
+          className="flex items-center justify-between gap-3 rounded-2xl border p-4 text-sm"
+          style={{ borderColor: "var(--color-warning)", background: "#fef9c3" }}
+        >
+          <div>
+            <p className="mono-label" style={{ color: "#92400e" }}>
+              Roster approval needed
+            </p>
+            <p className="mt-1 text-xs text-text-muted">
+              {rosterPending.proposal_count} agent{rosterPending.proposal_count !== 1 ? "s" : ""} proposed
+              for {rosterPending.pipeline}. Review and approve before the pipeline starts.
+            </p>
+          </div>
+          <div className="flex gap-2">
+            <Link to={`/governance?batch=${rosterPending.batch_id}`} className="btn-primary">
+              Review Roster
+            </Link>
+            <button onClick={() => setRosterPending(null)} className="btn-ghost">
+              Dismiss
+            </button>
+          </div>
+        </div>
+      ) : null}
 
       {gateBanner ? (
         <div
@@ -299,8 +383,11 @@ export default function ProjectView() {
       )}
 
       {section === "channels" && (
-        <div className="h-[500px]">
-          <ChannelView projectId={id} />
+        <div className="space-y-6">
+          <ActivityFeed />
+          <div className="h-[500px]">
+            <ChannelView projectId={id} />
+          </div>
         </div>
       )}
     </div>

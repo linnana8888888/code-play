@@ -59,7 +59,7 @@ Every `[gate]` is a moment where you review, approve, or redirect. Between gates
 | **Analytics** | telemetry-engineer, metrics-dashboard-builder, analytics-reporter, player-feedback-synthesizer | Instrumentation, dashboards, postmortems, comment digests |
 | **Research** | style-researcher, mechanic-researcher | Visual references, mechanic teardowns |
 
-Agents route through **Anthropic** (Claude Opus/Sonnet), **OpenAI** (GPT-5), and **oMLX** (local Qwen/Gemma) with automatic fallback chains.
+Agents route through **Anthropic** (Claude Opus/Sonnet), **OpenAI** (GPT-5), and **oMLX** (local Qwen/Gemma) with automatic fallback chains. Each agent gets scoped tools (lean `core` tier + role-specific extras) and curated skills (brainstorming for designers, TDD for devs, data-viz for analytics, etc.).
 
 ## Pipelines
 
@@ -72,15 +72,16 @@ Agents route through **Anthropic** (Claude Opus/Sonnet), **OpenAI** (GPT-5), and
 
 After a game ships, `iterate_artifact` takes over. A headless playtest bot (`playtest_bot.mjs`) drives the game through `window.GameAPI`, collects telemetry, and feeds it into a cyclic pipeline:
 
-1. **Playtest** — bot runs 5x, writes telemetry JSON
-2. **Postmortem** — analytics-reporter grades each GOALS.md target (hit/miss)
-3. **Propose** — 4 agents in parallel (designer, UX, artist, prototyper) each pitch 5-8 ideas
-4. **Human picks** — you select which ideas to implement
-5. **Budget estimate** — tech-lead forecasts token cost and proposes engineer split
-6. **Implement** — frontend-developer applies changes (single or parallel engineers)
-7. **Loop** — back to playtest with the new build
+1. **Generate bot** — QA engineer reads game source, writes a game-specific bot (not a random walk)
+2. **Playtest** — bot runs 5x, writes telemetry JSON
+3. **Postmortem** — analytics-reporter grades each GOALS.md target (hit/miss)
+4. **Propose** — 4 agents in parallel (designer, UX, artist, prototyper) each pitch 5-8 ideas
+5. **Human picks** — you select which ideas to implement
+6. **Budget estimate** — tech-lead forecasts token cost and proposes engineer split
+7. **Implement** — frontend-developer applies changes (single or parallel engineers)
+8. **Loop** — back to playtest with the new build
 
-The bot and game communicate through a standardized `window.GameAPI` contract (start, getState, getSnapshot, pickCard) so one bot drives any game.
+The bot and game communicate through a standardized `window.GameAPI` contract (start, getState, getSnapshot, pickCard) so one bot drives any game. On cycle 1, the QA engineer generates a game-specific bot using entity screen coordinates from `getSnapshot()`. On subsequent cycles, the existing bot is reused or tuned.
 
 ## Architecture
 
@@ -88,11 +89,11 @@ The bot and game communicate through a standardized `window.GameAPI` contract (s
 FastAPI orchestrator (Python)
 ├── Agent Runtime ─── model-agnostic tool-use loop, budget enforcement, session persistence
 ├── LLM Router ────── Anthropic / OpenAI / oMLX with fallback chains
-├── Tool Executor ──── 16+ builtin tools, 4-tier governance, MCP bridge to Claude Code plugins
+├── Tool Executor ──── 2-tier governance (core 19 tools / builtin 35), MCP bridge, mcp:<server> prefix filtering
 ├── Task Queue ────── SQLite-backed, dependency resolution, atomic checkout
 ├── Pipeline Engine ── declarative YAML pipelines with human gates
 ├── Project Memory ── per-game SQLite store (artifacts, decisions, feedback)
-├── Skill Registry ── injectable .md skills with permission model
+├── Skill Registry ── 445 available skills, role-curated injection (18 agents get 1-4 skills each)
 ├── Path Rules ────── auto-inject domain rules when agents touch matching files
 ├── Artifact Templates ─ 16 structured output templates across 9 categories
 └── React Dashboard ── real-time observability, Kanban board, governance approvals
@@ -141,7 +142,8 @@ code-play/
 ├── agents/          # 34 agent definitions (.md) across 8 disciplines
 ├── artifacts/       # Per-game build artifacts, publish assets, project state
 ├── config/
-│   ├── agents.yaml      # Model routing, tools, budgets per agent
+│   ├── agents.yaml      # Model routing, scoped tools + skills, budgets per agent
+│   ├── governance.yaml  # Tool tiers: core (19), builtin (35), restricted, blocked
 │   ├── pipelines.yaml   # 6 declarative pipelines
 │   ├── path_rules.yaml  # Auto-injected domain rules
 │   └── artifact_templates.yaml

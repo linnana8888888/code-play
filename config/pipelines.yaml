@@ -10,6 +10,10 @@ pipelines:
         agent: game-designer
         task: "Draft 3 distinct concept directions for: {input}. For each: one-line pitch, core loop (2-3 sentences), target feel. Save to memory as artifact key 'concept_options_v1'."
         output: concepts
+        expected_outputs:
+          - kind: memory_key
+            type: artifact
+            key: concept_options_v1
 
       - id: gate-concept
         type: human-gate
@@ -30,12 +34,20 @@ pipelines:
           Issue verdict: [CD-CONCEPT]: APPROVE | CONCERNS | REJECT
           If CONCERNS: name the specific pillar or fantasy gap and suggest a fix.
         output: cd_concept_verdict
+        expected_outputs:
+          - kind: memory_key
+            type: artifact
+            key: cd_concept_verdict
 
       - id: mechanics
         agent: game-designer
         depends_on: [cd-concept-check]
         task: "Expand the approved concept (memory key: concept_options_v1, see review notes for chosen direction) into a mechanics doc: player verbs, progression, win/lose conditions, 2-3 signature systems. Save to memory as artifact key 'mechanics_v1'."
         output: mechanics
+        expected_outputs:
+          - kind: memory_key
+            type: artifact
+            key: mechanics_v1
 
       - id: gate-mechanics
         type: human-gate
@@ -57,6 +69,10 @@ pipelines:
           Issue verdict: [CD-MECHANICS]: APPROVE | CONCERNS | REJECT
           If CONCERNS: name the specific MDA misalignment or flow-state gap.
         output: cd_mechanics_verdict
+        expected_outputs:
+          - kind: memory_key
+            type: artifact
+            key: cd_mechanics_verdict
 
       - id: style-research
         agent: style-researcher
@@ -76,6 +92,10 @@ pipelines:
             - "Don't do this" list: 3-5 anti-patterns to avoid.
           Save to memory as artifact key 'style_research_v1'.
         output: style_research
+        expected_outputs:
+          - kind: memory_key
+            type: artifact
+            key: style_research_v1
 
       - id: look-and-feel
         agent: technical-artist
@@ -101,6 +121,10 @@ pipelines:
                  - References (list the asset_ids).
           Save the final brief to memory as artifact key 'laf_brief_v1'.
         output: look_and_feel
+        expected_outputs:
+          - kind: memory_key
+            type: artifact
+            key: laf_brief_v1
 
       - id: gate-laf
         type: human-gate
@@ -121,6 +145,10 @@ pipelines:
           Issue verdict: [CD-LAF]: APPROVE | CONCERNS | REJECT
           If CONCERNS: name the specific pillar-visual mismatch.
         output: cd_laf_verdict
+        expected_outputs:
+          - kind: memory_key
+            type: artifact
+            key: cd_laf_verdict
 
       - id: tech-plan
         agent: tech-lead
@@ -138,6 +166,10 @@ pipelines:
               state } so the QA step can assert state.
           Keep it to ≤ 1 page. Save to memory as artifact key 'tech_plan_v1'.
         output: tech_plan
+        expected_outputs:
+          - kind: memory_key
+            type: artifact
+            key: tech_plan_v1
 
       - id: gate-tech
         type: human-gate
@@ -164,6 +196,11 @@ pipelines:
 
           Save the final HTML to memory as artifact key 'game_html_v1'.
         output: code
+        expected_outputs:
+          - kind: memory_key
+            type: artifact
+            key: game_html_v1
+            min_bytes: 1024
 
       - id: telemetry-spec
         agent: telemetry-engineer
@@ -181,6 +218,10 @@ pipelines:
                iteration; analytics endpoint for production).
           Save to memory as artifact key 'telemetry_spec_v1'.
         output: telemetry_spec
+        expected_outputs:
+          - kind: memory_key
+            type: artifact
+            key: telemetry_spec_v1
 
       - id: telemetry-instrument
         agent: frontend-developer
@@ -197,6 +238,11 @@ pipelines:
           Save the updated build to memory as artifact key 'game_html_v1'
           (overwrite — the instrumented version IS the shipping version).
         output: instrumented_code
+        expected_outputs:
+          - kind: memory_key
+            type: artifact
+            key: game_html_v1
+            min_bytes: 1024
 
       - id: qa-playtest
         agent: qa-engineer
@@ -216,6 +262,10 @@ pipelines:
           Save a structured report to memory as 'qa_report_v1':
             { verdict: pass|fail, checks: [{name, pass, evidence_path, note}], console_errors: […] }.
         output: qa_report
+        expected_outputs:
+          - kind: memory_key
+            type: artifact
+            key: qa_report_v1
 
       - id: gate-qa
         type: human-gate
@@ -231,6 +281,10 @@ pipelines:
         depends_on: [gate-qa]
         task: "Lint report only — review the prototype (memory key: game_html_v1) for bugs, performance, security. QA already validated gameplay; this is for code-quality concerns only."
         output: review
+        expected_outputs:
+          - kind: memory_key
+            type: artifact
+            key: code_review_v1
 
       - id: scaffold-iteration
         agent: rapid-prototyper
@@ -261,6 +315,10 @@ pipelines:
 
           Save a one-line report as memory artifact key 'iteration_scaffold_v1'.
         output: iteration_scaffold
+        expected_outputs:
+          - kind: memory_key
+            type: artifact
+            key: iteration_scaffold_v1
 
       - id: publish-prep
         agent: publisher
@@ -323,6 +381,10 @@ pipelines:
 
           DO NOT PUBLISH. Stop here and wait for gate-publish.
         output: publish_plan
+        expected_outputs:
+          - kind: memory_key
+            type: artifact
+            key: publish_plan_v1
 
       - id: gate-publish
         type: human-gate
@@ -380,6 +442,10 @@ pipelines:
           Post ONE message to the project channel: "🎪 Shipped: <title> — <primary_url>
           — <live_screenshot>". Nothing else.
         output: manifest
+        expected_outputs:
+          - kind: memory_key
+            type: artifact
+            key: publish_manifest_v1
 
   iterate_artifact:
     name: "Iterate on an existing game (playtest → postmortem → propose → implement, looped)"
@@ -434,6 +500,10 @@ pipelines:
 
           Save report as memory artifact `bot_generation_{{iteration_tag}}`.
         output: bot_generation
+        expected_outputs:
+          - kind: memory_key
+            type: artifact
+            key: bot_generation_{{iteration_tag}}
 
       - id: playtest
         agent: qa-engineer
@@ -461,6 +531,10 @@ pipelines:
           Required memory output: artifact key `telemetry_{{iteration_tag}}`
           (written by the tool).
         output: telemetry
+        expected_outputs:
+          - kind: memory_key
+            type: artifact
+            key: telemetry_{{iteration_tag}}
 
       - id: postmortem
         agent: analytics-reporter
@@ -485,6 +559,10 @@ pipelines:
 
           Save to memory as artifact 'postmortem_{{iteration_tag}}'.
         output: postmortem
+        expected_outputs:
+          - kind: memory_key
+            type: artifact
+            key: postmortem_{{iteration_tag}}
 
       # Four proposers fan out in parallel — deliberately no depends_on between
       # them. Each reads the same postmortem and pitches one change.
@@ -506,6 +584,10 @@ pipelines:
 
           Save to memory as artifact 'proposal_designer_{{iteration_tag}}'.
         output: proposal_designer
+        expected_outputs:
+          - kind: memory_key
+            type: artifact
+            key: proposal_designer_{{iteration_tag}}
 
       - id: propose-ux
         agent: hud-designer
@@ -522,6 +604,10 @@ pipelines:
 
           Save as artifact 'proposal_ux_{{iteration_tag}}'.
         output: proposal_ux
+        expected_outputs:
+          - kind: memory_key
+            type: artifact
+            key: proposal_ux_{{iteration_tag}}
 
       - id: propose-artist
         agent: technical-artist
@@ -535,6 +621,10 @@ pipelines:
 
           Save as artifact 'proposal_artist_{{iteration_tag}}'.
         output: proposal_artist
+        expected_outputs:
+          - kind: memory_key
+            type: artifact
+            key: proposal_artist_{{iteration_tag}}
 
       - id: propose-proto
         agent: frontend-developer
@@ -548,6 +638,10 @@ pipelines:
 
           Save as artifact 'proposal_proto_{{iteration_tag}}'.
         output: proposal_proto
+        expected_outputs:
+          - kind: memory_key
+            type: artifact
+            key: proposal_proto_{{iteration_tag}}
 
       - id: synthesis_gate
         type: human-gate
@@ -574,6 +668,10 @@ pipelines:
           If CONCERNS: name the pillar at risk and suggest a constraint for the
           implementer to preserve creative intent.
         output: cd_iterate_verdict
+        expected_outputs:
+          - kind: memory_key
+            type: artifact
+            key: cd_iterate_verdict_{{iteration_tag}}
 
       - id: implement
         agent: frontend-developer
@@ -599,3 +697,8 @@ pipelines:
           a local commit (no push). The orchestrator will relaunch the playtest
           step for cycle {{cycle_n_plus_1}} as soon as this task completes.
         output: build
+        expected_outputs:
+          - kind: memory_key
+            type: artifact
+            key: game_html_v{{cycle_n_plus_1}}
+            min_bytes: 1024

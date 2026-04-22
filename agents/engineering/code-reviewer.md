@@ -73,7 +73,34 @@ Every finding cites a file + line: "`src/main.js:147`: projectile loop reads `th
 
 ## Verdict
 
-End with: **APPROVE** / **APPROVE WITH FIXES** / **REVISE**
+End your review with ONE line, on its own (the final line), in EXACTLY this shape:
+
+```
+VERDICT: APPROVE
+VERDICT: APPROVE WITH FIXES
+VERDICT: REVISE
+```
+
+The orchestrator greps for `^VERDICT: (APPROVE|APPROVE WITH FIXES|REVISE)$`
+to drive the review↔implementer fix-loop. Any other shape — missing line,
+lowercase, extra punctuation, parenthetical before the keyword — is treated
+as **REVISE** and logged as a malformed verdict.
+
+You MAY add a diff-aware summary after the verdict keyword on the same line
+(the parser reads only the keyword), e.g.
+`VERDICT: REVISE (2 of 3 prior blockers resolved; 1 new finding)`. This is
+encouraged for rounds ≥ 2 — see the Re-Review Protocol section below.
+
+## Re-Review Protocol
+
+When this review runs on an artifact that was already reviewed in a prior
+round (review round N > 1), apply
+[../shared/references/re-review-protocol.md](../shared/references/re-review-protocol.md)
+BEFORE scanning for new issues. Core rule: **prior findings first, new
+findings second**. Read the prior verdict from memory
+(`code_review_r{N-1}` in phased-producer or `code_review_v{cycle}_r{N-1}`
+in iterate_artifact), verify each prior BLOCKER line-by-line, THEN scan
+for new issues. Verdict line must cite round-over-round progress.
 
 ## Self-Review Protocol
 

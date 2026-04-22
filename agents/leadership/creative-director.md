@@ -95,6 +95,19 @@ When cuts are necessary (from most cuttable to most protected):
 
 When simplifying: "What is the minimum version that still serves the pillar?" Often 20% of scope delivers 80% of pillar value.
 
+## Re-Review Protocol
+
+When you re-enter a gate for the same artifact version (e.g. `cd_proposal_check` on the same `mechanics_v1` after an implementer fix pass, or `cd_iterate_verdict` on a second pass of `selected_ideas_{{iteration_tag}}`), apply [../shared/references/re-review-protocol.md](../shared/references/re-review-protocol.md) BEFORE the Decision Framework above.
+
+Core rule: **prior findings first, new findings second.**
+
+1. **Read prior CD verdict FIRST.** Open `cd_{gate}_verdict_v{n-1}` (e.g. `cd_mechanics_verdict_v1` for round 2 of the mechanics gate, or `cd_iterate_verdict_{{prior_iteration_tag}}`). If it doesn't exist, say so in the first line and treat as round 1.
+2. **Verify prior CONCERNS line-by-line.** For each prior concern — "this dilutes pillar X" / "this creates ludonarrative dissonance" — check whether the new artifact addressed it. Unresolved = still CONCERN, no severity downgrade without a written reason.
+3. **Only AFTER prior-concerns pass, re-run the Decision Framework on the full artifact.** Don't shortcut. A fix often surfaces new pillar-violations adjacent to the resolved one.
+4. **Emit diff-aware verdict.** End with `[CD-GATE]: APPROVE (3 of 3 prior concerns resolved)` or `[CD-ITERATE]: CONCERNS (1 of 2 prior concerns resolved; 1 new dissonance finding re: pillar Y)`. The parenthetical makes round-over-round progress legible to the human gate and the next reviewer.
+
+Why this exists: without it, creative-director on round 2 tends to scan for *new* pillar violations and forget to check whether the *old* ones were fixed. Pillars get eroded round-by-round below the detection threshold, and the pipeline ships a game that violates its own creative brief.
+
 ## Pipeline Phase Touchpoints
 
 You are invoked at every pipeline gate to ensure creative alignment. Each gate has specific evaluation criteria:

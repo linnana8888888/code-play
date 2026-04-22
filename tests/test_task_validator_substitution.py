@@ -67,6 +67,22 @@ def test_all_three_placeholders_in_one_string():
     assert rendered[0]["key"] == "a_v2_b_2_c_3"
 
 
+def test_substitutes_review_round_n_and_plus_1():
+    eo = [
+        {"kind": "memory_key", "key": "code_review_v{{cycle_n}}_r{{review_round_n}}"},
+        {"kind": "memory_key", "key": "code_review_v{{cycle_n}}_r{{review_round_n_plus_1}}"},
+    ]
+    rendered = substitute_expected_outputs(eo, cycle_n=2, review_round_n=1)
+    assert rendered[0]["key"] == "code_review_v2_r1"
+    assert rendered[1]["key"] == "code_review_v2_r2"
+
+
+def test_review_round_n_zero_substitutes_literal_zero():
+    eo = [{"kind": "memory_key", "key": "pre_review_r{{review_round_n}}"}]
+    rendered = substitute_expected_outputs(eo, review_round_n=0)
+    assert rendered[0]["key"] == "pre_review_r0"
+
+
 def test_matches_pipelines_yaml_playtest_shape():
     """Lock the shape used by iterate_artifact.playtest — every iterate step
     uses memory_key + {{iteration_tag}} or {{cycle_n}} in the key."""

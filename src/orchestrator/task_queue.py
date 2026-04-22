@@ -168,6 +168,41 @@ class TaskQueue:
             )
         return self.get(task_id)
 
+    def replace_dependency(
+        self, task_id: str, old_dep_id: str, new_dep_id: str
+    ) -> Task | None:
+        """Swap one dep_id for another in the task's depends_on list.
+
+        Used by the review↔implementer loop: when a review's verdict=REVISE
+        and a fresh fix+review pair is spawned, downstream tasks whose
+        depends_on included the old review id need to point at the new one
+        so they wait for the full loop to finish before advancing.
+
+        If old_dep_id is not in depends_on, this is a no-op and returns the
+        task unchanged. Dedupes new_dep_id in case it's already listed.
+        """
+        task = self.get(task_id)
+        if not task:
+            return None
+        existing = list(task.depends_on or [])
+        if old_dep_id not in existing:
+            return task
+        replaced = [new_dep_id if d == old_dep_id else d for d in existing]
+        # Dedupe while preserving order
+        seen: set[str] = set()
+        deduped: list[str] = []
+        for d in replaced:
+            if d not in seen:
+                seen.add(d)
+                deduped.append(d)
+        now = datetime.now(timezone.utc).isoformat()
+        with get_studio_db() as db:
+            db.execute(
+                "UPDATE tasks SET depends_on = ?, updated_at = ? WHERE id = ?",
+                (json.dumps(deduped), now, task_id),
+            )
+        return self.get(task_id)
+
     def update_status(self, task_id: str, status: TaskStatus, result: dict = None):
         """Update task status and optionally store result."""
         with get_studio_db() as db:

@@ -53,7 +53,7 @@ from src.models.proposals import (
     ProposalStatus,
     SingleDecision,
 )
-from src.iteration import cycle_state
+from src.iteration import cycle_state, review_state
 
 # --- Failure classification -------------------------------------------------
 
@@ -1351,10 +1351,23 @@ async def _maybe_relaunch_cyclic(project_id: str, pipeline_specs: dict) -> None:
         terminal_title = f"[{pname}] {terminal_id}"
         first_title = f"[{pname}] {first_step['id']}"
 
-        completed_terminals = [
-            t for t in all_tasks
-            if t.title == terminal_title and t.status == TaskStatus.COMPLETED
-        ]
+        # If terminal_step is a review_loop, only treat APPROVED rounds as
+        # relaunch-eligible. Revise-spawned or cap-gated rounds are mid-loop.
+        terminal_step_spec = next(
+            (s for s in steps if s.get("id") == terminal_id), None
+        )
+        terminal_is_review_loop = (
+            terminal_step_spec and terminal_step_spec.get("type") == "review_loop"
+        )
+
+        def _terminal_ok(t) -> bool:
+            if t.title != terminal_title or t.status != TaskStatus.COMPLETED:
+                return False
+            if not terminal_is_review_loop:
+                return True
+            return (t.metadata or {}).get("review_resolution") == "approved"
+
+        completed_terminals = [t for t in all_tasks if _terminal_ok(t)]
         if not completed_terminals:
             continue
         latest = max(
@@ -1415,6 +1428,11 @@ async def _maybe_relaunch_cyclic(project_id: str, pipeline_specs: dict) -> None:
         tag = f"v{next_n}"
         metadata = {"iteration_tag": tag, "cycle_n": next_n}
 
+        # Fresh cycle = fresh review-round budget for every review_loop in it.
+        if any(s.get("type") == "review_loop" for s in steps):
+            review_state.reset_round(project_id)
+            review_state.clear_halt(project_id)
+
         # Mirror run_pipeline: scaffold every step for the new cycle with its
         # depends_on wired by name→task_id. Without this, prep-brief /
         # implement / budget_gate only ever existed for cycle 1 and had to be
@@ -1423,11 +1441,17 @@ async def _maybe_relaunch_cyclic(project_id: str, pipeline_specs: dict) -> None:
         first_task_id: str | None = None
         for step in steps:
             step_id = step["id"]
+            is_review_loop = step.get("type") == "review_loop"
             task_desc = (
                 step.get("task", "")
                 .replace("{{iteration_tag}}", tag)
                 .replace("{{cycle_n}}", str(next_n))
+                .replace("{{cycle_n_plus_1}}", str(next_n + 1))
             )
+            if is_review_loop:
+                task_desc = task_desc.replace("{{review_round_n}}", "1").replace(
+                    "{{review_round_n_plus_1}}", "2"
+                )
             deps = [
                 created_tasks[dep_name]
                 for dep_name in step.get("depends_on", [])
@@ -1437,14 +1461,16 @@ async def _maybe_relaunch_cyclic(project_id: str, pipeline_specs: dict) -> None:
                 step.get("expected_outputs"),
                 iteration_tag=tag,
                 cycle_n=next_n,
+                review_round_n=1 if is_review_loop else None,
             )
+            step_metadata = {**metadata, "review_round_n": 1, "loop_role": "review"} if is_review_loop else metadata
             new_task = task_queue.create(TaskCreate(
                 project_id=project_id,
                 title=f"[{pname}] {step_id}",
                 description=task_desc,
                 depends_on=deps,
                 created_by=f"pipeline:{pname}",
-                metadata=metadata,
+                metadata=step_metadata,
                 expected_outputs=step_expected,
             ))
             created_tasks[step_id] = new_task.id
@@ -1529,9 +1555,322 @@ async def _maybe_auto_iterate(project_id: str):
     })
 
 
+_VERDICT_LINE_RE = re.compile(
+    r"^\s*VERDICT:\s*(APPROVE\s+WITH\s+FIXES|APPROVE|REVISE)\s*\.?\s*$",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+
+def _parse_verdict(text: str | None) -> str:
+    """Extract a normalized verdict from review artifact text.
+
+    Returns one of: "APPROVE", "APPROVE_WITH_FIXES", "REVISE".
+    Contract: code-reviewer ends its review with a line like
+    `VERDICT: APPROVE` / `VERDICT: APPROVE WITH FIXES` / `VERDICT: REVISE`.
+    The resolver scans for the LAST such line (so drafts/examples earlier in
+    the text don't mislead). Any other shape → REVISE (with warning logged
+    at call site). Keeps parser dumb and defensive.
+    """
+    if not text:
+        return "REVISE"
+    matches = list(_VERDICT_LINE_RE.finditer(text))
+    if not matches:
+        return "REVISE"
+    raw = matches[-1].group(1).upper()
+    # Normalize whitespace in "APPROVE WITH FIXES"
+    raw = re.sub(r"\s+", " ", raw)
+    if raw == "APPROVE":
+        return "APPROVE"
+    if raw == "APPROVE WITH FIXES":
+        return "APPROVE_WITH_FIXES"
+    return "REVISE"
+
+
+def _render_review_templates(
+    raw: str, *, iteration_tag: str | None, cycle_n: int | None, review_round_n: int
+) -> str:
+    """Apply template substitutions to a review_loop task-description string.
+
+    Mirrors the raw-string replacement used in run_pipeline / _maybe_relaunch_cyclic
+    so fix_task and review task descriptions stay consistent.
+    """
+    out = raw
+    if iteration_tag is not None:
+        out = out.replace("{{iteration_tag}}", str(iteration_tag))
+    if cycle_n is not None:
+        out = out.replace("{{cycle_n}}", str(cycle_n))
+        out = out.replace("{{cycle_n_plus_1}}", str(int(cycle_n) + 1))
+    out = out.replace("{{review_round_n}}", str(review_round_n))
+    out = out.replace("{{review_round_n_plus_1}}", str(int(review_round_n) + 1))
+    return out
+
+
+async def _maybe_resolve_review_loops(project_id: str, pipeline_specs: dict) -> None:
+    """Resolve completed review_loop tasks into APPROVE / REVISE / cap-gated outcomes.
+
+    Each pipeline step with `type: review_loop` is a fix-loop gate. When the
+    review task completes, this resolver:
+      - Parses the verdict from the step's memory artifact.
+      - APPROVE / APPROVE_WITH_FIXES: marks the task metadata
+        `review_resolution="approved"` and resets the per-project round counter
+        so the next review loop (new cycle or next pipeline) starts fresh.
+      - REVISE + budget remaining: bumps `review_state.round_n`, spawns a
+        fix-implementer task + a fresh review task (round N+1), rewires every
+        downstream dependent to point at the new review task id, and marks
+        the original `review_resolution="revise_spawned"`.
+      - Budget exhausted: spawns a `review-cap` human-gate task, rewires
+        dependents to it, and marks `review_resolution="cap_gated"`.
+
+    Idempotent: skips any task whose metadata already carries a resolution flag.
+    """
+    all_tasks = task_queue.list_tasks(project_id=project_id)
+    for pname, pspec in pipeline_specs.items():
+        steps = pspec.get("steps", []) or []
+        for step in steps:
+            if step.get("type") != "review_loop":
+                continue
+            step_id = step["id"]
+            step_title = f"[{pname}] {step_id}"
+            loop_cfg = step.get("review_loop") or {}
+            verdict_key_tpl = loop_cfg.get("verdict_artifact_key") or next(
+                (
+                    e.get("key", "")
+                    for e in (step.get("expected_outputs") or [])
+                    if e.get("kind") == "memory_key"
+                ),
+                "",
+            )
+            if not verdict_key_tpl:
+                logger.warning(
+                    f"review_loop step '{step_id}' has no verdict_artifact_key or memory_key expected_output; skipping resolution"
+                )
+                continue
+            fix_agent = loop_cfg.get("fix_agent")
+            fix_task_tpl = loop_cfg.get("fix_task") or ""
+            fix_expected = loop_cfg.get("fix_expected_outputs") or []
+            review_task_tpl = loop_cfg.get("next_review_task") or step.get("task") or ""
+            review_expected = step.get("expected_outputs") or []
+            if not fix_agent or not fix_task_tpl:
+                logger.warning(
+                    f"review_loop step '{step_id}' missing fix_agent/fix_task; cannot resolve REVISE"
+                )
+                # Still resolve APPROVE verdicts even if fix config missing.
+
+            candidates = [
+                t for t in all_tasks
+                if t.title == step_title and t.status == TaskStatus.COMPLETED
+                and not ((t.metadata or {}).get("review_resolution"))
+            ]
+            for review_task in candidates:
+                md = review_task.metadata or {}
+                cycle_n = md.get("cycle_n")
+                iteration_tag = md.get("iteration_tag")
+                review_round_n = int(md.get("review_round_n") or 1)
+
+                verdict_key = _render_review_templates(
+                    verdict_key_tpl,
+                    iteration_tag=iteration_tag,
+                    cycle_n=cycle_n,
+                    review_round_n=review_round_n,
+                )
+                review_text = project_memory.read(project_id, "artifact", verdict_key)
+                verdict = _parse_verdict(review_text)
+                if review_text is None:
+                    logger.warning(
+                        f"review_loop {step_id} task={review_task.id}: artifact {verdict_key} missing; treating as REVISE"
+                    )
+
+                if verdict in ("APPROVE", "APPROVE_WITH_FIXES"):
+                    task_queue.merge_metadata(
+                        review_task.id,
+                        {"review_resolution": "approved", "verdict": verdict},
+                    )
+                    review_state.reset_round(project_id)
+                    logger.info(
+                        f"[{project_id}] review_loop {step_id} round {review_round_n} → {verdict}; advancing pipeline"
+                    )
+                    await ws_manager.broadcast({
+                        "type": "review_approved",
+                        "data": {
+                            "project_id": project_id,
+                            "pipeline": pname,
+                            "step_id": step_id,
+                            "task_id": review_task.id,
+                            "round_n": review_round_n,
+                            "verdict": verdict,
+                        },
+                    })
+                    continue
+
+                # REVISE path
+                if not fix_agent or not fix_task_tpl:
+                    # Misconfigured step — mark resolved to prevent tight loop;
+                    # leave pipeline stalled on dependents.
+                    task_queue.merge_metadata(
+                        review_task.id,
+                        {"review_resolution": "misconfigured", "verdict": verdict},
+                    )
+                    logger.error(
+                        f"review_loop {step_id} REVISE but no fix_agent/fix_task configured — stalling"
+                    )
+                    continue
+
+                if not review_state.should_continue(project_id):
+                    # Cap hit — spawn human-gate-review-cap task and rewire dependents.
+                    gate_title = f"[{pname}] {step_id}-cap-gate"
+                    gate_desc = (
+                        f"Review round cap hit ({review_round_n}/{review_state.get_budget(project_id)}) "
+                        f"on pipeline '{pname}' step '{step_id}'.\n"
+                        f"Last verdict: {verdict}. Review artifact: memory['{verdict_key}'].\n\n"
+                        "Options:\n"
+                        "  [approve-anyway]  Ship with FIX BEFORE SHIP downgrade, advance pipeline\n"
+                        "  [halt]            Stop project, set halt_reason='review_rounds_exhausted'\n"
+                        "  [extend]          Raise cap +2 rounds, resume fix-loop"
+                    )
+                    gate_task = task_queue.create(TaskCreate(
+                        project_id=project_id,
+                        title=gate_title,
+                        description=gate_desc,
+                        depends_on=[review_task.id],
+                        created_by=f"pipeline:{pname}",
+                        metadata={
+                            **md,
+                            "review_gate_kind": "review_cap",
+                            "linked_review_task_id": review_task.id,
+                            "review_round_n": review_round_n,
+                        },
+                    ))
+                    for dep_id in task_queue._find_dependents(review_task.id, project_id):
+                        if dep_id == gate_task.id:
+                            continue
+                        task_queue.replace_dependency(dep_id, review_task.id, gate_task.id)
+                    task_queue.merge_metadata(
+                        review_task.id,
+                        {"review_resolution": "cap_gated", "verdict": verdict, "cap_gate_task_id": gate_task.id},
+                    )
+                    logger.warning(
+                        f"[{project_id}] review_loop {step_id} cap hit at round {review_round_n}; human gate {gate_task.id} inserted"
+                    )
+                    await ws_manager.broadcast({
+                        "type": "review_cap_gate_ready",
+                        "data": {
+                            "project_id": project_id,
+                            "pipeline": pname,
+                            "step_id": step_id,
+                            "gate_task_id": gate_task.id,
+                            "round_n": review_round_n,
+                        },
+                    })
+                    continue
+
+                # Budget remaining — spawn fix + next review, rewire dependents.
+                next_round = review_state.bump_round(project_id)
+                fix_title = f"[{pname}] {step_id}-fix-r{review_round_n}"
+                fix_desc = _render_review_templates(
+                    fix_task_tpl,
+                    iteration_tag=iteration_tag,
+                    cycle_n=cycle_n,
+                    review_round_n=review_round_n,
+                )
+                fix_task_expected = substitute_expected_outputs(
+                    fix_expected,
+                    iteration_tag=iteration_tag,
+                    cycle_n=cycle_n,
+                    review_round_n=review_round_n,
+                )
+                fix_metadata = {
+                    **md,
+                    "review_round_n": review_round_n,
+                    "linked_review_task_id": review_task.id,
+                    "loop_role": "fix",
+                }
+                fix_task_row = task_queue.create(TaskCreate(
+                    project_id=project_id,
+                    title=fix_title,
+                    description=fix_desc,
+                    depends_on=[review_task.id],
+                    created_by=f"pipeline:{pname}",
+                    assignee_type=fix_agent,
+                    metadata=fix_metadata,
+                    expected_outputs=fix_task_expected,
+                ))
+
+                next_review_title = step_title  # same title preserves DAG recognition
+                next_review_desc = _render_review_templates(
+                    review_task_tpl,
+                    iteration_tag=iteration_tag,
+                    cycle_n=cycle_n,
+                    review_round_n=next_round,
+                )
+                next_review_expected = substitute_expected_outputs(
+                    review_expected,
+                    iteration_tag=iteration_tag,
+                    cycle_n=cycle_n,
+                    review_round_n=next_round,
+                )
+                next_review_metadata = {
+                    **md,
+                    "review_round_n": next_round,
+                    "loop_role": "review",
+                    "prior_review_task_id": review_task.id,
+                }
+                next_review_task = task_queue.create(TaskCreate(
+                    project_id=project_id,
+                    title=next_review_title,
+                    description=next_review_desc,
+                    depends_on=[fix_task_row.id],
+                    created_by=f"pipeline:{pname}",
+                    metadata=next_review_metadata,
+                    expected_outputs=next_review_expected,
+                ))
+
+                # Rewire: every pending dependent of the old review task should
+                # now wait for the new review task instead. Skip the fix/next
+                # review tasks we just made (they point at old review on purpose).
+                excluded = {fix_task_row.id, next_review_task.id}
+                for dep_id in task_queue._find_dependents(review_task.id, project_id):
+                    if dep_id in excluded:
+                        continue
+                    task_queue.replace_dependency(dep_id, review_task.id, next_review_task.id)
+
+                task_queue.merge_metadata(
+                    review_task.id,
+                    {
+                        "review_resolution": "revise_spawned",
+                        "verdict": verdict,
+                        "fix_task_id": fix_task_row.id,
+                        "next_review_task_id": next_review_task.id,
+                    },
+                )
+                logger.info(
+                    f"[{project_id}] review_loop {step_id} REVISE round {review_round_n}→{next_round}; "
+                    f"fix={fix_task_row.id} next_review={next_review_task.id}"
+                )
+                await ws_manager.broadcast({
+                    "type": "review_revise_spawned",
+                    "data": {
+                        "project_id": project_id,
+                        "pipeline": pname,
+                        "step_id": step_id,
+                        "prior_review_task_id": review_task.id,
+                        "fix_task_id": fix_task_row.id,
+                        "next_review_task_id": next_review_task.id,
+                        "round_n": review_round_n,
+                        "next_round_n": next_round,
+                    },
+                })
+
+
 async def _advance_pipeline(project_id: str):
     """Spawn agents for any newly-ready pipeline tasks."""
     pipeline_specs = _load_pipelines_yaml().get("pipelines", {}) or {}
+
+    # Resolve any completed review_loop tasks BEFORE relaunch / ready-task
+    # computation so freshly-spawned fix + review tasks land in the same sweep.
+    try:
+        await _maybe_resolve_review_loops(project_id, pipeline_specs)
+    except Exception as exc:
+        logger.warning(f"review-loop resolution failed for {project_id}: {exc}")
 
     # Cyclic pipelines relaunch their first step once their terminal step
     # completes — do this BEFORE resolving ready tasks so the new first-step
@@ -2271,20 +2610,37 @@ async def run_pipeline(pipeline_name: str, body: PipelineRunBody):
         cycle_state.bump_cycle(project_id, 1)
         cycle_state.clear_halt(project_id)
 
+    # Fresh run = fresh review-round budget for every review_loop in the pipeline.
+    if any(s.get("type") == "review_loop" for s in pipeline["steps"]):
+        review_state.reset_round(project_id)
+        review_state.clear_halt(project_id)
+
     # Create tasks for each step
     created_tasks = {}
     pending_proposals: list[str] = []
     for idx, step in enumerate(pipeline["steps"]):
         step_id = step["id"]
+        is_review_loop = step.get("type") == "review_loop"
         task_desc = step["task"].replace("{input}", input_text)
         task_metadata: dict | None = None
         if cyclic:
-            task_desc = task_desc.replace("{{iteration_tag}}", "v1").replace("{{cycle_n}}", "1")
+            task_desc = task_desc.replace("{{iteration_tag}}", "v1").replace("{{cycle_n}}", "1").replace("{{cycle_n_plus_1}}", "2")
             # Only the first step gets the cycle metadata tag; downstream steps
             # in the same cycle inherit via dependency order — the relaunch
             # path writes the metadata afresh on the next cycle's first step.
             if idx == 0:
                 task_metadata = {"iteration_tag": "v1", "cycle_n": 1}
+        if is_review_loop:
+            task_desc = task_desc.replace("{{review_round_n}}", "1").replace(
+                "{{review_round_n_plus_1}}", "2"
+            )
+            base_md = dict(task_metadata) if task_metadata else {}
+            if cyclic and "cycle_n" not in base_md:
+                base_md["cycle_n"] = 1
+                base_md["iteration_tag"] = "v1"
+            base_md["review_round_n"] = 1
+            base_md["loop_role"] = "review"
+            task_metadata = base_md
 
         # Resolve dependencies to task IDs
         deps = []
@@ -2296,6 +2652,7 @@ async def run_pipeline(pipeline_name: str, body: PipelineRunBody):
             step.get("expected_outputs"),
             iteration_tag="v1" if cyclic else None,
             cycle_n=1 if cyclic else None,
+            review_round_n=1 if is_review_loop else None,
         )
 
         task = task_queue.create(TaskCreate(

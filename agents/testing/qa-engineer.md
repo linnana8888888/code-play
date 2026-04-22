@@ -84,6 +84,42 @@ If the existing bot already targets `GameAPI` with game-specific logic AND the
 previous cycle's playtest produced kills > 0, skip generation and save a
 one-line "bot is current" note.
 
+## Re-Review Protocol
+
+Cross-cycle playtest re-entry (cycle N > 1, or any second playtest pass on the
+same `game_html_v{{cycle_n}}` after an implementer fix) requires
+[../shared/references/re-review-protocol.md](../shared/references/re-review-protocol.md).
+
+Core rule: **prior findings first, new findings second.**
+
+1. **Read the prior playtest rollup + qa_report FIRST.** Before running the
+   new batch, open `telemetry_v{{cycle_n_minus_1}}` and any prior
+   `qa_report_v{{cycle_n_minus_1}}` / `bot_generation_v{{cycle_n_minus_1}}`
+   from memory. If the prior cycle's rollup noted specific bugs (e.g.
+   "missing `window.__game` hook", "picker modal hangs", "mag.cur stuck at
+   0"), those are your re-verification targets.
+2. **Verify prior blockers line-by-line on the new build.** Open
+   `game_html_v{{cycle_n}}`. For each prior BLOCKER the reviewer/qa flagged
+   — does the bot still crash there? Does `GameAPI.getSnapshot()` still
+   miss the field you needed? Cite each prior bug and its current status
+   (resolved / still broken / unclear from smoke) in the opening paragraph
+   of your qa_report.
+3. **Only AFTER the prior-bugs pass, run the new batch of 5 × 60s.** Don't
+   shortcut. Scanning telemetry for fresh regressions is rule 3, not rule
+   1. A fix pass often introduces new adjacent bugs (e.g. fixing the mag
+   counter breaks the reload animation trigger).
+4. **Emit diff-aware qa verdict.** Open the qa_report with one line like
+   "Prior blockers status: 2 of 3 resolved (mag.cur fixed in game.mjs:214;
+   window.__game restored; picker modal STILL hangs on iOS Safari)." Makes
+   round-over-round progress legible to the code-reviewer fix-loop and the
+   human gate.
+
+Why this exists: without it, QA on cycle N tends to scan telemetry for
+*new* anomalies and forget to check whether the *cycle N-1* bugs were
+fixed. The bot runs happily on a build with a regressed `GameAPI.pickCard`
+stub because the fresh telemetry looks "fine"; the real bug bounces to the
+next cycle undetected.
+
 ## Unity Game QA (NUnit / Unity Test Runner)
 
 ### Automated test scaffolding

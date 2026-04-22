@@ -284,13 +284,85 @@ pipelines:
 
       - id: review
         agent: code-reviewer
+        type: review_loop
         depends_on: [gate-qa]
-        task: "Lint report only — review the prototype (memory key: game_html_v1) for bugs, performance, security. QA already validated gameplay; this is for code-quality concerns only. Save your report to memory as artifact key 'code_review_v1'."
+        task: |
+          Code review round {{review_round_n}} of the phased-producer prototype.
+
+          Read the current build at memory key 'game_html_v1'. QA already
+          validated gameplay; this pass is for bugs, performance, and security
+          only.
+
+          If round {{review_round_n}} > 1, this is a RE-REVIEW. Apply
+          agents/shared/references/re-review-protocol.md BEFORE scanning for
+          new issues:
+            1. Read the prior verdict 'code_review_r<prior_round>' from memory
+               (prior_round = {{review_round_n}} - 1).
+            2. Verify each prior BLOCKER is resolved line-by-line. Unresolved
+               = still BLOCKER, no severity downgrade.
+            3. Only AFTER prior-findings pass, scan for new issues.
+            4. Emit a diff-aware verdict — "(N of M prior blockers resolved;
+               K new findings)".
+
+          Save the full review to memory as artifact
+          'code_review_r{{review_round_n}}'.
+
+          End with, on its own final line, EXACTLY one of:
+            VERDICT: APPROVE
+            VERDICT: APPROVE WITH FIXES
+            VERDICT: REVISE
+
+          The orchestrator greps this line; any other shape is treated as REVISE.
         output: review
         expected_outputs:
           - kind: memory_key
             type: artifact
-            key: code_review_v1
+            key: code_review_r{{review_round_n}}
+        review_loop:
+          max_rounds: 3
+          verdict_artifact_key: "code_review_r{{review_round_n}}"
+          fix_agent: frontend-developer
+          fix_task: |
+            Review round {{review_round_n}} flagged the prototype for REVISE.
+
+            Read 'code_review_r{{review_round_n}}' from memory — every BLOCKER
+            and FIX BEFORE SHIP item must be addressed. NITs optional.
+
+            The artifact repo is at memory['artifact_repo_path']. Workflow:
+              1. `repo_file_list` to see the tree
+              2. `repo_file_read` the files you need
+              3. Apply fixes, `repo_file_write` each modified file
+              4. `external_repo_commit` with message
+                 "review r{{review_round_n}} fixes: <one-line summary>"
+              5. Re-save the updated index.html to memory as 'game_html_v1'
+                 (overwrite — the next reviewer reads from this key).
+
+            Do NOT invent new features. Fix what the review flagged, nothing more.
+          fix_expected_outputs:
+            - kind: memory_key
+              type: artifact
+              key: game_html_v1
+              min_bytes: 1024
+          next_review_task: |
+            Code review round {{review_round_n}} of the phased-producer prototype
+            — RE-REVIEW after fix pass.
+
+            Apply agents/shared/references/re-review-protocol.md:
+              1. Read 'code_review_r<prior_round>' FIRST
+                 (prior_round = {{review_round_n}} - 1).
+              2. Verify each prior BLOCKER / FIX BEFORE SHIP is resolved
+                 line-by-line. Unresolved = still flagged, no downgrade.
+              3. Only AFTER prior-findings pass, scan 'game_html_v1' for new
+                 issues.
+              4. Emit diff-aware verdict, citing N of M prior blockers resolved.
+
+            Save the full review to memory as artifact
+            'code_review_r{{review_round_n}}'.
+
+            End with, on its own final line, EXACTLY one of:
+              VERDICT: APPROVE
+              VERDICT: APPROVE WITH FIXES
+              VERDICT: REVISE
 
       - id: scaffold-iteration
         agent: rapid-prototyper
@@ -461,7 +533,7 @@ pipelines:
       for one human pick, implements it, and relaunches — capped by the
       cycle_state budget (default 5) or a halt_reason flag.
     cyclic: true
-    terminal_step: implement
+    terminal_step: review
     steps:
       - id: generate-bot
         agent: qa-engineer
@@ -724,3 +796,96 @@ pipelines:
             type: artifact
             key: game_html_v{{cycle_n_plus_1}}
             min_bytes: 1024
+
+      - id: review
+        agent: code-reviewer
+        type: review_loop
+        depends_on: [implement]
+        task: |
+          Code review round {{review_round_n}} of iteration
+          {{iteration_tag}} (cycle {{cycle_n}}+1 → v{{cycle_n_plus_1}}).
+
+          Read the just-built artifact at memory key
+          'game_html_v{{cycle_n_plus_1}}'. This gate BLOCKS the terminal
+          relaunch — no broken build ships to the next cycle.
+
+          If round {{review_round_n}} > 1, this is a RE-REVIEW. Apply
+          agents/shared/references/re-review-protocol.md BEFORE scanning for
+          new issues:
+            1. Read 'code_review_v{{cycle_n_plus_1}}_r<prior_round>' from memory
+               (prior_round = {{review_round_n}} - 1).
+            2. Verify each prior BLOCKER is resolved line-by-line. Unresolved =
+               still BLOCKER, no severity downgrade.
+            3. Only AFTER prior-findings pass, scan for new issues.
+            4. Emit a diff-aware verdict — "(N of M prior blockers resolved;
+               K new findings)".
+
+          Scope: bugs, performance, security, regressions vs. the previous
+          cycle's build. Preservation of `window.__game` / GameAPI shape is
+          non-negotiable — breaking it is a BLOCKER (the playtest bot dies).
+
+          Save the full review to memory as artifact
+          'code_review_v{{cycle_n_plus_1}}_r{{review_round_n}}'.
+
+          End with, on its own final line, EXACTLY one of:
+            VERDICT: APPROVE
+            VERDICT: APPROVE WITH FIXES
+            VERDICT: REVISE
+
+          The orchestrator greps this line; any other shape is treated as REVISE.
+        output: review
+        expected_outputs:
+          - kind: memory_key
+            type: artifact
+            key: code_review_v{{cycle_n_plus_1}}_r{{review_round_n}}
+        review_loop:
+          max_rounds: 3
+          verdict_artifact_key: "code_review_v{{cycle_n_plus_1}}_r{{review_round_n}}"
+          fix_agent: frontend-developer
+          fix_task: |
+            Review round {{review_round_n}} flagged iteration
+            v{{cycle_n_plus_1}} for REVISE.
+
+            Read 'code_review_v{{cycle_n_plus_1}}_r{{review_round_n}}' from
+            memory — every BLOCKER and FIX BEFORE SHIP item must be addressed.
+            NITs optional.
+
+            The artifact repo is at memory['artifact_repo_path']. Workflow:
+              1. `repo_file_list` to see the tree
+              2. `repo_file_read` the files you need (game.mjs, index.html, etc.)
+              3. Apply fixes, `repo_file_write` each modified file
+              4. Re-save the updated index.html to memory as
+                 'game_html_v{{cycle_n_plus_1}}' (overwrite — same cycle key).
+              5. `external_repo_commit` with branch
+                 "iteration/v{{cycle_n_plus_1}}" and message
+                 "iteration v{{cycle_n_plus_1}} review r{{review_round_n}} fixes: <one-line summary>".
+
+            Do NOT add new features. Do NOT break `window.__game` / GameAPI —
+            the bot depends on it. Fix what the review flagged, nothing more.
+          fix_expected_outputs:
+            - kind: memory_key
+              type: artifact
+              key: game_html_v{{cycle_n_plus_1}}
+              min_bytes: 1024
+          next_review_task: |
+            Code review round {{review_round_n}} of iteration
+            {{iteration_tag}} v{{cycle_n_plus_1}} — RE-REVIEW after fix pass.
+
+            Apply agents/shared/references/re-review-protocol.md:
+              1. Read 'code_review_v{{cycle_n_plus_1}}_r<prior_round>' FIRST
+                 (prior_round = {{review_round_n}} - 1).
+              2. Verify each prior BLOCKER / FIX BEFORE SHIP is resolved
+                 line-by-line.
+              3. Only AFTER prior-findings pass, scan
+                 'game_html_v{{cycle_n_plus_1}}' for new issues.
+              4. Emit diff-aware verdict, citing N of M prior blockers resolved.
+              5. Confirm window.__game / GameAPI shape is still preserved —
+                 breaking it is a BLOCKER.
+
+            Save the full review to memory as artifact
+            'code_review_v{{cycle_n_plus_1}}_r{{review_round_n}}'.
+
+            End with, on its own final line, EXACTLY one of:
+              VERDICT: APPROVE
+              VERDICT: APPROVE WITH FIXES
+              VERDICT: REVISE

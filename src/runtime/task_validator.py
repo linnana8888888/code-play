@@ -33,13 +33,16 @@ def substitute_expected_outputs(
     *,
     iteration_tag: str | None = None,
     cycle_n: int | None = None,
+    review_round_n: int | None = None,
 ) -> list[dict] | None:
-    """Substitute `{{iteration_tag}}`, `{{cycle_n}}`, `{{cycle_n_plus_1}}` in
-    every string field of each expected_output entry.
+    """Substitute `{{iteration_tag}}`, `{{cycle_n}}`, `{{cycle_n_plus_1}}`,
+    `{{review_round_n}}`, `{{review_round_n_plus_1}}` in every string field of
+    each expected_output entry.
 
-    Pipelines declare keys like `"telemetry_{{iteration_tag}}"` in
-    config/pipelines.yaml; this helper renders them for a concrete task before
-    the contract is stored on TaskCreate.
+    Pipelines declare keys like `"telemetry_{{iteration_tag}}"` or
+    `"code_review_v{{cycle_n}}_r{{review_round_n}}"` in config/pipelines.yaml;
+    this helper renders them for a concrete task before the contract is stored
+    on TaskCreate.
     """
     if not expected:
         return expected
@@ -49,6 +52,9 @@ def substitute_expected_outputs(
     if cycle_n is not None:
         subs["{{cycle_n}}"] = str(cycle_n)
         subs["{{cycle_n_plus_1}}"] = str(int(cycle_n) + 1)
+    if review_round_n is not None:
+        subs["{{review_round_n}}"] = str(review_round_n)
+        subs["{{review_round_n_plus_1}}"] = str(int(review_round_n) + 1)
     if not subs:
         return [dict(e) for e in expected]
 

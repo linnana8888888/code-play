@@ -62,6 +62,26 @@ export const createProject = (p: ProjectCreate) =>
   req<Project>("/projects", { method: "POST", body: JSON.stringify(p) });
 export const deleteProject = (id: string) =>
   req<{ status: string; project_id: string }>(`/projects/${id}`, { method: "DELETE" });
+
+export interface ProjectHealth {
+  healthy: boolean;
+  orphaned_tasks: { id: string; title: string }[];
+  blocked_tasks: { id: string; title: string; category?: string }[];
+  stale_agents: { id: string; agent_type: string; started_at?: string }[];
+  pending_proposals: { id: string; agent_type: string; batch_id: string }[];
+  halt_reason: string | null;
+}
+export const getProjectHealth = (id: string) =>
+  req<ProjectHealth>(`/projects/${id}/health`);
+export const cleanupStale = (id: string) =>
+  req<{
+    status: string;
+    orphaned_cancelled: number;
+    blocked_cancelled: number;
+    agents_terminated: number;
+    proposals_rejected: number;
+    halt_cleared: boolean;
+  }>(`/projects/${id}/cleanup-stale`, { method: "POST" });
 export const cleanupProjects = (opts: {
   dryRun?: boolean;
   onlyEmpty?: boolean;
@@ -213,10 +233,10 @@ export const getToolCatalog = () => req<ToolCatalogEntry[]>("/governance/tools")
 /* ── Pipelines ── */
 export const getPipelines = () =>
   req<PipelineDef[]>("/pipelines");
-export const runPipeline = (name: string, projectId: string, inputText = "") =>
+export const runPipeline = (name: string, projectId: string, inputText = "", force = false) =>
   req<{ status: string }>(`/pipelines/${name}/run`, {
     method: "POST",
-    body: JSON.stringify({ project_id: projectId, input_text: inputText }),
+    body: JSON.stringify({ project_id: projectId, input_text: inputText, force }),
   });
 export const advancePipeline = (projectId: string, forcePhase?: string) =>
   req<{ status: string; project_id?: string }>(

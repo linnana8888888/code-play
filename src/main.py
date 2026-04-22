@@ -12,7 +12,7 @@ import shutil
 import subprocess
 import uuid
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import yaml
 from pathlib import Path
@@ -527,6 +527,84 @@ async def delete_project(project_id: str):
     result = _delete_project_cascade(project_id)
     await ws_manager.broadcast({"type": "project_deleted", "data": {"project_id": project_id}})
     return {"status": "deleted", **result}
+
+
+@app.get("/api/projects/{project_id}/health")
+async def get_project_health(project_id: str):
+    """Pre-flight health check — surfaces stale state that should be cleaned up before launching."""
+    orphaned = task_queue.get_orphaned_tasks(project_id)
+    blocked = task_queue.list_tasks(project_id=project_id, status=TaskStatus.BLOCKED)
+    pending_props = proposals_store.list_proposals(project_id=project_id, status=ProposalStatus.PENDING)
+    halt_reason = cycle_state.get_halt_reason(project_id)
+
+    stale_cutoff = datetime.now(timezone.utc) - timedelta(minutes=30)
+    all_agents = registry.list_instances(project_id=project_id)
+    stale_agents = [
+        a for a in all_agents
+        if a.status in (AgentStatus.RUNNING, AgentStatus.ASSIGNED)
+        and a.started_at
+        and a.started_at < stale_cutoff
+    ]
+
+    healthy = (
+        not orphaned
+        and not blocked
+        and not stale_agents
+        and not pending_props
+        and not halt_reason
+    )
+
+    return {
+        "healthy": healthy,
+        "orphaned_tasks": [{"id": t.id, "title": t.title} for t in orphaned],
+        "blocked_tasks": [{"id": t.id, "title": t.title, "category": (t.result or {}).get("failure_category")} for t in blocked],
+        "stale_agents": [{"id": a.id, "agent_type": a.agent_type, "started_at": a.started_at.isoformat() if a.started_at else None} for a in stale_agents],
+        "pending_proposals": [{"id": p.id, "agent_type": p.agent_type, "batch_id": p.batch_id} for p in pending_props],
+        "halt_reason": halt_reason,
+    }
+
+
+@app.post("/api/projects/{project_id}/cleanup-stale")
+async def cleanup_stale(project_id: str):
+    """Bulk cleanup: cancel orphaned + blocked tasks, terminate stale agents, reject old proposals, clear halt."""
+    results = {"orphaned_cancelled": 0, "blocked_cancelled": 0, "agents_terminated": 0, "proposals_rejected": 0, "halt_cleared": False}
+
+    orphaned = task_queue.get_orphaned_tasks(project_id)
+    seen = set()
+    for t in orphaned:
+        if t.id in seen:
+            continue
+        ids = task_queue.cancel_task_cascade(t.id)
+        seen.update(ids)
+    results["orphaned_cancelled"] = len(seen)
+
+    blocked = task_queue.list_tasks(project_id=project_id, status=TaskStatus.BLOCKED)
+    for t in blocked:
+        if t.id not in seen:
+            task_queue.cancel_task(t.id)
+            results["blocked_cancelled"] += 1
+
+    stale_cutoff = datetime.now(timezone.utc) - timedelta(minutes=30)
+    all_agents = registry.list_instances(project_id=project_id)
+    for a in all_agents:
+        if a.status in (AgentStatus.RUNNING, AgentStatus.ASSIGNED) and a.started_at and a.started_at < stale_cutoff:
+            registry.terminate(a.id)
+            results["agents_terminated"] += 1
+
+    pending_props = proposals_store.list_proposals(project_id=project_id, status=ProposalStatus.PENDING)
+    for p in pending_props:
+        proposals_store.reject(p.id, decided_by="cleanup")
+        results["proposals_rejected"] += 1
+
+    if cycle_state.get_halt_reason(project_id):
+        cycle_state.clear_halt(project_id)
+        results["halt_cleared"] = True
+
+    await ws_manager.broadcast({
+        "type": "project_cleaned_up",
+        "data": {"project_id": project_id, **results},
+    })
+    return {"status": "ok", **results}
 
 
 @app.post("/api/projects/cleanup")
@@ -1139,6 +1217,11 @@ async def _maybe_relaunch_cyclic(project_id: str, pipeline_specs: dict) -> None:
         if already:
             continue
         if not cycle_state.should_relaunch(project_id):
+            continue
+
+        if task_queue.get_orphaned_tasks(project_id) or task_queue.list_tasks(project_id=project_id, status=TaskStatus.BLOCKED):
+            cycle_state.set_halt(project_id, "stale tasks detected — cleanup required before next cycle")
+            logger.warning(f"Halting relaunch for {project_id}: orphaned or blocked tasks present")
             continue
 
         upstream_valid = True
@@ -1950,6 +2033,7 @@ async def list_pipelines():
 class PipelineRunBody(BaseModel):
     project_id: str
     input_text: str = ""
+    force: bool = False
 
 
 @app.post("/api/pipelines/{pipeline_name}/run")
@@ -1966,6 +2050,17 @@ async def run_pipeline(pipeline_name: str, body: PipelineRunBody):
     pipeline = data.get("pipelines", {}).get(pipeline_name)
     if not pipeline:
         raise HTTPException(404, f"Pipeline '{pipeline_name}' not found")
+
+    if not body.force:
+        health = await get_project_health(project_id)
+        if not health["healthy"]:
+            raise HTTPException(
+                409,
+                {
+                    "error": "Project has stale state — clean up before launching",
+                    "health": health,
+                },
+            )
 
     gated = _project_requires_roster_approval(project_id)
     batch_id = f"batch-{uuid.uuid4().hex[:10]}" if gated else None

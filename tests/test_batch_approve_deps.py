@@ -347,3 +347,109 @@ class TestCancelCycleEndpoint:
             t = task_queue.get(tid)
             assert t.status == TaskStatus.FAILED
             assert t.result["cancelled"] is True
+
+
+class TestProjectHealth:
+    """GET /api/projects/{id}/health surfaces stale state."""
+
+    def test_healthy_when_clean(self, project_row):
+        pid = project_row
+        _mk_task(pid, "clean-task")
+
+        from src.main import get_project_health
+        result = _run(get_project_health(pid))
+        assert result["healthy"] is True
+        assert len(result["orphaned_tasks"]) == 0
+        assert len(result["blocked_tasks"]) == 0
+
+    def test_unhealthy_with_orphans(self, project_row):
+        pid = project_row
+        a = _mk_task(pid, "dead-parent")
+        b = _mk_task(pid, "orphan", depends_on=[a])
+        task_queue.cancel_task(a)
+
+        from src.main import get_project_health
+        result = _run(get_project_health(pid))
+        assert result["healthy"] is False
+        assert len(result["orphaned_tasks"]) == 1
+        assert result["orphaned_tasks"][0]["id"] == b
+
+    def test_unhealthy_with_blocked(self, project_row):
+        pid = project_row
+        a = _mk_task(pid, "blocked-task")
+        task_queue.stall_task(a, "test stall")
+
+        from src.main import get_project_health
+        result = _run(get_project_health(pid))
+        assert result["healthy"] is False
+        assert len(result["blocked_tasks"]) == 1
+
+    def test_unhealthy_with_pending_proposals(self, project_row):
+        pid = project_row
+        tid = _mk_task(pid, "proposal-task")
+        batch_id = f"batch-health-{pid}"
+        _mk_proposal(pid, tid, "qa-engineer", batch_id)
+
+        from src.main import get_project_health
+        result = _run(get_project_health(pid))
+        assert result["healthy"] is False
+        assert len(result["pending_proposals"]) == 1
+
+
+class TestCleanupStale:
+    """POST /api/projects/{id}/cleanup-stale resolves all stale state."""
+
+    def test_cleanup_orphans_and_blocked(self, project_row):
+        pid = project_row
+        a = _mk_task(pid, "dead")
+        b = _mk_task(pid, "orphan", depends_on=[a])
+        c = _mk_task(pid, "stalled")
+        task_queue.cancel_task(a)
+        task_queue.stall_task(c, "test")
+
+        from src.main import cleanup_stale
+
+        with patch("src.main.ws_manager") as mock_ws, \
+             patch("src.main.cycle_state") as mock_cs:
+            mock_ws.broadcast = AsyncMock()
+            mock_cs.get_halt_reason.return_value = "old halt"
+            result = _run(cleanup_stale(pid))
+
+        assert result["status"] == "ok"
+        assert result["orphaned_cancelled"] >= 1
+        assert result["blocked_cancelled"] >= 1
+        mock_cs.clear_halt.assert_called_once_with(pid)
+
+        tb = task_queue.get(b)
+        assert tb.status == TaskStatus.FAILED
+        tc = task_queue.get(c)
+        assert tc.status == TaskStatus.FAILED
+
+
+class TestRunPipelineHealthGate:
+    """run_pipeline rejects launch when project is unhealthy."""
+
+    def test_rejects_unhealthy(self, project_row):
+        pid = project_row
+        a = _mk_task(pid, "stalled-blocker")
+        task_queue.stall_task(a, "test stall")
+
+        from src.main import run_pipeline, PipelineRunBody
+        from fastapi import HTTPException
+
+        with pytest.raises(HTTPException) as exc_info:
+            _run(run_pipeline("iterate_artifact", PipelineRunBody(project_id=pid)))
+        assert exc_info.value.status_code == 409
+
+    def test_allows_force(self, project_row):
+        pid = project_row
+        a = _mk_task(pid, "stalled-but-forced")
+        task_queue.stall_task(a, "test stall")
+
+        from src.main import run_pipeline, PipelineRunBody
+        from fastapi import HTTPException
+
+        try:
+            _run(run_pipeline("iterate_artifact", PipelineRunBody(project_id=pid, force=True)))
+        except HTTPException as e:
+            assert e.status_code != 409, "Should not reject with force=True"

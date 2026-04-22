@@ -8,8 +8,11 @@ import {
   getAssetPreviews,
   getProject,
   advancePipeline,
+  getProjectHealth,
+  cleanupStale,
   type AssetPreview,
   type IdeaPayload,
+  type ProjectHealth,
 } from "../../api/client";
 import { useWebSocket } from "../../api/websocket";
 import SpecDiffGrid from "./SpecDiffGrid";
@@ -64,6 +67,17 @@ export default function GatesPanel({ projectId, initialExpandedId }: Props) {
   const [iterating, setIterating] = useState(false);
   const [lastDecision, setLastDecision] = useState<LastDecision | null>(null);
   const [confirming, setConfirming] = useState<{ id: string; action: "approve" | "revise" } | null>(null);
+  const [health, setHealth] = useState<ProjectHealth | null>(null);
+  const [cleaning, setCleaning] = useState(false);
+
+  async function refreshHealth() {
+    try {
+      const h = await getProjectHealth(projectId);
+      setHealth(h);
+    } catch {
+      setHealth(null);
+    }
+  }
 
   async function refresh() {
     try {
@@ -80,10 +94,24 @@ export default function GatesPanel({ projectId, initialExpandedId }: Props) {
     } finally {
       setLoading(false);
     }
+    await refreshHealth();
   }
 
-  async function onIterate() {
+  async function onCleanup() {
+    setCleaning(true);
+    try {
+      await cleanupStale(projectId);
+      await refreshHealth();
+    } catch (e) {
+      console.error("cleanup failed", e);
+    } finally {
+      setCleaning(false);
+    }
+  }
+
+  async function onIterate(force = false) {
     if (!project) return;
+    if (!force && health && !health.healthy) return;
     setIterating(true);
     try {
       await advancePipeline(projectId, "iterate_artifact");
@@ -186,7 +214,58 @@ export default function GatesPanel({ projectId, initialExpandedId }: Props) {
     return () => clearTimeout(t);
   }, [lastDecision]);
 
-  const iterateHeader = null;
+  const healthIssues = health && !health.healthy;
+  const issueCount =
+    (health?.orphaned_tasks.length ?? 0) +
+    (health?.blocked_tasks.length ?? 0) +
+    (health?.stale_agents.length ?? 0) +
+    (health?.pending_proposals.length ?? 0) +
+    (health?.halt_reason ? 1 : 0);
+
+  const iterateHeader = healthIssues ? (
+    <div className="rounded-2xl border border-warning/40 bg-warning/5 p-4">
+      <div className="flex items-center justify-between gap-3">
+        <div className="min-w-0">
+          <p className="mono-label text-warning">
+            Cleanup required · {issueCount} issue{issueCount !== 1 ? "s" : ""}
+          </p>
+          <div className="mt-1 flex flex-wrap gap-3 text-xs text-text-muted">
+            {(health?.orphaned_tasks.length ?? 0) > 0 && (
+              <span>{health!.orphaned_tasks.length} orphaned tasks</span>
+            )}
+            {(health?.blocked_tasks.length ?? 0) > 0 && (
+              <span>{health!.blocked_tasks.length} blocked tasks</span>
+            )}
+            {(health?.stale_agents.length ?? 0) > 0 && (
+              <span>{health!.stale_agents.length} stale agents</span>
+            )}
+            {(health?.pending_proposals.length ?? 0) > 0 && (
+              <span>{health!.pending_proposals.length} pending proposals</span>
+            )}
+            {health?.halt_reason && (
+              <span>halted: {health.halt_reason}</span>
+            )}
+          </div>
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
+          <button
+            onClick={onCleanup}
+            disabled={cleaning}
+            className="rounded-lg bg-warning px-3 py-1 text-[11px] font-semibold text-bg hover:bg-warning/90 disabled:opacity-50"
+          >
+            {cleaning ? "Cleaning…" : "Clean up & continue"}
+          </button>
+          <button
+            onClick={() => onIterate(true)}
+            disabled={iterating}
+            className="rounded-lg border border-border px-2 py-0.5 text-[11px] text-text-muted hover:bg-bg-hover"
+          >
+            Force launch
+          </button>
+        </div>
+      </div>
+    </div>
+  ) : null;
 
   const decisionBanner = lastDecision ? (
     <div

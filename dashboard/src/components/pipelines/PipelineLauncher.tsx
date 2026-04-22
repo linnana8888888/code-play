@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { getPipelines, runPipeline } from "../../api/client";
+import { getPipelines, runPipeline, getProjectHealth, cleanupStale, type ProjectHealth } from "../../api/client";
 import type { Project, PipelineDef } from "../../types/api";
 
 type StepLike = { id: string; type?: string; agent?: string };
@@ -40,6 +40,8 @@ export default function PipelineLauncher({ projects }: Props) {
   const [selectedProject, setSelectedProject] = useState("");
   const [inputText, setInputText] = useState("");
   const [message, setMessage] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
+  const [health, setHealth] = useState<ProjectHealth | null>(null);
+  const [cleaning, setCleaning] = useState(false);
 
   useEffect(() => {
     getPipelines().then(setPipelines).catch(() => setPipelines([]));
@@ -48,6 +50,27 @@ export default function PipelineLauncher({ projects }: Props) {
   useEffect(() => {
     if (!selectedProject && projects.length) setSelectedProject(projects[0].id);
   }, [projects, selectedProject]);
+
+  useEffect(() => {
+    if (selectedProject) {
+      getProjectHealth(selectedProject).then(setHealth).catch(() => setHealth(null));
+    }
+  }, [selectedProject]);
+
+  const handleCleanup = async () => {
+    if (!selectedProject) return;
+    setCleaning(true);
+    try {
+      await cleanupStale(selectedProject);
+      const h = await getProjectHealth(selectedProject);
+      setHealth(h);
+      setMessage({ kind: "ok", text: "Stale state cleaned up. Ready to launch." });
+    } catch (e) {
+      setMessage({ kind: "err", text: `Cleanup failed: ${e instanceof Error ? e.message : e}` });
+    } finally {
+      setCleaning(false);
+    }
+  };
 
   const handleLaunch = async (name: string) => {
     if (!selectedProject) return;
@@ -94,6 +117,29 @@ export default function PipelineLauncher({ projects }: Props) {
           }
         >
           {message.text}
+        </div>
+      )}
+      {health && !health.healthy && (
+        <div className="mb-3 rounded-2xl border border-warning/40 bg-warning/5 p-4">
+          <div className="flex items-center justify-between gap-3">
+            <div className="min-w-0">
+              <p className="text-xs font-semibold text-warning">Stale state detected — cleanup required</p>
+              <div className="mt-1 flex flex-wrap gap-3 text-[11px] text-text-muted">
+                {health.orphaned_tasks.length > 0 && <span>{health.orphaned_tasks.length} orphaned</span>}
+                {health.blocked_tasks.length > 0 && <span>{health.blocked_tasks.length} blocked</span>}
+                {health.stale_agents.length > 0 && <span>{health.stale_agents.length} stale agents</span>}
+                {health.pending_proposals.length > 0 && <span>{health.pending_proposals.length} pending proposals</span>}
+                {health.halt_reason && <span>halted: {health.halt_reason}</span>}
+              </div>
+            </div>
+            <button
+              onClick={handleCleanup}
+              disabled={cleaning}
+              className="shrink-0 rounded-lg bg-warning px-3 py-1 text-[11px] font-semibold text-bg hover:bg-warning/90 disabled:opacity-50"
+            >
+              {cleaning ? "Cleaning…" : "Clean up"}
+            </button>
+          </div>
         </div>
       )}
       <div className="grid gap-4 lg:grid-cols-2">

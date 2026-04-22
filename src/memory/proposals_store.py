@@ -139,6 +139,16 @@ def reject_batch(batch_id: str, decided_by: str = "human") -> list[AgentProposal
     return rejected
 
 
+def get_approved_for_task(task_id: str) -> AgentProposal | None:
+    """Return the approved (not yet spawned) proposal for a task, if any."""
+    with get_studio_db() as db:
+        row = db.execute(
+            "SELECT * FROM agent_proposals WHERE task_id = ? AND status = 'approved' LIMIT 1",
+            (task_id,),
+        ).fetchone()
+    return _row_to_model(row) if row else None
+
+
 def mark_spawned(proposal_id: str, instance_id: str) -> AgentProposal | None:
     with get_studio_db() as db:
         cur = db.execute(

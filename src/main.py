@@ -1374,7 +1374,17 @@ async def _advance_pipeline(project_id: str):
         if not effective_model_override and step and step.get("model_override"):
             effective_model_override = step.get("model_override")
 
+        # For gated projects, spawn via the pre-approved proposal so the
+        # governance trail stays intact.
+        approved_prop = proposals_store.get_approved_for_task(task.id)
         try:
+            if approved_prop:
+                instance = await _spawn_from_approved_proposal(approved_prop.id)
+                if instance:
+                    logger.info(f"Advanced pipeline: spawned {agent_type} for task {task.id} via proposal {approved_prop.id}")
+                else:
+                    logger.warning(f"Approved proposal {approved_prop.id} failed to spawn for task {task.id}")
+                continue
             instance = registry.spawn(
                 agent_type=agent_type,
                 project_id=project_id,
@@ -2888,16 +2898,42 @@ async def approve_proposal_batch(batch_id: str, body: BatchDecision):
         decided_by=body.decided_by,
         keep_proposal_ids=body.keep_proposal_ids,
     )
+    # Only spawn proposals whose task has no unmet dependencies.
+    # The rest stay approved — _advance_pipeline will spawn them as
+    # upstream tasks complete, preserving the dependency chain.
     spawned = []
+    deferred = []
     for p in approved:
-        inst = await _spawn_from_approved_proposal(p.id)
-        if inst:
-            spawned.append(inst.id)
+        task = task_queue.get(p.task_id) if p.task_id else None
+        deps_met = True
+        if task and task.depends_on:
+            for dep_id in task.depends_on:
+                dep = task_queue.get(dep_id)
+                if not dep or dep.status != TaskStatus.COMPLETED:
+                    deps_met = False
+                    break
+        if deps_met:
+            inst = await _spawn_from_approved_proposal(p.id)
+            if inst:
+                spawned.append(inst.id)
+        else:
+            deferred.append(p.id)
     await ws_manager.broadcast({
         "type": "roster_approved",
-        "data": {"batch_id": batch_id, "approved": [p.id for p in approved], "spawned": spawned},
+        "data": {
+            "batch_id": batch_id,
+            "approved": [p.id for p in approved],
+            "spawned": spawned,
+            "deferred": deferred,
+        },
     })
-    return {"status": "approved", "batch_id": batch_id, "approved": [p.id for p in approved], "spawned": spawned}
+    return {
+        "status": "approved",
+        "batch_id": batch_id,
+        "approved": [p.id for p in approved],
+        "spawned": spawned,
+        "deferred": deferred,
+    }
 
 
 @app.post("/api/governance/proposals/batch/{batch_id}/reject")

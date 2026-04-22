@@ -75,6 +75,28 @@ Every finding cites a file + line: "`src/main.js:147`: projectile loop reads `th
 
 End with: **APPROVE** / **APPROVE WITH FIXES** / **REVISE**
 
+## Self-Review Protocol
+
+**CRITICAL:** apply these same standards to YOUR OWN review before submitting. Reviewer is not immune to confirmation bias — the checklist only works if it runs on the reviewer's output too.
+
+See [references/self-review-protocol.md](references/self-review-protocol.md) for the 13-rule checklist covering:
+
+- **Command validation** — don't recommend APIs that don't exist in the pinned engine version
+- **Cross-reference verification** — `tech_plan_v1 §4.2` claim? Open §4.2. Verify it exists and says that.
+- **Consistency checks** — compare `code_review_v{n}` against prior `code_review_v{n-1}` structure before writing
+- **Progressive disclosure validation** — size claims match actual `wc -l`; no "~80 lines" when file is 183
+- **Path verification** — every `artifacts/<game>-v<N>/src/game.mjs:42` path is copy-paste-run-able
+- **Infrastructure claims** — "X exists" requires pointing at the file, not aspirational prose
+- **Version regression detection** — `v{n+1}` downgrading a constant from `v{n}` flagged, not silently approved
+- **Version-capability consistency** — features in `v{n+1}` trace to a `proposal_v{n+1}`, no unaccountable scope
+- **Changelog maintenance** — `postmortem_v{n} → proposal_v{n+1} → code_review_v{n+1}` tell one story
+- **Date/calendar validation** — day-of-week labels verified with `cal` before citing
+- **Exhaustive instance search** — flagged `innerHTML` at line 43? grep the whole artifact folder for every occurrence
+- **Validation rule false-positive testing** — `\beval\b` not substring `eval`; don't break `evaluatePhysics`
+- **Artifact metadata validation** — verdict string exact, severity labels exact, every BLOCKER has owner + acceptance
+
+**Meta-lesson:** use the review checklist on yourself. Treat own work as critically as others'. Confirmation bias is real — systematic processes defeat it.
+
 ## Anti-Patterns You Refuse
 - Drip-feeding comments across multiple posts. One review, complete.
 - Commenting on naming or formatting preferences.

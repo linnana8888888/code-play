@@ -226,3 +226,124 @@ class TestGetApprovedForTask:
 
         result = proposals_store.get_approved_for_task(task_id)
         assert result is None
+
+
+class TestCascadeCancel:
+    """cancel_task_cascade cancels target + all downstream dependents."""
+
+    def test_chain_cancel(self, project_row):
+        """A -> B -> C: cancelling A cancels B and C."""
+        pid = project_row
+        a = _mk_task(pid, "cascade-a")
+        b = _mk_task(pid, "cascade-b", depends_on=[a])
+        c = _mk_task(pid, "cascade-c", depends_on=[b])
+
+        cancelled = task_queue.cancel_task_cascade(a)
+        assert set(cancelled) == {a, b, c}
+
+        for tid in [a, b, c]:
+            t = task_queue.get(tid)
+            assert t.status == TaskStatus.FAILED
+            assert t.result["cancelled"] is True
+
+    def test_fan_out_cancel(self, project_row):
+        """A -> B, A -> C: cancelling A cancels both B and C."""
+        pid = project_row
+        a = _mk_task(pid, "fan-a")
+        b = _mk_task(pid, "fan-b", depends_on=[a])
+        c = _mk_task(pid, "fan-c", depends_on=[a])
+
+        cancelled = task_queue.cancel_task_cascade(a)
+        assert set(cancelled) == {a, b, c}
+
+    def test_completed_not_cancelled(self, project_row):
+        """Completed tasks are not cancelled by cascade."""
+        pid = project_row
+        a = _mk_task(pid, "done-root")
+        b = _mk_task(pid, "done-child", depends_on=[a])
+        task_queue.update_status(a, TaskStatus.COMPLETED, result={"ok": True})
+
+        cancelled = task_queue.cancel_task_cascade(a)
+        assert a not in cancelled
+        assert b in cancelled
+
+    def test_no_double_cancel(self, project_row):
+        """Already-cancelled tasks are skipped."""
+        pid = project_row
+        a = _mk_task(pid, "double-a")
+        b = _mk_task(pid, "double-b", depends_on=[a])
+
+        task_queue.cancel_task(a)
+        cancelled = task_queue.cancel_task_cascade(a)
+        assert a not in cancelled
+        assert b in cancelled
+
+    def test_cascade_reason_tag(self, project_row):
+        """Downstream tasks get cancelled_reason referencing the root."""
+        pid = project_row
+        a = _mk_task(pid, "reason-a")
+        b = _mk_task(pid, "reason-b", depends_on=[a])
+
+        task_queue.cancel_task_cascade(a)
+        tb = task_queue.get(b)
+        assert f"upstream {a} cancelled" in tb.result.get("cancelled_reason", "")
+
+
+class TestOrphanDetection:
+    """get_orphaned_tasks finds pending tasks with dead dependencies."""
+
+    def test_finds_orphaned(self, project_row):
+        pid = project_row
+        a = _mk_task(pid, "dead-parent")
+        b = _mk_task(pid, "orphan-child", depends_on=[a])
+
+        task_queue.cancel_task(a)
+        orphaned = task_queue.get_orphaned_tasks(pid)
+        assert any(t.id == b for t in orphaned)
+
+    def test_no_false_positives(self, project_row):
+        """Pending tasks with healthy deps are not orphaned."""
+        pid = project_row
+        a = _mk_task(pid, "healthy-parent")
+        b = _mk_task(pid, "healthy-child", depends_on=[a])
+
+        orphaned = task_queue.get_orphaned_tasks(pid)
+        assert not any(t.id == b for t in orphaned)
+
+    def test_completed_dep_not_orphaned(self, project_row):
+        pid = project_row
+        a = _mk_task(pid, "completed-parent")
+        b = _mk_task(pid, "child-of-completed", depends_on=[a])
+        task_queue.update_status(a, TaskStatus.COMPLETED, result={"ok": True})
+
+        orphaned = task_queue.get_orphaned_tasks(pid)
+        assert not any(t.id == b for t in orphaned)
+
+
+class TestCancelCycleEndpoint:
+    """POST /api/tasks/cancel-cycle cancels all tasks for a cycle."""
+
+    def test_cancel_cycle(self, project_row):
+        pid = project_row
+        a = _mk_task(pid, "[iterate] generate-bot")
+        b = _mk_task(pid, "[iterate] playtest", depends_on=[a])
+        c = _mk_task(pid, "[iterate] postmortem", depends_on=[b])
+
+        task_queue.merge_metadata(a, {"cycle_n": 3})
+        task_queue.merge_metadata(b, {"cycle_n": 3})
+        task_queue.merge_metadata(c, {"cycle_n": 3})
+
+        from src.main import cancel_cycle_tasks
+
+        with patch("src.main.ws_manager") as mock_ws, \
+             patch("src.main.cycle_state") as mock_cs:
+            mock_ws.broadcast = AsyncMock()
+            result = _run(cancel_cycle_tasks(project_id=pid, cycle_n=3))
+
+        assert result["status"] == "ok"
+        assert len(result["cancelled"]) == 3
+
+        for tid in [a, b, c]:
+            t = task_queue.get(tid)
+            assert t.status == TaskStatus.FAILED
+            assert t.result["cancelled"] is True

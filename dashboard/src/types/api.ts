@@ -86,6 +86,7 @@ export interface Task {
   created_at: string;
   updated_at: string;
   result?: TaskResult | null;
+  depends_on?: string[];
   metadata?: Record<string, unknown> | null;
 }
 

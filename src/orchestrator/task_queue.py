@@ -296,6 +296,80 @@ class TaskQueue:
             )
         return self.get(task_id)
 
+    def cancel_task_cascade(self, task_id: str) -> list[str]:
+        """Cancel a task and all downstream dependents recursively.
+
+        Returns list of all cancelled task IDs (including the root).
+        """
+        task = self.get(task_id)
+        if not task:
+            return []
+
+        cancelled: list[str] = []
+        to_cancel = [task_id]
+
+        while to_cancel:
+            tid = to_cancel.pop(0)
+            t = self.get(tid)
+            if not t:
+                continue
+
+            skip = (
+                t.status == TaskStatus.COMPLETED
+                or (t.status == TaskStatus.FAILED and (t.result or {}).get("cancelled"))
+            )
+
+            if not skip:
+                result = dict(t.result) if t.result else {}
+                result["cancelled"] = True
+                result["cancelled_at"] = datetime.now(timezone.utc).isoformat()
+                if tid != task_id:
+                    result["cancelled_reason"] = f"upstream {task_id} cancelled"
+                now = datetime.now(timezone.utc).isoformat()
+                with get_studio_db() as db:
+                    db.execute(
+                        "UPDATE tasks SET status = ?, result = ?, updated_at = ? WHERE id = ?",
+                        (TaskStatus.FAILED.value, json.dumps(result), now, tid),
+                    )
+                cancelled.append(tid)
+
+            dependents = self._find_dependents(tid, t.project_id)
+            for dep_id in dependents:
+                if dep_id not in cancelled and dep_id not in to_cancel:
+                    to_cancel.append(dep_id)
+
+        return cancelled
+
+    def _find_dependents(self, task_id: str, project_id: str) -> list[str]:
+        """Find tasks in project whose depends_on includes task_id."""
+        with get_studio_db() as db:
+            rows = db.execute(
+                "SELECT id, depends_on FROM tasks WHERE project_id = ? AND status IN ('pending', 'assigned', 'blocked')",
+                (project_id,),
+            ).fetchall()
+        dependents = []
+        for row in rows:
+            deps = json.loads(row["depends_on"]) if row["depends_on"] else []
+            if task_id in deps:
+                dependents.append(row["id"])
+        return dependents
+
+    def get_orphaned_tasks(self, project_id: str) -> list[Task]:
+        """Find pending/assigned tasks with at least one failed/cancelled dependency."""
+        tasks = self.list_tasks(project_id=project_id)
+        orphaned = []
+        for task in tasks:
+            if task.status not in (TaskStatus.PENDING, TaskStatus.ASSIGNED):
+                continue
+            if not task.depends_on:
+                continue
+            for dep_id in task.depends_on:
+                dep = self.get(dep_id)
+                if dep and dep.status in (TaskStatus.FAILED, TaskStatus.BLOCKED):
+                    orphaned.append(task)
+                    break
+        return orphaned
+
     def cancel_all_blocked(self, project_id: str | None = None) -> int:
         """Bulk-cancel all blocked tasks. Returns count."""
         now = datetime.now(timezone.utc).isoformat()

@@ -100,12 +100,24 @@ export const retryTask = (
     `/tasks/${id}/retry`,
     { method: "POST", body: JSON.stringify(body) },
   );
-export const cancelTask = (id: string) =>
-  req<{ status: string; task_id: string }>(`/tasks/${id}/cancel`, { method: "POST" });
+export const cancelTask = (id: string, cascade = false) =>
+  req<{ status: string; task_id: string; cancelled?: string[] }>(
+    `/tasks/${id}/cancel${cascade ? "?cascade=true" : ""}`,
+    { method: "POST" },
+  );
 export const cancelBlockedTasks = (projectId?: string) =>
   req<{ status: string; cancelled: number }>(
     `/tasks/cancel-blocked${projectId ? `?project_id=${projectId}` : ""}`,
     { method: "POST" },
+  );
+export const cancelCycle = (projectId: string, cycleN: number) =>
+  req<{ status: string; cycle_n: number; cancelled: string[]; halt_set: boolean }>(
+    `/tasks/cancel-cycle?project_id=${projectId}&cycle_n=${cycleN}`,
+    { method: "POST" },
+  );
+export const getOrphanedTasks = (projectId: string) =>
+  req<{ status: string; orphaned: Task[]; count: number }>(
+    `/tasks/orphaned?project_id=${projectId}`,
   );
 
 /* ── Models ── */

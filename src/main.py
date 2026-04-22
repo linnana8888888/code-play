@@ -1141,6 +1141,36 @@ async def _maybe_relaunch_cyclic(project_id: str, pipeline_specs: dict) -> None:
         if not cycle_state.should_relaunch(project_id):
             continue
 
+        upstream_valid = True
+        for step in steps:
+            step_title = f"[{pname}] {step['id']}"
+            step_tasks = [
+                t for t in all_tasks
+                if t.title == step_title
+                and int((t.metadata or {}).get("cycle_n") or 0) == cycle_n
+                and t.status == TaskStatus.COMPLETED
+            ]
+            if not step_tasks:
+                continue
+            st = step_tasks[0]
+            if st.expected_outputs:
+                try:
+                    missing = validate_outputs(st, project_memory, repo_dir=None)
+                    if missing:
+                        logger.warning(
+                            f"Cycle {cycle_n} step {step['id']} has missing outputs: {missing} — halting relaunch"
+                        )
+                        cycle_state.set_halt(
+                            project_id,
+                            f"cycle {cycle_n} step {step['id']} missing outputs: {', '.join(str(m) for m in missing)}"
+                        )
+                        upstream_valid = False
+                        break
+                except Exception as exc:
+                    logger.warning(f"Output validation error for cycle {cycle_n} {step['id']}: {exc}")
+        if not upstream_valid:
+            continue
+
         cycle_state.bump_cycle(project_id, next_n)
         tag = f"v{next_n}"
         metadata = {"iteration_tag": tag, "cycle_n": next_n}
@@ -1466,21 +1496,32 @@ async def retry_task(task_id: str, body: TaskRetryBody | None = None):
 
 
 @app.post("/api/tasks/{task_id}/cancel")
-async def cancel_task(task_id: str):
-    """Cancel a blocked/failed/pending task — marks it failed with cancelled flag."""
+async def cancel_task(task_id: str, cascade: bool = False):
+    """Cancel a task. With cascade=true, also cancel all downstream dependents."""
     task = task_queue.get(task_id)
     if not task:
         raise HTTPException(404, "Task not found")
     if task.status == TaskStatus.COMPLETED:
         raise HTTPException(400, f"Task {task_id} is already completed.")
-    cancelled = task_queue.cancel_task(task_id)
-    if not cancelled:
-        raise HTTPException(500, "Cancel failed")
-    await ws_manager.broadcast({
-        "type": "task_updated",
-        "data": cancelled.model_dump(mode="json"),
-    })
-    return {"status": "ok", "task_id": task_id}
+    if cascade:
+        cancelled_ids = task_queue.cancel_task_cascade(task_id)
+        for cid in cancelled_ids:
+            t = task_queue.get(cid)
+            if t:
+                await ws_manager.broadcast({
+                    "type": "task_updated",
+                    "data": t.model_dump(mode="json"),
+                })
+        return {"status": "ok", "task_id": task_id, "cancelled": cancelled_ids}
+    else:
+        cancelled = task_queue.cancel_task(task_id)
+        if not cancelled:
+            raise HTTPException(500, "Cancel failed")
+        await ws_manager.broadcast({
+            "type": "task_updated",
+            "data": cancelled.model_dump(mode="json"),
+        })
+        return {"status": "ok", "task_id": task_id}
 
 
 @app.post("/api/tasks/cancel-blocked")
@@ -1492,6 +1533,57 @@ async def cancel_blocked_tasks(project_id: str | None = None):
         "data": {"count": count, "project_id": project_id},
     })
     return {"status": "ok", "cancelled": count}
+
+
+@app.post("/api/tasks/cancel-cycle")
+async def cancel_cycle_tasks(project_id: str, cycle_n: int):
+    """Cancel all tasks for a specific cycle and halt further relaunches."""
+    all_tasks = task_queue.list_tasks(project_id=project_id)
+    cycle_tasks = [
+        t for t in all_tasks
+        if int((t.metadata or {}).get("cycle_n") or 0) == cycle_n
+    ]
+    if not cycle_tasks:
+        raise HTTPException(404, f"No tasks found for cycle {cycle_n}")
+
+    cancelled_ids: list[str] = []
+    for t in cycle_tasks:
+        if t.status == TaskStatus.COMPLETED:
+            continue
+        if t.status == TaskStatus.FAILED and (t.result or {}).get("cancelled"):
+            continue
+        ids = task_queue.cancel_task_cascade(t.id)
+        cancelled_ids.extend(ids)
+
+    cancelled_ids = list(dict.fromkeys(cancelled_ids))
+
+    cycle_state.set_halt(project_id, f"cycle {cycle_n} cancelled by user")
+
+    for cid in cancelled_ids:
+        ct = task_queue.get(cid)
+        if ct:
+            await ws_manager.broadcast({
+                "type": "task_updated",
+                "data": ct.model_dump(mode="json"),
+            })
+
+    return {
+        "status": "ok",
+        "cycle_n": cycle_n,
+        "cancelled": cancelled_ids,
+        "halt_set": True,
+    }
+
+
+@app.get("/api/tasks/orphaned")
+async def get_orphaned_tasks_endpoint(project_id: str):
+    """Get pending tasks with unresolvable dependencies (failed/cancelled upstream)."""
+    orphaned = task_queue.get_orphaned_tasks(project_id)
+    return {
+        "status": "ok",
+        "orphaned": [t.model_dump(mode="json") for t in orphaned],
+        "count": len(orphaned),
+    }
 
 
 # ==================== Tasks ====================

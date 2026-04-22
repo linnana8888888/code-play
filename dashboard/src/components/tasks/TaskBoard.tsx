@@ -1,7 +1,16 @@
 import { useEffect, useState } from "react";
 import type { Task, ModelOption } from "../../types/api";
-import { getAvailableModels, patchTask } from "../../api/client";
+import { getAvailableModels, patchTask, cancelTask } from "../../api/client";
 import BlockedTaskActions from "./BlockedTaskActions";
+
+function isOrphaned(task: Task, allTasks: Task[]): boolean {
+  if (task.status !== "pending" && task.status !== "assigned") return false;
+  if (!task.depends_on?.length) return false;
+  return task.depends_on.some((depId) => {
+    const dep = allTasks.find((t) => t.id === depId);
+    return dep && (dep.status === "failed" || dep.status === "blocked");
+  });
+}
 
 const columns: { key: Task["status"]; label: string; accent: string }[] = [
   { key: "pending", label: "Pending", accent: "#c37d0d" },
@@ -68,9 +77,17 @@ export default function TaskBoard({ tasks, onCreate, onRetried }: Props) {
               <div className="space-y-2">
                 {items.map((t) => {
                   const badge = authorBadge(t.created_by);
+                  const orphan = isOrphaned(t, tasks);
                   return (
-                    <div key={t.id} className="rounded-xl border border-border bg-bg-subtle p-3">
-                      <p className="text-sm font-medium leading-tight">{t.title}</p>
+                    <div key={t.id} className={`rounded-xl border p-3 ${orphan ? "border-warning/50 bg-warning/5" : "border-border bg-bg-subtle"}`}>
+                      <div className="flex items-start justify-between gap-1">
+                        <p className="text-sm font-medium leading-tight">{t.title}</p>
+                        {orphan && (
+                          <span className="shrink-0 rounded-md bg-warning/20 px-1.5 py-0.5 text-[9px] font-semibold text-warning">
+                            ORPHANED
+                          </span>
+                        )}
+                      </div>
                       {t.assigned_to && (
                         <p className="mt-1 truncate text-[11px] text-text-muted" style={{ fontFamily: "var(--font-mono)" }}>
                           → {t.assigned_to}
@@ -105,6 +122,16 @@ export default function TaskBoard({ tasks, onCreate, onRetried }: Props) {
                         <span className={`badge ${badge.cls}`} style={{ fontSize: "9px" }}>{badge.label}</span>
                         <span style={{ fontFamily: "var(--font-mono)" }}>P{t.priority}</span>
                       </div>
+                      {orphan && (
+                        <div className="mt-2">
+                          <button
+                            onClick={async () => { await cancelTask(t.id, true); onRetried?.(); }}
+                            className="rounded-lg border border-warning/40 px-2 py-0.5 text-[10px] text-warning hover:bg-warning/10"
+                          >
+                            Cancel cascade
+                          </button>
+                        </div>
+                      )}
                       {col.key === "blocked" && (
                         <div className="mt-2">
                           <BlockedTaskActions task={t} onRetried={onRetried} compact />

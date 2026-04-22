@@ -50,6 +50,19 @@ For significant technical choices, apply in order:
 - **State management:** state machine structure, where state lives, how transitions work.
 - **Test hook convention:** expose test interface for QA. Web: `window.__game`. Unity: `GameStateReader` ScriptableObject or test adapter. Roblox: `ReplicatedStorage.GameState` ModuleScript.
 - **Performance budget:** frame time, memory ceiling, load time target, asset size limits.
+- **Files-of-interest list** — explicit reading assignment for implementers. Block shape:
+  ```yaml
+  read_before_coding:
+    priority_1:        # implementer reads in full before typing
+      - artifacts/<game>-v<N-1>/game.mjs
+      - artifacts/<game>-v<N-1>/player.mjs
+    priority_2:        # read on-demand if referenced
+      - docs/V<N-1>_NOTES.md
+    grep_for:          # symbols the implementer must locate before changing
+      - "window.__game"
+      - "class GameState"
+  ```
+  Keep `priority_1` ≤ 5 files. If more needed, split into sub-tasks. No blind globbing downstream.
 
 ### Coding Standards (enforced by code-reviewer)
 - Max cyclomatic complexity: 10 per method

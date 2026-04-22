@@ -1,0 +1,26 @@
+{
+  "slug": "butt-shooting-game",
+  "version_label": "v4",
+  "resolved_ref": "2cb373a",
+  "source_repo": "https://github.com/linnana8888888/butt-shooting-game",
+  "chosen_title": "Cheekshot",
+  "published_at": "2026-04-19T17:45:00Z",
+  "targets": [
+    {
+      "name": "itch.io",
+      "url": "https://linnana8888888.itch.io/cheekshot",
+      "status": "live",
+      "bytes": 44661,
+      "sha256": "1306a333946bf47ea8c15c0518d49f07f1d07426ccd3a8eb23fd7187dd3e494a",
+      "butler_build": 1623921,
+      "butler_userversion": "v4-2cb373a",
+      "live_shot": "publish/cheekshot/cheekshot_live_game.png"
+    }
+  ],
+  "preflight": {
+    "playtest_v4": "13/13 pass",
+    "playtest_new_ideas": "8/8 pass",
+    "live_console_errors": 0
+  },
+  "notes": "v4 bumped onto the existing Cheekshot listing (originally shipped as v3 on 2026-04-19). New for v4: level-0 warmup dummies, healthkit breadcrumb beacon (cadence + pity), enemy outfit overlay, XP smoothing, early-upgrade diversity guarantee."
+}

@@ -1,0 +1,379 @@
+{
+  "schema_version": 1,
+  "run_id": "508386a0",
+  "started_at": "2026-04-18T11:23:04.724Z",
+  "duration_sec": 20.1,
+  "outcome": "timeout",
+  "iteration_tag": "smoke",
+  "seed": 0,
+  "session_duration_sec": 20.1,
+  "levels_reached": 0,
+  "score": 0,
+  "hi_score_beaten": false,
+  "shots_fired": 90,
+  "shots_hit": 6,
+  "accuracy": 0.06666666666666667,
+  "kills": 0,
+  "kills_per_min": 0,
+  "boss_hits": 0,
+  "boss_kills": 0,
+  "damage_taken": 10,
+  "times_hurt": 1,
+  "dashes_used": 10,
+  "stomps_used": 1,
+  "xp_gained": 0,
+  "xp_levels": 0,
+  "upgrades_picked": [],
+  "modifiers_picked": [],
+  "gems_collected": 0,
+  "pickups_collected": 0,
+  "time_to_first_kill_sec": 0,
+  "time_to_first_levelup_sec": 0,
+  "longest_idle_sec": 0.2,
+  "camera_mode_switches": 0,
+  "events": [
+    {
+      "t": 1.495,
+      "type": "levelStart",
+      "level": 0,
+      "name": "Desert Dunes"
+    },
+    {
+      "t": 1.495,
+      "type": "start",
+      "hi": 0
+    },
+    {
+      "t": 2.752,
+      "type": "shot",
+      "score": 0,
+      "level": 0
+    },
+    {
+      "t": 2.907,
+      "type": "shot",
+      "score": 0,
+      "level": 0
+    },
+    {
+      "t": 3.069,
+      "type": "shot",
+      "score": 0,
+      "level": 0
+    },
+    {
+      "t": 3.264,
+      "type": "shot",
+      "score": 0,
+      "level": 0
+    },
+    {
+      "t": 3.416,
+      "type": "shot",
+      "score": 0,
+      "level": 0
+    },
+    {
+      "t": 3.576,
+      "type": "stomp"
+    },
+    {
+      "t": 3.581,
+      "type": "shot",
+      "score": 0,
+      "level": 0
+    },
+    {
+      "t": 4.901,
+      "type": "shot",
+      "score": 0,
+      "level": 0
+    },
+    {
+      "t": 5.064,
+      "type": "shot",
+      "score": 0,
+      "level": 0
+    },
+    {
+      "t": 5.229,
+      "type": "shot",
+      "score": 0,
+      "level": 0
+    },
+    {
+      "t": 5.312,
+      "type": "dash"
+    },
+    {
+      "t": 6.175,
+      "type": "dash"
+    },
+    {
+      "t": 6.736,
+      "type": "shot",
+      "score": 0,
+      "level": 0
+    },
+    {
+      "t": 6.908,
+      "type": "shot",
+      "score": 0,
+      "level": 0
+    },
+    {
+      "t": 7.066,
+      "type": "shot",
+      "score": 0,
+      "level": 0
+    },
+    {
+      "t": 7.148,
+      "type": "dash"
+    },
+    {
+      "t": 7.585,
+      "type": "shot",
+      "score": 0,
+      "level": 0
+    },
+    {
+      "t": 7.736,
+      "type": "shot",
+      "score": 0,
+      "level": 0
+    },
+    {
+      "t": 8.028,
+      "type": "shot",
+      "score": 0,
+      "level": 0
+    },
+    {
+      "t": 8.195,
+      "type": "shot",
+      "score": 0,
+      "level": 0
+    },
+    {
+      "t": 8.35,
+      "type": "shot",
+      "score": 0,
+      "level": 0
+    },
+    {
+      "t": 8.659,
+      "type": "shot",
+      "score": 0,
+      "level": 0
+    },
+    {
+      "t": 8.83,
+      "type": "shot",
+      "score": 0,
+      "level": 0
+    },
+    {
+      "t": 9.609,
+      "type": "dash"
+    },
+    {
+      "t": 10.055,
+      "type": "shot",
+      "score": 0,
+      "level": 0
+    },
+    {
+      "t": 10.215,
+      "type": "shot",
+      "score": 0,
+      "level": 0
+    },
+    {
+      "t": 10.371,
+      "type": "shot",
+      "score": 0,
+      "level": 0
+    },
+    {
+      "t": 10.525,
+      "type": "shot",
+      "score": 0,
+      "level": 0
+    },
+    {
+      "t": 10.68,
+      "type": "shot",
+      "score": 0,
+      "level": 0
+    },
+    {
+      "t": 10.839,
+      "type": "shot",
+      "score": 0,
+      "level": 0
+    },
+    {
+      "t": 10.99,
+      "type": "shot",
+      "score": 0,
+      "level": 0
+    },
+    {
+      "t": 11.16,
+      "type": "shot",
+      "score": 0,
+      "level": 0
+    },
+    {
+      "t": 12.541,
+      "type": "dash"
+    },
+    {
+      "t": 12.777,
+      "type": "shot",
+      "score": 0,
+      "level": 0
+    },
+    {
+      "t": 12.947,
+      "type": "shot",
+      "score": 0,
+      "level": 0
+    },
+    {
+      "t": 13.562,
+      "type": "hit"
+    },
+    {
+      "t": 14.5,
+      "type": "shot",
+      "score": 0,
+      "level": 0
+    },
+    {
+      "t": 14.662,
+      "type": "shot",
+      "score": 0,
+      "level": 0
+    },
+    {
+      "t": 14.83,
+      "type": "shot",
+      "score": 0,
+      "level": 0
+    },
+    {
+      "t": 15.007,
+      "type": "shot",
+      "score": 0,
+      "level": 0
+    },
+    {
+      "t": 15.171,
+      "type": "shot",
+      "score": 0,
+      "level": 0
+    },
+    {
+      "t": 15.344,
+      "type": "shot",
+      "score": 0,
+      "level": 0
+    },
+    {
+      "t": 15.5,
+      "type": "shot",
+      "score": 0,
+      "level": 0
+    },
+    {
+      "t": 16.384,
+      "type": "shot",
+      "score": 0,
+      "level": 0
+    },
+    {
+      "t": 16.568,
+      "type": "shot",
+      "score": 0,
+      "level": 0
+    },
+    {
+      "t": 17.351,
+      "type": "dash"
+    },
+    {
+      "t": 17.587,
+      "type": "shot",
+      "score": 0,
+      "level": 0
+    },
+    {
+      "t": 18.138,
+      "type": "dash"
+    },
+    {
+      "t": 18.76,
+      "type": "shot",
+      "score": 0,
+      "level": 0
+    },
+    {
+      "t": 18.922,
+      "type": "shot",
+      "score": 0,
+      "level": 0
+    },
+    {
+      "t": 18.936,
+      "type": "dash"
+    },
+    {
+      "t": 19.075,
+      "type": "shot",
+      "score": 0,
+      "level": 0
+    },
+    {
+      "t": 19.229,
+      "type": "shot",
+      "score": 0,
+      "level": 0
+    },
+    {
+      "t": 19.255,
+      "type": "hit"
+    },
+    {
+      "t": 19.383,
+      "type": "shot",
+      "score": 0,
+      "level": 0
+    },
+    {
+      "t": 19.557,
+      "type": "shot",
+      "score": 0,
+      "level": 0
+    },
+    {
+      "t": 20.231,
+      "type": "hit"
+    },
+    {
+      "t": 20.334,
+      "type": "dash"
+    },
+    {
+      "t": 21.038,
+      "type": "hurt",
+      "dmg": 10,
+      "hp": 90
+    },
+    {
+      "t": 21.731,
+      "type": "dash"
+    }
+  ]
+}

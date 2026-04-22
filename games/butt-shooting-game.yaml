@@ -4,6 +4,7 @@ status: active
 source:
   kind: external
   repo: https://github.com/linnana8888888/butt-shooting-game
+  default_branch_ref: 2cb373a  # main fast-forwarded to v4 on 2026-04-19
 versions:
   - label: v2
     ref: eb4b0da
@@ -31,14 +32,24 @@ versions:
       roblox:   null
 
   - label: v4
-    ref: 83aea62
+    ref: 2cb373a
     branch: v4
     entry: index.html
-    status: draft
-    released_at: null
-    notes: XP gems, level-up modal, stomp (Q), modifier roulette, visual pass. Plus 3 bug fixes (straight into level 0, butt faces aim, hard-pause on picker). Iteration-loop GOALS + playtest bot added.
+    status: shipped
+    released_at: 2026-04-19
+    shipped_as: Cheekshot
+    itch_build: 1623921
+    itch_userversion: v4-2cb373a
+    notes: |
+      v4 cycle2 complete. Cycle1 (83aea62): XP gems, level-up modal, stomp (Q),
+      modifier roulette, visual pass, bug fixes (straight into level 0, butt
+      faces aim, hard-pause on picker). Cycle2 (2cb373a): 5 shipped ideas —
+      early_upgrade_guarantee_diversity, proto-05 XP smoothing, warmup_dummies
+      on level 0, healthkit_breadcrumb_beacon (cadence + pity timer + offscreen
+      arrow), artist-idea-03 outfit overlay (hat/armor/aura). Test coverage:
+      13/13 playtest_v4 checks + 8/8 playtest_new_ideas checks.
     published:
-      itch:     null
+      itch:     https://linnana8888888.itch.io/cheekshot
       gh_pages: null
       roblox:   null
 

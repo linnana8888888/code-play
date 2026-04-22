@@ -1,0 +1,531 @@
+{
+  "schema_version": 1,
+  "run_id": "248d1999",
+  "started_at": "2026-04-19T13:04:03.433Z",
+  "duration_sec": 21.38,
+  "outcome": "death",
+  "iteration_tag": "v1",
+  "seed": 0,
+  "session_duration_sec": 21.38,
+  "levels_reached": 0,
+  "score": 93,
+  "hi_score_beaten": true,
+  "shots_fired": 88,
+  "shots_hit": 28,
+  "accuracy": 0.3181818181818182,
+  "kills": 14,
+  "kills_per_min": 39.28538022635862,
+  "boss_hits": 0,
+  "boss_kills": 0,
+  "damage_taken": 100,
+  "times_hurt": 7,
+  "dashes_used": 12,
+  "stomps_used": 1,
+  "xp_gained": 85,
+  "xp_levels": 0,
+  "upgrades_picked": [],
+  "modifiers_picked": [],
+  "gems_collected": 2,
+  "pickups_collected": 2,
+  "time_to_first_kill_sec": 7.701,
+  "time_to_first_levelup_sec": 0,
+  "longest_idle_sec": 0.43,
+  "camera_mode_switches": 0,
+  "events": [
+    {
+      "t": 0.019,
+      "type": "levelStart",
+      "level": 0,
+      "name": "Desert Dunes"
+    },
+    {
+      "t": 0.019,
+      "type": "start",
+      "hi": 0
+    },
+    {
+      "t": 0.557,
+      "type": "stomp"
+    },
+    {
+      "t": 0.702,
+      "type": "shot",
+      "score": 0,
+      "level": 0
+    },
+    {
+      "t": 0.859,
+      "type": "shot",
+      "score": 0,
+      "level": 0
+    },
+    {
+      "t": 1.034,
+      "type": "shot",
+      "score": 0,
+      "level": 0
+    },
+    {
+      "t": 1.249,
+      "type": "shot",
+      "score": 0,
+      "level": 0
+    },
+    {
+      "t": 1.425,
+      "type": "shot",
+      "score": 0,
+      "level": 0
+    },
+    {
+      "t": 1.769,
+      "type": "dash"
+    },
+    {
+      "t": 2.669,
+      "type": "shot",
+      "score": 0,
+      "level": 0
+    },
+    {
+      "t": 2.84,
+      "type": "shot",
+      "score": 0,
+      "level": 0
+    },
+    {
+      "t": 4.094,
+      "type": "shot",
+      "score": 0,
+      "level": 0
+    },
+    {
+      "t": 4.259,
+      "type": "shot",
+      "score": 0,
+      "level": 0
+    },
+    {
+      "t": 4.43,
+      "type": "shot",
+      "score": 0,
+      "level": 0
+    },
+    {
+      "t": 4.598,
+      "type": "shot",
+      "score": 0,
+      "level": 0
+    },
+    {
+      "t": 4.766,
+      "type": "shot",
+      "score": 0,
+      "level": 0
+    },
+    {
+      "t": 4.933,
+      "type": "shot",
+      "score": 0,
+      "level": 0
+    },
+    {
+      "t": 4.953,
+      "type": "dash"
+    },
+    {
+      "t": 5.086,
+      "type": "shot",
+      "score": 0,
+      "level": 0
+    },
+    {
+      "t": 5.261,
+      "type": "shot",
+      "score": 0,
+      "level": 0
+    },
+    {
+      "t": 5.426,
+      "type": "shot",
+      "score": 0,
+      "level": 0
+    },
+    {
+      "t": 6.042,
+      "type": "shot",
+      "score": 0,
+      "level": 0
+    },
+    {
+      "t": 6.247,
+      "type": "dash"
+    },
+    {
+      "t": 7.196,
+      "type": "dash"
+    },
+    {
+      "t": 7.322,
+      "type": "shot",
+      "score": 0,
+      "level": 0
+    },
+    {
+      "t": 7.491,
+      "type": "shot",
+      "score": 0,
+      "level": 0
+    },
+    {
+      "t": 7.643,
+      "type": "shot",
+      "score": 0,
+      "level": 0
+    },
+    {
+      "t": 7.7,
+      "type": "hit"
+    },
+    {
+      "t": 7.701,
+      "type": "kill",
+      "kind": "buttling",
+      "gained": 10,
+      "score": 10
+    },
+    {
+      "t": 7.816,
+      "type": "shot",
+      "score": 10,
+      "level": 0
+    },
+    {
+      "t": 8.58,
+      "type": "hit"
+    },
+    {
+      "t": 8.776,
+      "type": "hit"
+    },
+    {
+      "t": 9.139,
+      "type": "dash"
+    },
+    {
+      "t": 9.735,
+      "type": "shot",
+      "score": 10,
+      "level": 0
+    },
+    {
+      "t": 9.906,
+      "type": "shot",
+      "score": 10,
+      "level": 0
+    },
+    {
+      "t": 10.259,
+      "type": "dash"
+    },
+    {
+      "t": 11.003,
+      "type": "dash"
+    },
+    {
+      "t": 12.103,
+      "type": "shot",
+      "score": 10,
+      "level": 0
+    },
+    {
+      "t": 12.135,
+      "type": "hit"
+    },
+    {
+      "t": 12.135,
+      "type": "kill",
+      "kind": "buttling",
+      "gained": 10,
+      "score": 20
+    },
+    {
+      "t": 12.246,
+      "type": "hurt",
+      "dmg": 15,
+      "hp": 85
+    },
+    {
+      "t": 12.255,
+      "type": "shot",
+      "score": 20,
+      "level": 0
+    },
+    {
+      "t": 12.255,
+      "type": "hit"
+    },
+    {
+      "t": 12.35,
+      "type": "dash"
+    },
+    {
+      "t": 12.406,
+      "type": "shot",
+      "score": 20,
+      "level": 0
+    },
+    {
+      "t": 12.406,
+      "type": "hit"
+    },
+    {
+      "t": 12.406,
+      "type": "kill",
+      "kind": "flusher",
+      "gained": 15,
+      "score": 35
+    },
+    {
+      "t": 12.434,
+      "type": "gem",
+      "value": 2
+    },
+    {
+      "t": 12.99,
+      "type": "shot",
+      "score": 37,
+      "level": 0
+    },
+    {
+      "t": 13.141,
+      "type": "shot",
+      "score": 37,
+      "level": 0
+    },
+    {
+      "t": 13.528,
+      "type": "hit"
+    },
+    {
+      "t": 13.529,
+      "type": "kill",
+      "kind": "buttling",
+      "gained": 10,
+      "score": 47
+    },
+    {
+      "t": 13.643,
+      "type": "dash"
+    },
+    {
+      "t": 13.976,
+      "type": "shot",
+      "score": 47,
+      "level": 0
+    },
+    {
+      "t": 14.119,
+      "type": "hit"
+    },
+    {
+      "t": 14.148,
+      "type": "shot",
+      "score": 47,
+      "level": 0
+    },
+    {
+      "t": 14.319,
+      "type": "shot",
+      "score": 47,
+      "level": 0
+    },
+    {
+      "t": 15.297,
+      "type": "hurt",
+      "dmg": 15,
+      "hp": 70
+    },
+    {
+      "t": 15.4,
+      "type": "dash"
+    },
+    {
+      "t": 16.177,
+      "type": "hurt",
+      "dmg": 15,
+      "hp": 55
+    },
+    {
+      "t": 16.701,
+      "type": "hurt",
+      "dmg": 15,
+      "hp": 40
+    },
+    {
+      "t": 17.19,
+      "type": "shot",
+      "score": 47,
+      "level": 0
+    },
+    {
+      "t": 17.218,
+      "type": "hurt",
+      "dmg": 15,
+      "hp": 25
+    },
+    {
+      "t": 17.357,
+      "type": "shot",
+      "score": 47,
+      "level": 0
+    },
+    {
+      "t": 17.512,
+      "type": "shot",
+      "score": 47,
+      "level": 0
+    },
+    {
+      "t": 17.69,
+      "type": "shot",
+      "score": 47,
+      "level": 0
+    },
+    {
+      "t": 17.86,
+      "type": "shot",
+      "score": 47,
+      "level": 0
+    },
+    {
+      "t": 17.973,
+      "type": "hit"
+    },
+    {
+      "t": 17.973,
+      "type": "kill",
+      "kind": "windy",
+      "gained": 20,
+      "score": 67
+    },
+    {
+      "t": 18.089,
+      "type": "shot",
+      "score": 67,
+      "level": 0
+    },
+    {
+      "t": 18.418,
+      "type": "hit"
+    },
+    {
+      "t": 18.418,
+      "type": "kill",
+      "kind": "buttling",
+      "gained": 10,
+      "score": 77
+    },
+    {
+      "t": 18.472,
+      "type": "hit"
+    },
+    {
+      "t": 19.063,
+      "type": "dash"
+    },
+    {
+      "t": 19.771,
+      "type": "hurt",
+      "dmg": 10,
+      "hp": 15
+    },
+    {
+      "t": 19.916,
+      "type": "shot",
+      "score": 77,
+      "level": 0
+    },
+    {
+      "t": 19.924,
+      "type": "hit"
+    },
+    {
+      "t": 19.924,
+      "type": "kill",
+      "kind": "buttling",
+      "gained": 10,
+      "score": 87
+    },
+    {
+      "t": 19.925,
+      "type": "pickup",
+      "kind": "bean"
+    },
+    {
+      "t": 19.925,
+      "type": "gem",
+      "value": 1
+    },
+    {
+      "t": 20.077,
+      "type": "shot",
+      "score": 93,
+      "level": 0
+    },
+    {
+      "t": 20.232,
+      "type": "shot",
+      "score": 93,
+      "level": 0
+    },
+    {
+      "t": 20.543,
+      "type": "shot",
+      "score": 93,
+      "level": 0
+    },
+    {
+      "t": 20.703,
+      "type": "shot",
+      "score": 93,
+      "level": 0
+    },
+    {
+      "t": 21.018,
+      "type": "hit"
+    },
+    {
+      "t": 21.072,
+      "type": "shot",
+      "score": 93,
+      "level": 0
+    },
+    {
+      "t": 21.159,
+      "type": "hit"
+    },
+    {
+      "t": 21.245,
+      "type": "shot",
+      "score": 93,
+      "level": 0
+    },
+    {
+      "t": 21.508,
+      "type": "dash"
+    },
+    {
+      "t": 21.766,
+      "type": "hurt",
+      "dmg": 15,
+      "hp": 0
+    },
+    {
+      "t": 21.766,
+      "type": "death",
+      "score": 93,
+      "level": 0
+    }
+  ]
+}

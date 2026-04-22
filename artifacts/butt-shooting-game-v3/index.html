@@ -1,0 +1,406 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Butt Shooting Game · v3</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;700&family=Fredoka+One&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --peach: #F5B08A;
+    --cream: #FFF4D6;
+    --ink: #2A1A0E;
+    --red: #E85C4A;
+    --gold: #E8B84D;
+    --pink: #FF5FA2;
+    --green: #9DD96A;
+    --sky: #7FC4E0;
+    --sand: #E8D7A8;
+  }
+  html, body {
+    margin: 0; padding: 0;
+    height: 100%;
+    overflow: hidden;
+    background: var(--sky);
+    font-family: 'Fredoka', system-ui, sans-serif;
+    color: var(--ink);
+    user-select: none;
+    cursor: crosshair;
+  }
+  body.fps-mode { cursor: none; }
+  #view { display: block; width: 100vw; height: 100vh; }
+
+  .panel {
+    background: var(--cream);
+    border: 5px solid var(--ink);
+    border-radius: 18px;
+    box-shadow: 0 4px 0 var(--ink);
+    padding: 10px 14px;
+  }
+
+  #hud {
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  #topbar {
+    display: flex;
+    gap: 12px;
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+  .stat {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 160px;
+  }
+  .stat .label {
+    font-weight: 700;
+    font-size: 14px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+  .stat .value {
+    font-size: 22px;
+    font-weight: 700;
+  }
+  .bar {
+    flex: 1;
+    height: 14px;
+    background: #0004;
+    border-radius: 7px;
+    overflow: hidden;
+    min-width: 100px;
+  }
+  .bar > span {
+    display: block;
+    height: 100%;
+    background: var(--red);
+    transition: width 0.15s ease;
+  }
+  #mag {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  #magRing {
+    width: 44px; height: 44px;
+  }
+  #magRing circle {
+    fill: none;
+    stroke-width: 6;
+  }
+  #magRing .track { stroke: #0003; }
+  #magRing .fill  { stroke: var(--gold); transition: stroke-dashoffset 0.12s; }
+  #magText {
+    font-size: 18px;
+    font-weight: 700;
+  }
+  #combo {
+    display: flex; align-items: center; gap: 6px;
+    font-weight: 700;
+    min-width: auto;
+  }
+  #combo .count { font-size: 22px; color: var(--pink); }
+  #combo .mult { font-size: 14px; color: var(--ink); }
+  #combo .timer {
+    width: 40px; height: 5px;
+    background: #0003; border-radius: 3px; overflow: hidden;
+  }
+  #combo .timer > span {
+    display: block; height: 100%;
+    background: var(--pink);
+  }
+  #level {
+    display: flex; align-items: center; gap: 8px;
+  }
+  #level .name { font-size: 16px; font-weight: 700; }
+  #level .prog { font-size: 13px; opacity: 0.8; }
+  #buffs {
+    display: flex; align-items: center; gap: 6px;
+    min-height: 30px;
+  }
+  #hiscoreChip {
+    font-size: 13px;
+    background: var(--ink);
+    color: var(--cream);
+    padding: 4px 10px;
+    border-radius: 10px;
+    font-weight: 700;
+  }
+
+  #bossbar {
+    position: fixed;
+    left: 50%; top: 14px;
+    transform: translateX(-50%);
+    width: min(520px, 70vw);
+    padding: 8px 12px;
+    display: none;
+    text-align: center;
+    pointer-events: none;
+  }
+  #bossbar.show { display: block; }
+  #bossbar .name {
+    font-family: 'Fredoka One', Fredoka, sans-serif;
+    font-size: 18px;
+    color: #A63E3E;
+    letter-spacing: 0.08em;
+    text-shadow: -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000;
+  }
+  #bossbar .bar { height: 16px; }
+  #bossbar .bar > span { background: linear-gradient(90deg, #FFD24D, #A63E3E); }
+
+  #floaters {
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 50;
+    overflow: hidden;
+  }
+
+  #crosshair {
+    position: fixed;
+    left: 50%; top: 50%;
+    width: 18px; height: 18px;
+    transform: translate(-50%,-50%);
+    pointer-events: none;
+    display: none;
+    z-index: 60;
+  }
+  body.fps-mode #crosshair { display: block; }
+  #crosshair::before, #crosshair::after {
+    content: '';
+    position: absolute;
+    background: #fff;
+    box-shadow: 0 0 0 1px #000;
+  }
+  #crosshair::before {
+    left: 50%; top: 2px;
+    width: 2px; height: 14px;
+    transform: translateX(-50%);
+  }
+  #crosshair::after {
+    top: 50%; left: 2px;
+    height: 2px; width: 14px;
+    transform: translateY(-50%);
+  }
+
+  .overlay {
+    position: fixed;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 80;
+    background: rgba(0,0,0,0.35);
+  }
+  .overlay.hide { display: none; }
+  .card {
+    background: var(--cream);
+    border: 6px solid var(--ink);
+    border-radius: 22px;
+    box-shadow: 0 8px 0 var(--ink);
+    padding: 28px 34px;
+    text-align: center;
+    max-width: 460px;
+    pointer-events: auto;
+  }
+  .card h1 {
+    font-family: 'Fredoka One', Fredoka, sans-serif;
+    margin: 0 0 8px 0;
+    font-size: 36px;
+    color: var(--pink);
+    text-shadow: -2px -2px 0 #000, 2px -2px 0 #000, -2px 2px 0 #000, 2px 2px 0 #000;
+  }
+  .card h2 {
+    font-family: 'Fredoka One', Fredoka, sans-serif;
+    margin: 0 0 8px 0;
+    font-size: 28px;
+    color: var(--gold);
+    text-shadow: -2px -2px 0 #000, 2px -2px 0 #000, -2px 2px 0 #000, 2px 2px 0 #000;
+  }
+  .card p { font-size: 15px; line-height: 1.45; margin: 6px 0; }
+  .card .hint { font-size: 13px; opacity: 0.75; margin-top: 12px; }
+  .card button {
+    font-family: inherit; font-weight: 700;
+    background: var(--gold);
+    color: var(--ink);
+    border: 4px solid var(--ink);
+    border-radius: 14px;
+    padding: 10px 22px;
+    font-size: 18px;
+    cursor: pointer;
+    box-shadow: 0 4px 0 var(--ink);
+    margin-top: 14px;
+  }
+  .card button:hover { transform: translateY(-2px); }
+  .card button:active { transform: translateY(2px); box-shadow: 0 0 0 var(--ink); }
+
+  #muteBtn {
+    position: fixed;
+    right: 14px; bottom: 14px;
+    width: 42px; height: 42px;
+    border-radius: 50%;
+    border: 4px solid var(--ink);
+    background: var(--cream);
+    cursor: pointer;
+    font-size: 18px;
+    box-shadow: 0 4px 0 var(--ink);
+    pointer-events: auto;
+  }
+
+  #devpanel {
+    position: fixed;
+    right: 14px; top: 14px;
+    width: 360px;
+    max-height: 70vh;
+    overflow: auto;
+    z-index: 90;
+    display: none;
+    background: #111c;
+    color: #e2e2e2;
+    border: 3px solid var(--ink);
+    border-radius: 12px;
+    padding: 10px 12px;
+    font-family: ui-monospace, monospace;
+    font-size: 11px;
+    pointer-events: auto;
+  }
+  #devpanel.show { display: block; }
+  #devpanel h3 {
+    margin: 0 0 6px 0;
+    font-family: 'Fredoka One', Fredoka, sans-serif;
+    font-size: 14px;
+    color: var(--gold);
+  }
+  #devpanel .row { margin: 2px 0; }
+  #devpanel button {
+    font-size: 11px;
+    background: var(--gold);
+    border: 2px solid #000;
+    border-radius: 6px;
+    padding: 3px 8px;
+    cursor: pointer;
+    margin: 2px 4px 2px 0;
+    font-family: inherit;
+  }
+
+  .level-banner {
+    position: fixed;
+    left: 50%; top: 40%;
+    transform: translate(-50%, -50%);
+    font-family: 'Fredoka One', Fredoka, sans-serif;
+    font-size: 56px;
+    color: var(--cream);
+    text-shadow: -3px -3px 0 #000, 3px -3px 0 #000, -3px 3px 0 #000, 3px 3px 0 #000;
+    pointer-events: none;
+    z-index: 70;
+    opacity: 0;
+    transition: opacity 0.3s;
+  }
+  .level-banner.show { opacity: 1; }
+</style>
+</head>
+<body>
+  <canvas id="view"></canvas>
+
+  <div id="hud">
+    <div id="topbar">
+      <div class="stat panel">
+        <span class="label">HP</span>
+        <div class="bar"><span id="hpbar" style="width:100%"></span></div>
+      </div>
+      <div class="stat panel" id="mag">
+        <svg id="magRing" viewBox="0 0 44 44">
+          <circle class="track" cx="22" cy="22" r="17"/>
+          <circle class="fill"  cx="22" cy="22" r="17"
+                  stroke-dasharray="106.81" stroke-dashoffset="0"
+                  transform="rotate(-90 22 22)"/>
+        </svg>
+        <span id="magText">10 / 10</span>
+      </div>
+      <div class="stat panel">
+        <span class="label">Score</span>
+        <span class="value" id="score">0</span>
+        <span id="hiscoreChip">HI 0</span>
+      </div>
+      <div class="stat panel" id="level">
+        <span class="label">Lv</span>
+        <span class="name" id="levelName">Desert Dunes</span>
+        <span class="prog" id="levelProg">0 / 20</span>
+      </div>
+      <div class="stat panel" id="combo">
+        <span class="count" id="comboCount">0</span>
+        <span class="mult" id="comboMult">x1</span>
+        <div class="timer"><span id="comboTimer" style="width:0%"></span></div>
+      </div>
+      <div class="stat panel" id="buffs"></div>
+    </div>
+  </div>
+
+  <div id="bossbar" class="panel">
+    <div class="name" id="bossName">CLOG KING</div>
+    <div class="bar"><span id="bosshp" style="width:100%"></span></div>
+  </div>
+
+  <div id="floaters"></div>
+  <div id="crosshair"></div>
+
+  <div id="title" class="overlay">
+    <div class="card">
+      <h1>BUTT SHOOTING · v3</h1>
+      <p>Three levels. Unlimited beans. Boss fight.</p>
+      <p>WASD move · Space fire · R reload · Shift dash · V camera · M mute</p>
+      <p class="hint">Click <b>Start</b> to unlock audio + pointer.</p>
+      <button id="startBtn">Start</button>
+      <p class="hint">Hi-Score: <span id="titleHi">0</span></p>
+    </div>
+  </div>
+
+  <div id="gameover" class="overlay hide">
+    <div class="card">
+      <h1>FLUSHED</h1>
+      <p>Score: <span id="goScore">0</span></p>
+      <p>Level reached: <span id="goLevel">1</span></p>
+      <button id="restartBtn">Try again</button>
+    </div>
+  </div>
+
+  <div id="winscreen" class="overlay hide">
+    <div class="card">
+      <h1>YOU CLEANED</h1>
+      <h2>THE KINGDOM</h2>
+      <p>Final score: <span id="winScore">0</span></p>
+      <p>The throne is empty. For now.</p>
+      <button id="winRestart">Play again</button>
+    </div>
+  </div>
+
+  <button id="muteBtn" title="Mute (M)">🔊</button>
+  <div id="devpanel">
+    <h3>ANALYTICS (session)</h3>
+    <div id="devstats"></div>
+    <div style="margin-top:8px">
+      <button id="devExport">Export JSON</button>
+      <button id="devClear">Clear</button>
+      <button id="devClose">Close</button>
+    </div>
+    <h3 style="margin-top:10px">RECENT EVENTS</h3>
+    <div id="devevents"></div>
+  </div>
+
+  <div id="levelBanner" class="level-banner"></div>
+
+  <script type="importmap">
+    { "imports": { "three": "https://unpkg.com/three@0.160.0/build/three.module.js" } }
+  </script>
+  <script type="module" src="./game.mjs"></script>
+</body>
+</html>

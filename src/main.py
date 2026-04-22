@@ -44,7 +44,7 @@ from src.memory.project_memory import project_memory
 from src.memory import criteria_store
 from src.memory import project_docs
 from src.memory import proposals_store
-from src.iteration.bootstrap import ensure_goals_md, ensure_briefing_md, GoalsBootstrapError
+from src.iteration.bootstrap import ensure_goals_md, ensure_briefing_md, ensure_codebase_tree, GoalsBootstrapError
 from src.models.criteria import CriterionCreate, CriterionUpdate
 from src.models.proposals import (
     AgentProposalCreate,
@@ -1499,6 +1499,7 @@ async def _maybe_auto_iterate(project_id: str):
         try:
             ensure_goals_md(project_id)
             ensure_briefing_md(project_id)
+            ensure_codebase_tree(project_id)
             logger.info(f"[{project_id}] phased-producer complete + goals set — auto-launching iterate_artifact")
             await run_pipeline(
                 "iterate_artifact",
@@ -2255,6 +2256,7 @@ async def run_pipeline(pipeline_name: str, body: PipelineRunBody):
             raise HTTPException(exc.status_code, str(exc))
 
         ensure_briefing_md(project_id)
+        ensure_codebase_tree(project_id)
 
         # Flag the project as iterate-enabled and stamp cycle_n=1 in memory so
         # _maybe_relaunch_cyclic has a baseline to compare against.

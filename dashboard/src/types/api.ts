@@ -242,6 +242,25 @@ export interface WsEvent {
   timestamp: string;
 }
 
+export interface AgentActivity {
+  instance_id: string;
+  agent_type: string;
+  activity: "thinking" | "tool_use" | "completed" | "failed";
+  tool?: string;
+  detail?: string;
+  elapsed_ms: number;
+  task_id?: string;
+}
+
+export interface ActiveWorker {
+  task_id: string;
+  instance_id: string;
+  agent_type: string;
+  model: string;
+  started_at: string;
+  elapsed_ms: number;
+}
+
 /* ── Success criteria ── */
 export type CriterionStatus = "pending" | "in_progress" | "met" | "failed";
 

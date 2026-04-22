@@ -171,8 +171,10 @@ async def lifespan(app: FastAPI):
     skill_count = len(skill_registry.list_skills())
     logger.info(f"Loaded {skill_count} skills")
 
-    # Wire message bus to WebSocket
+    # Wire message bus and worker monitor to WebSocket
     message_bus.set_ws_broadcast(ws_manager.broadcast)
+    from src.runtime.worker_monitor import worker_monitor
+    worker_monitor.set_broadcast(ws_manager.broadcast)
 
     _lint_pipeline_save_instructions()
     _lint_pipeline_agent_tools()
@@ -904,8 +906,36 @@ async def sweep_finished_instances(project_id: str = None):
     return {"removed": removed}
 
 
+@app.get("/api/workers/status")
+async def get_worker_status():
+    from src.runtime.worker_monitor import worker_monitor
+    return {"active": worker_monitor.get_active(), "count": worker_monitor.get_count()}
+
+
+@app.post("/api/workers/{task_id}/cancel")
+async def cancel_worker(task_id: str):
+    from src.runtime.worker_monitor import worker_monitor
+    cancelled = worker_monitor.cancel(task_id)
+    if not cancelled:
+        raise HTTPException(status_code=404, detail=f"No active worker for task {task_id}")
+    return {"cancelled": True, "task_id": task_id}
+
+
 async def _run_agent_task(instance, task_prompt: str, session_id: str = None):
     """Background task: run agent to completion, broadcasting turns."""
+    from src.runtime.worker_monitor import worker_monitor
+    timeout_s = (instance.metadata or {}).get("timeout_s", 30 * 60) if hasattr(instance, "metadata") else 30 * 60
+    task_id = instance.task_id
+
+    if task_id and worker_monitor.is_running(task_id):
+        logger.warning(f"Duplicate dispatch blocked for task {task_id}")
+        return
+
+    if task_id:
+        worker_monitor.register(
+            task_id, instance.id, instance.agent_type or "unknown", instance.model or "unknown",
+        )
+
     final_content = ""
     try:
         # Inject project memory context if available
@@ -934,26 +964,110 @@ async def _run_agent_task(instance, task_prompt: str, session_id: str = None):
                     "content": f"[Agent Lessons — READ CAREFULLY]\n{lessons_prompt}",
                 })
 
-        async for turn in agent_runtime.run(instance, task_prompt, context_messages, session_id):
-            if turn.role == "assistant" and turn.content:
-                final_content = turn.content
-            await ws_manager.broadcast({
-                "type": "agent_turn",
-                "data": {
-                    "instance_id": instance.id,
-                    "role": turn.role,
-                    "content": turn.content,
-                    "tool_calls": [
-                        {"name": tc.name, "arguments": tc.arguments}
-                        for tc in turn.tool_calls
-                    ],
-                    "tool_results": [
-                        {"content": tr.content[:500], "is_error": tr.is_error}
-                        for tr in turn.tool_results
-                    ],
-                    "timestamp": turn.timestamp.isoformat(),
-                },
-            })
+        _activity_start = datetime.now(timezone.utc) if task_id else None
+        try:
+            async with asyncio.timeout(timeout_s):
+                async for turn in agent_runtime.run(instance, task_prompt, context_messages, session_id):
+                    if turn.role == "assistant" and turn.content:
+                        final_content = turn.content
+                    await ws_manager.broadcast({
+                        "type": "agent_turn",
+                        "data": {
+                            "instance_id": instance.id,
+                            "role": turn.role,
+                            "content": turn.content,
+                            "tool_calls": [
+                                {"name": tc.name, "arguments": tc.arguments}
+                                for tc in turn.tool_calls
+                            ],
+                            "tool_results": [
+                                {"content": tr.content[:500], "is_error": tr.is_error}
+                                for tr in turn.tool_results
+                            ],
+                            "timestamp": turn.timestamp.isoformat(),
+                        },
+                    })
+                    # Compact activity events for dashboard feed
+                    elapsed_ms = int((datetime.now(timezone.utc) - _activity_start).total_seconds() * 1000) if _activity_start else 0
+                    if turn.tool_calls:
+                        for tc in turn.tool_calls:
+                            detail = ""
+                            if tc.name in ("file_write", "repo_file_write", "external_repo_commit"):
+                                path = tc.arguments.get("path", tc.arguments.get("message", ""))
+                                detail = str(path)[:80]
+                            elif tc.name == "memory_write":
+                                detail = tc.arguments.get("key", "")[:60]
+                            await ws_manager.broadcast({
+                                "type": "agent_activity",
+                                "data": {
+                                    "instance_id": instance.id,
+                                    "agent_type": instance.agent_type or "unknown",
+                                    "activity": "tool_use",
+                                    "tool": tc.name,
+                                    "detail": detail,
+                                    "elapsed_ms": elapsed_ms,
+                                    "task_id": task_id,
+                                },
+                            })
+                    elif turn.role == "assistant" and turn.content:
+                        await ws_manager.broadcast({
+                            "type": "agent_activity",
+                            "data": {
+                                "instance_id": instance.id,
+                                "agent_type": instance.agent_type or "unknown",
+                                "activity": "thinking",
+                                "detail": turn.content[:80],
+                                "elapsed_ms": elapsed_ms,
+                                "task_id": task_id,
+                            },
+                        })
+        except TimeoutError:
+            logger.warning(f"[{instance.id}] Wall-clock timeout after {timeout_s}s")
+            if task_id:
+                try:
+                    task_queue.update_status(task_id, TaskStatus.BLOCKED, result={
+                        "failure_category": "stuck_timeout",
+                        "error": f"Agent exceeded {timeout_s}s wall-clock timeout",
+                        "summary": final_content[:4000],
+                        "agent_instance_id": instance.id,
+                    })
+                except Exception:
+                    pass
+                await ws_manager.broadcast({
+                    "type": "task_stalled",
+                    "data": {
+                        "task_id": task_id,
+                        "project_id": instance.project_id,
+                        "failure_category": "stuck_timeout",
+                        "timeout_s": timeout_s,
+                    },
+                })
+                if task_id:
+                    worker_monitor.unregister(task_id, success=False)
+                return
+        except asyncio.CancelledError:
+            logger.info(f"[{instance.id}] Agent cancelled externally")
+            if task_id:
+                try:
+                    task_queue.update_status(task_id, TaskStatus.BLOCKED, result={
+                        "failure_category": "cancelled",
+                        "error": "Agent cancelled by user or monitor",
+                        "summary": final_content[:4000],
+                        "agent_instance_id": instance.id,
+                    })
+                except Exception:
+                    pass
+                await ws_manager.broadcast({
+                    "type": "task_stalled",
+                    "data": {
+                        "task_id": task_id,
+                        "project_id": instance.project_id,
+                        "failure_category": "cancelled",
+                    },
+                })
+                if task_id:
+                    worker_monitor.unregister(task_id, success=False)
+                return
 
         # Rescue: if the model emitted HTML inline but never called memory_write,
         # capture it to project memory so the pipeline can still advance.
@@ -1073,12 +1187,42 @@ async def _run_agent_task(instance, task_prompt: str, session_id: str = None):
                     pass
                 # Do NOT advance the pipeline — the task is waiting on a human.
                 return
+            # Worker signal protocol: if agent called report_completion, use
+            # its structured signal for status determination.
+            current_task = task_queue.get(instance.task_id)
+            worker_signal = (current_task.result or {}).get("worker_signal") if current_task else None
+
+            if worker_signal and worker_signal.get("status") in ("blocked", "failed"):
+                sig_status = worker_signal["status"]
+                result = {
+                    "failure_category": sig_status,
+                    "error": worker_signal.get("escalation_reason", f"Agent self-reported {sig_status}"),
+                    "summary": worker_signal.get("summary", ""),
+                    "worker_signal": worker_signal,
+                    "agent_instance_id": instance.id,
+                    "tokens_used": instance.tokens_used,
+                }
+                try:
+                    task_queue.update_status(instance.task_id, TaskStatus.BLOCKED, result=result)
+                except Exception as exc:
+                    logger.warning(f"Failed to mark task {instance.task_id} blocked via signal: {exc}")
+                await ws_manager.broadcast({
+                    "type": "task_stalled",
+                    "data": {
+                        "task_id": instance.task_id,
+                        "project_id": instance.project_id,
+                        "failure_category": sig_status,
+                        "escalation_reason": worker_signal.get("escalation_reason"),
+                        "tokens_used": instance.tokens_used,
+                    },
+                })
+                return
+
             # Post-run output validation — catches silent-success runs where
             # the agent returns cleanly without producing the deliverables
             # declared in task.expected_outputs.
             missing: list[str] = []
             try:
-                current_task = task_queue.get(instance.task_id)
                 if current_task and current_task.expected_outputs:
                     repo_dir = None
                     if instance.project_id:
@@ -1126,11 +1270,19 @@ async def _run_agent_task(instance, task_prompt: str, session_id: str = None):
                     },
                 })
                 return
+
+            # Success — merge worker signal data into result if present
+            completion_result = {
+                "summary": (worker_signal or {}).get("summary") or final_content[:20000],
+                "agent_instance_id": instance.id,
+            }
+            if worker_signal:
+                completion_result["worker_signal"] = worker_signal
             try:
                 task_queue.update_status(
                     instance.task_id,
                     TaskStatus.COMPLETED,
-                    result={"summary": final_content[:20000], "agent_instance_id": instance.id},
+                    result=completion_result,
                 )
                 await ws_manager.broadcast({
                     "type": "task_completed",
@@ -1138,6 +1290,8 @@ async def _run_agent_task(instance, task_prompt: str, session_id: str = None):
                 })
             except Exception as exc:
                 logger.warning(f"Failed to mark task {instance.task_id} completed: {exc}")
+        if task_id and worker_monitor.is_running(task_id):
+            worker_monitor.unregister(task_id, success=True)
         if instance.project_id:
             await _advance_pipeline(instance.project_id)
     except Exception as e:
@@ -1175,6 +1329,9 @@ async def _run_agent_task(instance, task_prompt: str, session_id: str = None):
                 "failure_category": category,
             },
         })
+    finally:
+        if task_id and worker_monitor.is_running(task_id):
+            worker_monitor.unregister(task_id, success=False)
 
 
 async def _maybe_relaunch_cyclic(project_id: str, pipeline_specs: dict) -> None:

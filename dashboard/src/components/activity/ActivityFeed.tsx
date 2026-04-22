@@ -133,6 +133,53 @@ function toRows(e: WsEvent): Row[] {
         actor: d.agent_type || "agent",
         detail: `BLOCKED after ${d.failures || "?"} failed spawns — ${shorten(d.error || "", 80)}`,
       }];
+    case "agent_activity": {
+      const act = d.activity as string;
+      const elapsed = d.elapsed_ms ? `${Math.round((d.elapsed_ms as number) / 1000)}s` : "";
+      if (act === "tool_use") {
+        return [{
+          id, time: t, kind: d.tool || "tool", accent: C.info,
+          actor: d.agent_type || d.instance_id || "agent",
+          detail: `${d.tool}${d.detail ? ` → ${shorten(String(d.detail), 60)}` : ""} (${elapsed})`,
+        }];
+      }
+      if (act === "thinking") {
+        return [{
+          id, time: t, kind: "think", accent: C.muted,
+          actor: d.agent_type || d.instance_id || "agent",
+          detail: `${shorten(String(d.detail || ""), 80)} (${elapsed})`,
+        }];
+      }
+      return [{
+        id, time: t, kind: act, accent: act === "completed" ? C.ok : C.danger,
+        actor: d.agent_type || d.instance_id || "agent",
+        detail: `${act} (${elapsed})`,
+      }];
+    }
+    case "worker_started":
+      return [{
+        id, time: t, kind: "worker+", accent: C.ok,
+        actor: d.instance_id || "worker",
+        detail: `started (${d.model || "?"})`,
+      }];
+    case "worker_completed":
+      return [{
+        id, time: t, kind: "worker✓", accent: C.ok,
+        actor: d.instance_id || "worker",
+        detail: `done in ${d.duration_ms ? `${Math.round((d.duration_ms as number) / 1000)}s` : "?"}`,
+      }];
+    case "worker_failed":
+      return [{
+        id, time: t, kind: "worker✗", accent: C.danger,
+        actor: d.instance_id || "worker",
+        detail: `failed after ${d.duration_ms ? `${Math.round((d.duration_ms as number) / 1000)}s` : "?"}`,
+      }];
+    case "worker_cancelled":
+      return [{
+        id, time: t, kind: "cancel", accent: C.warn,
+        actor: d.instance_id || "worker",
+        detail: "cancelled",
+      }];
     default:
       return [];
   }

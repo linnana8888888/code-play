@@ -138,6 +138,7 @@ class ToolExecutor:
         arguments: dict,
         agent_instance_id: str,
         project_id: str = None,
+        task_id: str = None,
     ) -> ToolResult:
         """Execute a tool with governance checks."""
         # Check permission
@@ -181,6 +182,7 @@ class ToolExecutor:
         try:
             result = await handler(
                 arguments, project_id=project_id, agent_instance_id=agent_instance_id,
+                task_id=task_id,
             )
             return ToolResult(tool_call_id="", content=str(result), is_error=False)
         except Exception as e:
@@ -961,6 +963,43 @@ class ToolExecutor:
                                            "default": False},
                 },
                 "required": ["asset_id"],
+            },
+        })
+
+        # report_completion — structured signal for worker completion protocol
+        self._register("report_completion", self._tool_report_completion, {
+            "name": "report_completion",
+            "description": (
+                "Report structured completion status. Call this as your LAST action "
+                "before ending. Declares what you produced, self-check results, and "
+                "whether you succeeded or are blocked. The orchestrator reads this "
+                "signal to verify your work — if you skip it, your deliverables "
+                "may not be recognized."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "status": {
+                        "type": "string",
+                        "enum": ["completed", "blocked", "failed"],
+                        "description": "completed = deliverables produced; blocked = need human/other agent; failed = unrecoverable error",
+                    },
+                    "summary": {"type": "string", "description": "1-3 sentence summary of what you did"},
+                    "deliverables": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Memory keys, file paths, or branch names you produced",
+                    },
+                    "verification": {
+                        "type": "object",
+                        "description": "Self-check results, e.g. {\"syntax_valid\": true, \"tests_pass\": true}",
+                    },
+                    "escalation_reason": {
+                        "type": "string",
+                        "description": "Why blocked/failed — what the next agent or human needs to fix",
+                    },
+                },
+                "required": ["status", "summary"],
             },
         })
 
@@ -2438,6 +2477,31 @@ const { chromium } = require('playwright');
         if not str(resolved).startswith(str(base_resolved)):
             raise PermissionError(f"Path traversal blocked: {relative}")
         return resolved
+
+    # --- report_completion handler ---
+
+    async def _tool_report_completion(self, args: dict, **ctx) -> str:
+        from src.models.tasks import WorkerSignal
+        signal = WorkerSignal(
+            status=args["status"],
+            summary=args["summary"],
+            deliverables=args.get("deliverables", []),
+            verification=args.get("verification", {}),
+            escalation_reason=args.get("escalation_reason"),
+        )
+        task_id = ctx.get("task_id")
+        if task_id:
+            from src.orchestrator.task_queue import task_queue
+            task_queue.patch_result(task_id, {
+                "worker_signal": {
+                    "status": signal.status,
+                    "summary": signal.summary,
+                    "deliverables": signal.deliverables,
+                    "verification": signal.verification,
+                    "escalation_reason": signal.escalation_reason,
+                },
+            })
+        return f"Signal recorded: {signal.status}"
 
     # --- Governance logging ---
 

@@ -1,9 +1,21 @@
 """Task queue models."""
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from enum import Enum
+from typing import Literal
 from pydantic import BaseModel, Field
 from datetime import datetime
+
+
+@dataclass
+class WorkerSignal:
+    """Structured completion signal agents write via report_completion tool."""
+    status: Literal["completed", "blocked", "failed"]
+    summary: str
+    deliverables: list[str] = field(default_factory=list)
+    verification: dict = field(default_factory=dict)
+    escalation_reason: str | None = None
 
 
 class TaskStatus(str, Enum):

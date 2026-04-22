@@ -417,6 +417,7 @@ class AgentRuntime:
                 arguments=tc.arguments,
                 agent_instance_id=instance.id,
                 project_id=instance.project_id,
+                task_id=instance.task_id,
             )
             result.tool_call_id = tc.id
             results.append(result)

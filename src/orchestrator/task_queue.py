@@ -182,6 +182,19 @@ class TaskQueue:
                     (status.value, datetime.now(timezone.utc).isoformat(), task_id),
                 )
 
+    def patch_result(self, task_id: str, patch: dict):
+        """Merge keys into task.result without changing status."""
+        task = self.get(task_id)
+        if not task:
+            return
+        result = dict(task.result) if task.result else {}
+        result.update(patch)
+        with get_studio_db() as db:
+            db.execute(
+                "UPDATE tasks SET result = ?, updated_at = ? WHERE id = ?",
+                (json.dumps(result), datetime.now(timezone.utc).isoformat(), task_id),
+            )
+
     def stall_task(
         self, task_id: str, reason: str, hint: str | None = None
     ) -> Task | None:

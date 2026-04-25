@@ -255,6 +255,24 @@ def init_studio_db():
             CREATE INDEX IF NOT EXISTS idx_proposals_status ON agent_proposals(status);
         """)
 
+        # Studio-wide cross-game lesson store
+        db.executescript("""
+            CREATE TABLE IF NOT EXISTS cross_game_lessons (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                agent_role TEXT NOT NULL,
+                category TEXT NOT NULL,
+                lesson TEXT NOT NULL,
+                source_project_id TEXT NOT NULL,
+                source_cycle TEXT,
+                confidence REAL DEFAULT 0.5,
+                created_at TEXT NOT NULL,
+                last_confirmed_at TEXT,
+                confirmation_count INTEGER DEFAULT 1
+            );
+            CREATE INDEX IF NOT EXISTS idx_cgl_agent_role ON cross_game_lessons(agent_role);
+            CREATE INDEX IF NOT EXISTS idx_cgl_category ON cross_game_lessons(category);
+        """)
+
         # Migrations for existing databases
         _migrate_add_column(db, "projects", "goal", "TEXT DEFAULT ''")
         _migrate_add_column(db, "projects", "require_roster_approval", "INTEGER DEFAULT 0")

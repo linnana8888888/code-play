@@ -85,6 +85,33 @@ def _classify_failure(err_text: str, *, terminated_for_budget: bool = False) -> 
     return "permanent"
 
 
+# --- Publish idempotency ---
+
+
+async def _check_publish_idempotency(project_id: str, project_memory) -> bool:
+    """
+    Returns True if already published at current ref (skip publish).
+    Returns False if publish should proceed.
+    """
+    manifest_raw = project_memory.read(project_id, "artifact", "publish_manifest_v1")
+    if not manifest_raw:
+        return False
+    try:
+        manifest = json.loads(manifest_raw)
+    except (ValueError, TypeError):
+        return False
+
+    if manifest.get("status") == "published":
+        current_html = project_memory.read(project_id, "artifact", "game_html_v1")
+        manifest_ref = manifest.get("ref", "")
+        # Simple ref check: compare first 64 chars of game_html hash
+        import hashlib
+        current_ref = hashlib.sha256((current_html or "").encode()).hexdigest()[:16]
+        if manifest_ref == current_ref or manifest_ref.startswith(current_ref[:8]):
+            return True  # already published at this version
+    return False
+
+
 # --- Logging ---
 
 logging.basicConfig(
@@ -978,7 +1005,7 @@ async def _run_agent_task(instance, task_prompt: str, session_id: str = None):
                     "content": f"[Project Briefing]\n{briefing}",
                 })
             # Inject agent-type lessons (behavioral memory from past failures)
-            from src.memory.agent_lessons import agent_lessons
+            from src.memory.agent_lessons import agent_lessons, cross_game_lesson_store
             lessons_prompt = agent_lessons.format_for_prompt(
                 instance.project_id, instance.agent_type or "unknown"
             )
@@ -986,6 +1013,15 @@ async def _run_agent_task(instance, task_prompt: str, session_id: str = None):
                 context_messages.append({
                     "role": "user",
                     "content": f"[Agent Lessons — READ CAREFULLY]\n{lessons_prompt}",
+                })
+            # Inject cross-game studio lessons (apply to all projects)
+            cross_game_block = cross_game_lesson_store.format_for_context(
+                agent_role=instance.agent_type or "unknown"
+            )
+            if cross_game_block:
+                context_messages.append({
+                    "role": "user",
+                    "content": f"[Studio Lessons — READ CAREFULLY]\n{cross_game_block}",
                 })
 
         _activity_start = datetime.now(timezone.utc) if task_id else None
@@ -2534,6 +2570,24 @@ async def _advance_pipeline(project_id: str):
                 else:
                     logger.warning(f"Approved proposal {approved_prop.id} failed to spawn for task {task.id}")
                 continue
+            # Publish idempotency: skip publisher agent if already published at this version
+            if agent_type == "publisher" and step and step.get("id") == "publish":
+                already_published = await _check_publish_idempotency(project_id, project_memory)
+                if already_published:
+                    logger.info(
+                        f"Publish skipped — already at this version (project={project_id}, task={task.id})"
+                    )
+                    task_queue.update_status(
+                        task.id,
+                        TaskStatus.COMPLETED,
+                        result={"summary": "Publish skipped — already at this version", "skipped": True},
+                    )
+                    await ws_manager.broadcast({
+                        "type": "task_completed",
+                        "data": {"task_id": task.id, "skipped": True, "reason": "publish_idempotency"},
+                    })
+                    continue
+
             instance = registry.spawn(
                 agent_type=agent_type,
                 project_id=project_id,
@@ -2845,6 +2899,50 @@ async def delete_agent_lesson(project_id: str, lesson_key: str):
     if not deleted:
         raise HTTPException(404, f"Lesson '{lesson_key}' not found")
     return {"status": "ok", "deleted": lesson_key}
+
+
+# ==================== Cross-Game Lessons ====================
+
+@app.get("/api/lessons")
+async def list_cross_game_lessons(agent_role: str = None, category: str = None):
+    """List studio-wide cross-game lessons, optionally filtered by agent_role or category."""
+    from src.memory.agent_lessons import cross_game_lesson_store
+    if agent_role:
+        return cross_game_lesson_store.get_lessons(agent_role)
+    return cross_game_lesson_store.get_all_lessons(category=category)
+
+
+class CrossGameLessonBody(BaseModel):
+    agent_role: str
+    category: str
+    lesson: str
+    source_project_id: str
+    source_cycle: str = None
+
+
+@app.post("/api/lessons")
+async def add_cross_game_lesson(body: CrossGameLessonBody):
+    """Manually add a cross-game studio lesson."""
+    from src.memory.agent_lessons import cross_game_lesson_store
+    lesson_id = cross_game_lesson_store.add_lesson(
+        agent_role=body.agent_role,
+        category=body.category,
+        lesson=body.lesson,
+        source_project_id=body.source_project_id,
+        source_cycle=body.source_cycle,
+    )
+    return {"status": "ok", "id": lesson_id}
+
+
+@app.post("/api/lessons/{lesson_id}/confirm")
+async def confirm_cross_game_lesson(lesson_id: int, project_id: str):
+    """Confirm a cross-game lesson applies to another project — increases confidence."""
+    from src.memory.agent_lessons import cross_game_lesson_store
+    try:
+        cross_game_lesson_store.confirm_lesson(lesson_id, project_id)
+    except ValueError as exc:
+        raise HTTPException(404, str(exc))
+    return {"status": "ok", "lesson_id": lesson_id}
 
 
 # ==================== Governance ====================

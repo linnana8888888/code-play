@@ -6,6 +6,9 @@ agent prompts at spawn time via _run_agent_task in main.py.
 
 Storage: reuses the existing per-project `memory` table with
 type='agent_lesson', key='{agent_type}::L{NNN}'.
+
+Cross-game lessons (CrossGameLessonStore) are stored in the studio-wide
+SQLite DB (studio.db) in the cross_game_lessons table.
 """
 from __future__ import annotations
 
@@ -15,6 +18,7 @@ import re
 from datetime import datetime, timezone
 
 from src.memory.project_memory import project_memory
+from src.database import get_studio_db
 
 logger = logging.getLogger(__name__)
 
@@ -186,3 +190,153 @@ class AgentLessons:
 
 
 agent_lessons = AgentLessons()
+
+
+class CrossGameLessonStore:
+    """
+    Studio-wide lesson store keyed by (agent_role, lesson_category).
+    Lessons learned on any game are available to all future runs.
+
+    Schema:
+    - agent_role: str (e.g. "frontend-developer", "game-designer")
+    - category: str (e.g. "three_js", "tool_use", "kid_safety", "roblox")
+    - lesson: str (concise, actionable, present tense)
+    - source_project_id: str
+    - source_cycle: str (optional)
+    - confidence: float 0.0-1.0 (increases when lesson confirmed across multiple projects)
+    - created_at: ISO timestamp
+    - last_confirmed_at: ISO timestamp
+    - confirmation_count: int
+    """
+
+    # Confidence increment per confirmation, capped at 1.0
+    _CONFIDENCE_STEP = 0.1
+
+    def add_lesson(
+        self,
+        agent_role: str,
+        category: str,
+        lesson: str,
+        source_project_id: str,
+        source_cycle: str = None,
+    ) -> int:
+        """Add a new lesson or increment confirmation_count if identical text exists.
+
+        Returns the lesson id (new or existing).
+        """
+        now = datetime.now(timezone.utc).isoformat()
+        normalised = lesson.lower().strip()
+        with get_studio_db() as db:
+            # Check for exact-text duplicate (case-insensitive)
+            row = db.execute(
+                "SELECT id, confidence, confirmation_count FROM cross_game_lessons "
+                "WHERE agent_role = ? AND lower(trim(lesson)) = ?",
+                (agent_role, normalised),
+            ).fetchone()
+            if row:
+                new_count = row["confirmation_count"] + 1
+                new_conf = min(1.0, row["confidence"] + self._CONFIDENCE_STEP)
+                db.execute(
+                    "UPDATE cross_game_lessons "
+                    "SET confirmation_count = ?, confidence = ?, last_confirmed_at = ? "
+                    "WHERE id = ?",
+                    (new_count, new_conf, now, row["id"]),
+                )
+                logger.debug(
+                    "CrossGameLessonStore: duplicate lesson %s — incremented count to %d",
+                    row["id"],
+                    new_count,
+                )
+                return row["id"]
+
+            cursor = db.execute(
+                "INSERT INTO cross_game_lessons "
+                "(agent_role, category, lesson, source_project_id, source_cycle, "
+                " confidence, created_at, last_confirmed_at, confirmation_count) "
+                "VALUES (?, ?, ?, ?, ?, 0.5, ?, NULL, 1)",
+                (agent_role, category, lesson, source_project_id, source_cycle, now),
+            )
+            lesson_id = cursor.lastrowid
+            logger.info(
+                "CrossGameLessonStore: new lesson %d for role=%s category=%s",
+                lesson_id,
+                agent_role,
+                category,
+            )
+            return lesson_id
+
+    def get_lessons(self, agent_role: str, limit: int = 3) -> list[dict]:
+        """Get top N lessons for an agent role, sorted by confidence desc."""
+        with get_studio_db() as db:
+            rows = db.execute(
+                "SELECT * FROM cross_game_lessons "
+                "WHERE agent_role = ? "
+                "ORDER BY confidence DESC, confirmation_count DESC "
+                "LIMIT ?",
+                (agent_role, limit),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def confirm_lesson(self, lesson_id: int, project_id: str) -> None:
+        """Mark a lesson as confirmed by another project — increases confidence."""
+        now = datetime.now(timezone.utc).isoformat()
+        with get_studio_db() as db:
+            row = db.execute(
+                "SELECT confidence, confirmation_count FROM cross_game_lessons WHERE id = ?",
+                (lesson_id,),
+            ).fetchone()
+            if row is None:
+                raise ValueError(f"Lesson {lesson_id} not found")
+            new_conf = min(1.0, row["confidence"] + self._CONFIDENCE_STEP)
+            new_count = row["confirmation_count"] + 1
+            db.execute(
+                "UPDATE cross_game_lessons "
+                "SET confidence = ?, confirmation_count = ?, last_confirmed_at = ? "
+                "WHERE id = ?",
+                (new_conf, new_count, now, lesson_id),
+            )
+        logger.info(
+            "CrossGameLessonStore: confirmed lesson %d from project %s (new conf=%.2f)",
+            lesson_id,
+            project_id,
+            new_conf,
+        )
+
+    def get_all_lessons(self, category: str = None) -> list[dict]:
+        """Get all lessons, optionally filtered by category."""
+        with get_studio_db() as db:
+            if category:
+                rows = db.execute(
+                    "SELECT * FROM cross_game_lessons WHERE category = ? "
+                    "ORDER BY confidence DESC, confirmation_count DESC",
+                    (category,),
+                ).fetchall()
+            else:
+                rows = db.execute(
+                    "SELECT * FROM cross_game_lessons "
+                    "ORDER BY confidence DESC, confirmation_count DESC"
+                ).fetchall()
+        return [dict(r) for r in rows]
+
+    def format_for_context(self, agent_role: str, limit: int = 3) -> str:
+        """Format top lessons as a context block for agent injection.
+
+        Returns empty string if no lessons exist.
+        Format:
+        ## Studio Lessons (learned from previous games)
+        - [three_js] Three.js shadow maps cause 401 on LEGO proxy — disable shadows by default
+        - [tool_use] Always call repo_file_list before repo_file_read to avoid stale path errors
+        """
+        lessons = self.get_lessons(agent_role, limit=limit)
+        if not lessons:
+            return ""
+
+        lines = ["## Studio Lessons (learned from previous games)"]
+        for entry in lessons:
+            category = entry.get("category", "general")
+            lesson_text = entry.get("lesson", "")
+            lines.append(f"- [{category}] {lesson_text}")
+        return "\n".join(lines)
+
+
+cross_game_lesson_store = CrossGameLessonStore()

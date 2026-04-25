@@ -12,30 +12,46 @@ Not a framework. A studio. You describe a game, agents design it, build it, QA i
 "a butt-themed shooter where you dodge enemies and collect power-ups"
     │
     ▼
-┌─────────────────────────────────────────────────────────┐
-│  phased-producer pipeline (22 steps, human-gated)       │
-│                                                         │
-│  concept ── mechanics ── style research ── look & feel  │
-│      │          │              │                │       │
-│      ▼          ▼              ▼                ▼       │
-│  [gate]     [gate]                          [gate]      │
-│                                                         │
-│  tech plan ── build ── telemetry ── QA playtest         │
-│      │          │          │            │               │
-│      ▼          ▼          ▼            ▼               │
-│  [gate]    game_html_v1  instrumented  [gate]           │
-│                                                         │
-│  code review ── scaffold iteration ── publish prep      │
-│                                            │            │
-│                                            ▼            │
-│                                        [gate] ── ship   │
-└─────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────────┐
+│  phased-producer pipeline — orchestrated live by Producer               │
+│                                                                         │
+│  ▸ acquire project lock (≤3 concurrent)  ▸ inject cross-game lessons    │
+│                                                                         │
+│  concept ── mechanics ── { style-research ∥ mechanic-research ∥ CD }    │
+│      │          │                       │                               │
+│      ▼          ▼                       ▼                               │
+│  [gate]      [gate]               (parallel)                            │
+│                                                                         │
+│  look & feel ── tech plan ── build ── telemetry ── QA playtest          │
+│      │             │           │          │            │                │
+│      ▼             ▼         game_html  instrumented   ▼                │
+│  [gate+kid-safety][gate]                           [gate+kid-safety]    │
+│                                                                         │
+│  code review ↻×3 ── peer review ── scaffold iteration ── publish prep   │
+│                                                                  │      │
+│                                                                  ▼      │
+│                                                              [gate]     │
+│                                                                  │      │
+│                                           publish (idempotent) ──┤      │
+│                                                    │             │      │
+│                                                    ▼             ▼      │
+│                                                 🎪 live      ↩ rollback │
+│                                                    │                    │
+│                                                    ▼                    │
+│                                         record lessons → next run       │
+│                                                                         │
+│  ─── governance rail on every step ───                                  │
+│  schema hard-block · peer review on-request · WS live status feed ·     │
+│  handoff-summarizer briefs before each [gate]                           │
+└─────────────────────────────────────────────────────────────────────────┘
     │
     ▼
-🎪 Live on itch.io — then iterate via playtest bot loop
+🎪 Live on itch.io / gh-pages / Roblox — then iterate via playtest bot loop
 ```
 
-Every `[gate]` is a moment where you review, approve, or redirect. Between gates, agents work autonomously.
+Every `[gate]` is a moment where you review, approve, or redirect. A **handoff-summarizer** agent writes a short brief before each gate so you land on context. Between gates, agents work autonomously under the Producer orchestrator.
+
+Full visual diagrams: [`docs/flowcharts/index.html`](docs/flowcharts/index.html) — open the file locally for interactive new-game / iterate tabs.
 
 ## Shipped games
 
@@ -76,14 +92,18 @@ Agents route through **Anthropic** (Claude Opus/Sonnet/Haiku), **OpenAI** (GPT-5
 
 After a game ships, `iterate_artifact` takes over. A headless playtest bot (`playtest_bot.mjs`) drives the game through `window.GameAPI`, collects telemetry, and feeds it into a cyclic pipeline:
 
+0. **Cycle entry** — Producer acquires project lock, cross-game lessons injected, qa-engineer snapshots baseline metrics for regression guard
 1. **Generate bot** — QA engineer reads game source, writes a game-specific bot (not a random walk)
 2. **Playtest** — bot runs 5x, writes telemetry JSON
-3. **Postmortem** — analytics-reporter grades each GOALS.md target (hit/miss)
+3. **Postmortem** — analytics-reporter grades each GOALS.md target (hit/miss) with per-level breakdown
 4. **Propose** — 4 agents in parallel (designer, UX, artist, prototyper) each pitch 5-8 ideas
-5. **Human picks** — you select which ideas to implement
-6. **Budget estimate** — tech-lead forecasts token cost and proposes engineer split
-7. **Implement** — frontend-developer applies changes (single or parallel engineers)
-8. **Loop** — back to playtest with the new build
+5. **Human picks** — you select which ideas to implement (handoff-summarizer briefs you first)
+6. **CD check + budget estimate** — creative-director verdict, tech-lead forecasts token cost and proposes engineer split
+7. **Implement** — frontend-developer applies changes with per-level difficulty tuning (single or parallel engineers)
+8. **Review** — code-reviewer (loop ×3) + peer review through message bus
+9. **Before/after regression** — if any baseline metric regresses in v{n+1}, auto-REVISE before shipping
+10. **Outcome** — loop back to playtest OR idempotent re-publish (noop if ref already shipped)
+11. **Record lessons** — cycle hits/misses written to `agent_lessons.py` for future runs
 
 The bot and game communicate through a standardized `window.GameAPI` contract (start, getState, getSnapshot, pickCard) so one bot drives any game. On cycle 1, the QA engineer generates a game-specific bot using entity screen coordinates from `getSnapshot()`. On subsequent cycles, the existing bot is reused or tuned.
 

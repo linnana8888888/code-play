@@ -70,6 +70,76 @@ def substitute_expected_outputs(
     return rendered
 
 
+def validate_artifact_content(key: str, value, schemas_path: str = "config/artifact_schemas.yaml") -> list[str]:
+    """
+    Validate artifact content against schema rules.
+    Returns list of error strings (empty = valid).
+    """
+    import yaml
+    from pathlib import Path
+
+    schema_file = Path(schemas_path)
+    if not schema_file.exists():
+        return []  # no schema file = no validation (graceful degradation)
+
+    with open(schema_file) as f:
+        schemas = yaml.safe_load(f)
+
+    schema = schemas.get("schemas", {}).get(key)
+    if not schema:
+        return []  # no schema for this key = valid
+
+    errors = []
+    required = schema.get("required_fields", [])
+    field_rules = schema.get("field_rules", {})
+
+    # For string artifacts (game_html_v1), check min_bytes
+    if isinstance(value, str):
+        content_rule = field_rules.get("content", {})
+        min_bytes = content_rule.get("min_bytes", 0)
+        if len(value.encode()) < min_bytes:
+            errors.append(f"{key}: content too short ({len(value.encode())} bytes, min {min_bytes})")
+        return errors
+
+    if not isinstance(value, dict):
+        return []
+
+    # Check required fields
+    for field in required:
+        if field not in value:
+            errors.append(f"{key}: missing required field '{field}'")
+            continue
+
+        rule = field_rules.get(field, {})
+        field_val = value[field]
+
+        # Type checks
+        if rule.get("type") == "list":
+            if not isinstance(field_val, list):
+                errors.append(f"{key}.{field}: expected list, got {type(field_val).__name__}")
+            else:
+                min_items = rule.get("min_items", 0)
+                if len(field_val) < min_items:
+                    errors.append(f"{key}.{field}: needs at least {min_items} items, got {len(field_val)}")
+                each_requires = rule.get("each_requires", [])
+                for i, item in enumerate(field_val):
+                    if isinstance(item, dict):
+                        for req in each_requires:
+                            if req not in item:
+                                errors.append(f"{key}.{field}[{i}]: missing '{req}'")
+
+        elif rule.get("type") == "enum":
+            allowed = rule.get("values", [])
+            if field_val not in allowed:
+                errors.append(f"{key}.{field}: '{field_val}' not in allowed values {allowed}")
+
+        elif rule.get("type") == "string":
+            if not isinstance(field_val, str):
+                errors.append(f"{key}.{field}: expected string")
+
+    return errors
+
+
 def validate_outputs(
     task: Task,
     project_memory: ProjectMemory,
@@ -101,6 +171,16 @@ def validate_outputs(
                 missing.append(
                     f"memory[{mem_type}/{key}] — have {have} bytes, need ≥{min_bytes}"
                 )
+            else:
+                # Phase 1: warn-only artifact content validation (hard failures in Phase 2)
+                try:
+                    import json as _json
+                    parsed = _json.loads(content)
+                except (ValueError, TypeError):
+                    parsed = content  # treat as raw string for string-type schemas
+                schema_errors = validate_artifact_content(key, parsed)
+                for err in schema_errors:
+                    _log.warning("[artifact schema] %s (task=%s): %s", key, task.id, err)
 
         elif kind == "branch_commit":
             branch = str(entry.get("branch", ""))

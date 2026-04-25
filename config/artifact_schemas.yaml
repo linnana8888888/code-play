@@ -1,0 +1,72 @@
+schemas:
+  concept_options_v1:
+    required_fields: [directions]
+    field_rules:
+      directions:
+        type: list
+        min_items: 3
+        each_requires: [pitch, core_loop, target_feel]
+
+  mechanics_v1:
+    required_fields: [player_verbs, progression, win_condition, lose_condition, signature_systems]
+    field_rules:
+      player_verbs:
+        type: list
+        min_items: 2
+      signature_systems:
+        type: list
+        min_items: 2
+
+  style_research_v1:
+    required_fields: [references, synthesis, palette, character_design, dont_do_this]
+    field_rules:
+      references:
+        type: list
+        min_items: 4
+      palette:
+        type: list
+        min_items: 5
+
+  laf_brief_v1:
+    required_fields: [palette, art_style, character_design, ui_direction, audio_tone, asset_references]
+
+  tech_plan_v1:
+    required_fields: [engine, file_layout, scene_list, input_model, game_loop, test_hook]
+
+  telemetry_spec_v1:
+    required_fields: [events, kpis, sink]
+    field_rules:
+      events:
+        type: list
+        min_items: 3
+
+  game_html_v1:
+    required_fields: [content]
+    field_rules:
+      content:
+        type: string
+        min_bytes: 1024
+
+  qa_report_v1:
+    required_fields: [verdict, issues, session_length_avg, death_rate_avg]
+    field_rules:
+      verdict:
+        type: enum
+        values: [PASS, FAIL, CONDITIONAL_PASS]
+
+  postmortem_v1:
+    required_fields: [goals_graded, summary, top_issues]
+    field_rules:
+      goals_graded:
+        type: list
+        min_items: 1
+
+  proposals_v1:
+    required_fields: [proposals]
+    field_rules:
+      proposals:
+        type: list
+        min_items: 3
+
+  publish_manifest_v1:
+    required_fields: [title, description, tags, screenshots, game_url]

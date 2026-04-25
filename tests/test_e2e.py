@@ -342,7 +342,8 @@ def test_budget_fields_on_spawn():
     resp = client.get(f"/api/agents/{instance_id}/cost")
     assert resp.status_code == 200
     data = resp.json()
-    assert data["budget_max_tokens"] == 200000
+    # Default budget is 2M tokens (config/agents.yaml defaults.budget_max_tokens)
+    assert data["budget_max_tokens"] == 2000000
     assert data["budget_max_usd"] == 1.0
 
 
@@ -587,6 +588,7 @@ def test_gate_list_approve_and_advance():
         "name": "Gate Test Project",
         "description": "",
         "tech_stack": "web",
+        "pipeline": None,
     }).json()
     project_id = project["id"]
 
@@ -642,6 +644,7 @@ def test_gate_revise_spawns_revision_and_rebinds():
         "name": "Gate Revise Project",
         "description": "",
         "tech_stack": "web",
+        "pipeline": None,
     }).json()
     project_id = project["id"]
 
@@ -693,6 +696,7 @@ def test_gate_revise_requires_feedback():
         "name": "Gate Feedback Guard",
         "description": "",
         "tech_stack": "web",
+        "pipeline": None,
     }).json()
     launch = client.post("/api/pipelines/phased-producer/run", json={
         "project_id": project["id"],
@@ -743,6 +747,7 @@ def test_gate_ready_broadcast_on_pipeline_advance(monkeypatch):
         "name": "Gate Broadcast Project",
         "description": "",
         "tech_stack": "web",
+        "pipeline": None,
     }).json()
     project_id = project["id"]
 
@@ -886,6 +891,7 @@ def test_tech_plan_tasks_created_and_wired_in_launch():
         "name": "Tech Plan Wiring",
         "description": "",
         "tech_stack": "web",
+        "pipeline": None,
     }).json()
 
     launch = client.post("/api/pipelines/phased-producer/run", json={
@@ -924,6 +930,7 @@ def test_non_pick_gate_approval_does_not_touch_game_html():
         "name": "No Promote Guard",
         "description": "",
         "tech_stack": "web",
+        "pipeline": None,
     }).json()
     pid = project["id"]
 
@@ -1077,6 +1084,7 @@ def test_style_research_wired_into_task_graph():
         "name": "Style Research Wiring",
         "description": "",
         "tech_stack": "web",
+        "pipeline": None,
     }).json()
 
     launch = client.post("/api/pipelines/phased-producer/run", json={
@@ -1159,12 +1167,12 @@ def test_cleanup_dry_run_does_not_delete(tmp_projects):
     tmp_path = tmp_projects
 
     empty = client.post("/api/projects", json={
-        "name": "dry run empty", "description": "", "tech_stack": "web",
+        "name": "dry run empty", "description": "", "tech_stack": "web", "pipeline": None,
     }).json()
 
     # A separate project with a task — should NOT be in candidates.
     kept = client.post("/api/projects", json={
-        "name": "dry run kept", "description": "", "tech_stack": "web",
+        "name": "dry run kept", "description": "", "tech_stack": "web", "pipeline": None,
     }).json()
     client.post("/api/tasks", json={"project_id": kept["id"], "title": "keep me"})
 
@@ -1188,14 +1196,14 @@ def test_cleanup_actual_sweep_deletes_empty_only(tmp_projects):
     tmp_path = tmp_projects
 
     empty = client.post("/api/projects", json={
-        "name": "sweep empty", "description": "", "tech_stack": "web",
+        "name": "sweep empty", "description": "", "tech_stack": "web", "pipeline": None,
     }).json()
     with_task = client.post("/api/projects", json={
-        "name": "sweep with task", "description": "", "tech_stack": "web",
+        "name": "sweep with task", "description": "", "tech_stack": "web", "pipeline": None,
     }).json()
     client.post("/api/tasks", json={"project_id": with_task["id"], "title": "real work"})
     with_mem = client.post("/api/projects", json={
-        "name": "sweep with memory", "description": "", "tech_stack": "web",
+        "name": "sweep with memory", "description": "", "tech_stack": "web", "pipeline": None,
     }).json()
     project_memory.write(with_mem["id"], mem_type="artifact", key="game_html_v1",
                          content="<html/>", created_by="test")
@@ -1218,10 +1226,10 @@ def test_cleanup_respects_keep_ids(tmp_projects):
     tmp_path = tmp_projects
 
     keep = client.post("/api/projects", json={
-        "name": "keep me", "description": "", "tech_stack": "web",
+        "name": "keep me", "description": "", "tech_stack": "web", "pipeline": None,
     }).json()
     sweep = client.post("/api/projects", json={
-        "name": "sweep me", "description": "", "tech_stack": "web",
+        "name": "sweep me", "description": "", "tech_stack": "web", "pipeline": None,
     }).json()
 
     resp = client.post(
@@ -1530,7 +1538,7 @@ def test_pipeline_creates_proposal_batch(tmp_projects):
     """Gated project + pipeline run → returns pending_roster_approval, no agent spawned."""
     pr = client.post("/api/projects", json={
         "name": "pipeline-gate", "description": "", "tech_stack": "web",
-        "require_roster_approval": True,
+        "require_roster_approval": True, "pipeline": None,
     }).json()
     pid = pr["id"]
 

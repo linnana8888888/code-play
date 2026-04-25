@@ -68,9 +68,16 @@ def test_iterate_artifact_templates_render_for_a_concrete_cycle():
 
 
 def test_phased_producer_expected_outputs_are_plain_strings():
-    """phased-producer is not cyclic — its keys should be static, no {{…}}."""
+    """phased-producer non-cyclic steps should have static keys, no {{…}}.
+
+    review_loop steps are intentionally cyclic (they track round numbers) and
+    are excluded from this check.
+    """
     pipelines = _load_pipelines()
     for step in pipelines["phased-producer"]["steps"]:
+        # review_loop steps are cyclic by design — they use {{review_round_n}}
+        if step.get("type") == "review_loop":
+            continue
         for entry in step.get("expected_outputs") or []:
             for v in entry.values():
                 if isinstance(v, str):

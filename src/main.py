@@ -1560,6 +1560,50 @@ _VERDICT_LINE_RE = re.compile(
     re.IGNORECASE | re.MULTILINE,
 )
 
+# CD verdict format: [CD-CONCEPT]: APPROVE | CONCERNS | REJECT
+_CD_VERDICT_RE = re.compile(
+    r"\[CD-[A-Z]+\]:\s*(APPROVE|CONCERNS|REJECT)(.*?)(?=\n|$)",
+    re.IGNORECASE,
+)
+
+# Map CD step id → (verdict_artifact_key_template, upstream_step_id)
+# For iterate_artifact, cd-proposal-check uses a templated key.
+_CD_STEP_MAP: dict[str, tuple[str, str | list[str]]] = {
+    "cd-concept-check":   ("cd_concept_verdict",   "concept"),
+    "cd-mechanics-check": ("cd_mechanics_verdict",  "mechanics"),
+    "cd-laf-check":       ("cd_laf_verdict",        "look-and-feel"),
+    "cd-proposal-check":  ("cd_iterate_verdict_{{iteration_tag}}", ["propose-designer", "propose-ux", "propose-artist", "propose-proto"]),
+}
+
+
+def _check_cd_verdict(project_id: str, verdict_key: str, db) -> tuple[str, str]:
+    """Read a CD verdict artifact from project memory and parse it.
+
+    Returns (verdict, reason) where verdict is one of:
+      'APPROVE', 'CONCERNS', 'REJECT'
+    and reason is the explanation text (may be empty).
+    Falls back to 'APPROVE' if the artifact is missing or unparseable.
+    """
+    text = project_memory.read(project_id, "artifact", verdict_key)
+    if not text:
+        logger.warning("[%s] CD verdict artifact '%s' missing — treating as APPROVE", project_id, verdict_key)
+        return "APPROVE", ""
+
+    match = _CD_VERDICT_RE.search(text)
+    if not match:
+        logger.warning("[%s] CD verdict artifact '%s' has no parseable verdict — treating as APPROVE", project_id, verdict_key)
+        return "APPROVE", ""
+
+    verdict = match.group(1).upper()
+    reason = match.group(2).strip().lstrip(":").strip()
+    # If reason is empty, try to extract the rest of the line or next sentence
+    if not reason:
+        # Grab everything after the verdict line for context
+        after = text[match.end():].strip()
+        if after:
+            reason = after.split("\n")[0].strip()[:200]
+    return verdict, reason
+
 
 def _parse_verdict(text: str | None) -> str:
     """Extract a normalized verdict from review artifact text.
@@ -1861,6 +1905,399 @@ async def _maybe_resolve_review_loops(project_id: str, pipeline_specs: dict) -> 
                 })
 
 
+async def _maybe_apply_playtest_revise(project_id: str, pipeline_specs: dict) -> None:
+    """Auto-REVISE the iteration cycle when the playtest quality gate fails.
+
+    If `playtest_revise_{tag}` exists in memory (written by run_playtest_batch
+    when thresholds fail), auto-complete any pending human gate that follows
+    the playtest step and inject a REVISE context for the implement/fix agent.
+    This skips the human gate and sends the cycle straight to the implement step.
+    """
+    all_tasks = task_queue.list_tasks(project_id=project_id)
+
+    for pname, pspec in pipeline_specs.items():
+        if not pspec.get("cyclic"):
+            continue
+        steps = pspec.get("steps", []) or []
+
+        # Find completed playtest tasks
+        playtest_title = f"[{pname}] playtest"
+        playtest_tasks = [
+            t for t in all_tasks
+            if t.title == playtest_title and t.status == TaskStatus.COMPLETED
+        ]
+
+        for playtest_task in playtest_tasks:
+            md = playtest_task.metadata or {}
+            iteration_tag = md.get("iteration_tag")
+            cycle_n = md.get("cycle_n")
+            if not iteration_tag:
+                continue
+
+            # Check if a revise signal exists for this iteration
+            revise_signal_raw = project_memory.read(
+                project_id, "artifact", f"playtest_revise_{iteration_tag}"
+            )
+            if not revise_signal_raw:
+                continue
+
+            try:
+                revise_signal = json.loads(revise_signal_raw)
+            except (ValueError, TypeError):
+                continue
+
+            if not revise_signal.get("auto_revise"):
+                continue
+
+            reason = revise_signal.get("reason", "Playtest quality gate failed")
+
+            # Find the pending human gate that follows the postmortem step
+            # (synthesis_gate in iterate_artifact pipeline)
+            synthesis_gate_title = f"[{pname}] synthesis_gate"
+            pending_gates = [
+                t for t in all_tasks
+                if t.title == synthesis_gate_title
+                and t.status == TaskStatus.PENDING
+                and (t.metadata or {}).get("iteration_tag") == iteration_tag
+            ]
+
+            if not pending_gates:
+                # Gate may not be ready yet or already processed — skip
+                continue
+
+            gate_task = pending_gates[0]
+
+            # Check if this gate has already been auto-processed
+            if (gate_task.result or {}).get("auto_revise_applied"):
+                continue
+
+            # Check if all dependencies of the gate are complete
+            deps_complete = all(
+                (dep := task_queue.get(dep_id)) and dep.status == TaskStatus.COMPLETED
+                for dep_id in (gate_task.depends_on or [])
+            )
+            if not deps_complete:
+                continue
+
+            logger.warning(
+                "[%s] Playtest auto-REVISE for %s: %s",
+                project_id, iteration_tag, reason,
+            )
+
+            # Write the failure reason to memory so the implement agent sees it
+            project_memory.write(
+                project_id,
+                mem_type="artifact",
+                key=f"playtest_revise_context_{iteration_tag}",
+                content=json.dumps({
+                    "auto_revise": True,
+                    "reason": reason,
+                    "instruction": (
+                        f"Playtest auto-REVISE: {reason}. "
+                        "Fix the game to improve session length and/or reduce death rate. "
+                        "Focus on: difficulty curve, level 1 pacing, player feedback."
+                    ),
+                }, indent=2),
+                created_by=f"pipeline:{pname}:playtest_gate",
+            )
+
+            # Auto-complete the synthesis gate with a REVISE decision
+            # so the implement step gets triggered with the failure context
+            auto_result = {
+                "decision": "auto_revise",
+                "feedback": (
+                    f"[AUTO-REVISE] Playtest quality gate failed: {reason}. "
+                    "Skipping human review. Implement fixes to address the failure."
+                ),
+                "auto_revise_applied": True,
+                "playtest_gate_reason": reason,
+            }
+            task_queue.update_status(gate_task.id, TaskStatus.COMPLETED, result=auto_result)
+
+            await ws_manager.broadcast({
+                "type": "playtest_auto_revise",
+                "data": {
+                    "project_id": project_id,
+                    "pipeline": pname,
+                    "iteration_tag": iteration_tag,
+                    "gate_task_id": gate_task.id,
+                    "reason": reason,
+                },
+            })
+
+
+async def _maybe_enforce_cd_verdicts(project_id: str, pipeline_specs: dict) -> None:
+    """Check completed CD steps and enforce REJECT verdicts by re-queuing upstream agents.
+
+    For each CD step that has completed without a `cd_verdict_enforced` metadata flag:
+      - APPROVE / CONCERNS: mark enforced, continue.
+      - REJECT (< 2 prior rejections): re-queue the upstream agent step with
+        cd_reject_count incremented and a revision note.
+      - REJECT (>= 2 prior rejections): convert the next human gate to an
+        escalation gate.
+    """
+    all_tasks = task_queue.list_tasks(project_id=project_id)
+
+    for pname, pspec in pipeline_specs.items():
+        steps = pspec.get("steps", []) or []
+        for step in steps:
+            step_id = step.get("id", "")
+            if step_id not in _CD_STEP_MAP:
+                continue
+
+            verdict_key_tpl, upstream_step_or_steps = _CD_STEP_MAP[step_id]
+            step_title = f"[{pname}] {step_id}"
+
+            # Find completed CD tasks not yet enforced
+            candidates = [
+                t for t in all_tasks
+                if t.title == step_title
+                and t.status == TaskStatus.COMPLETED
+                and not (t.metadata or {}).get("cd_verdict_enforced")
+            ]
+
+            for cd_task in candidates:
+                md = cd_task.metadata or {}
+                iteration_tag = md.get("iteration_tag")
+                cycle_n = md.get("cycle_n")
+
+                # Resolve templated verdict key
+                verdict_key = verdict_key_tpl
+                if iteration_tag:
+                    verdict_key = verdict_key.replace("{{iteration_tag}}", str(iteration_tag))
+
+                with get_studio_db() as db:
+                    verdict, reason = _check_cd_verdict(project_id, verdict_key, db)
+
+                # Mark enforced regardless of verdict so we don't re-process
+                task_queue.merge_metadata(cd_task.id, {"cd_verdict_enforced": True, "cd_verdict": verdict})
+
+                if verdict in ("APPROVE", "CONCERNS"):
+                    logger.info(
+                        "[%s] CD step '%s' verdict: %s — continuing pipeline",
+                        project_id, step_id, verdict,
+                    )
+                    continue
+
+                # REJECT path
+                reject_count = int(md.get("cd_reject_count", 0))
+                logger.warning(
+                    "[%s] CD step '%s' REJECT (count=%d): %s",
+                    project_id, step_id, reject_count, reason,
+                )
+
+                upstream_steps = (
+                    upstream_step_or_steps
+                    if isinstance(upstream_step_or_steps, list)
+                    else [upstream_step_or_steps]
+                )
+
+                if reject_count < 2:
+                    # Re-queue the upstream agent step(s). For multi-upstream
+                    # CD steps (e.g. cd-proposal-check with 4 propose-* steps),
+                    # create all revision tasks first, then a single new CD
+                    # task that depends on every revision. This keeps the
+                    # fan-in structure identical to the original pipeline.
+                    revision_task_ids: list[str] = []
+                    revised_upstream_ids: list[str] = []
+                    for upstream_id in upstream_steps:
+                        upstream_title = f"[{pname}] {upstream_id}"
+                        # Find the most recent completed upstream task for this cycle
+                        upstream_candidates = [
+                            t for t in all_tasks
+                            if t.title == upstream_title
+                            and t.status == TaskStatus.COMPLETED
+                        ]
+                        if not upstream_candidates:
+                            logger.warning(
+                                "[%s] CD REJECT: upstream step '%s' not found — cannot re-queue",
+                                project_id, upstream_id,
+                            )
+                            continue
+
+                        upstream_task = max(
+                            upstream_candidates,
+                            key=lambda t: t.updated_at or t.created_at or datetime.min,
+                        )
+                        upstream_step_spec = next(
+                            (s for s in steps if s.get("id") == upstream_id), {}
+                        )
+                        upstream_agent = upstream_step_spec.get("agent")
+                        if not upstream_agent:
+                            logger.warning(
+                                "[%s] CD REJECT: upstream step '%s' has no agent — cannot re-queue",
+                                project_id, upstream_id,
+                            )
+                            continue
+
+                        revision_desc = (
+                            (upstream_task.description or "") +
+                            f"\n\n[CD REVISION REQUEST — attempt {reject_count + 1}/2]\n"
+                            f"CD rejected: {reason} — please revise"
+                        )
+                        new_upstream_md = dict(md)
+                        new_upstream_md["cd_reject_count"] = reject_count + 1
+                        new_upstream_md["cd_reject_reason"] = reason
+
+                        # Re-use the original expected_outputs contract
+                        step_expected = substitute_expected_outputs(
+                            upstream_step_spec.get("expected_outputs"),
+                            iteration_tag=iteration_tag,
+                            cycle_n=cycle_n,
+                        )
+
+                        revision_task = task_queue.create(TaskCreate(
+                            project_id=project_id,
+                            title=f"[{pname}] {upstream_id}",
+                            description=revision_desc,
+                            depends_on=[cd_task.id],
+                            created_by=f"pipeline:{pname}",
+                            assignee_type=upstream_agent,
+                            metadata=new_upstream_md,
+                            expected_outputs=step_expected,
+                        ))
+                        revision_task_ids.append(revision_task.id)
+                        revised_upstream_ids.append(upstream_id)
+
+                    if not revision_task_ids:
+                        logger.warning(
+                            "[%s] CD REJECT: no upstream revisions created — skipping",
+                            project_id,
+                        )
+                        continue
+
+                    # Create exactly one new CD task that depends on all revisions.
+                    new_cd_md = dict(md)
+                    new_cd_md["cd_reject_count"] = reject_count + 1
+                    new_cd_step_expected = substitute_expected_outputs(
+                        step.get("expected_outputs"),
+                        iteration_tag=iteration_tag,
+                        cycle_n=cycle_n,
+                    )
+                    new_cd_task = task_queue.create(TaskCreate(
+                        project_id=project_id,
+                        title=step_title,
+                        description=step.get("task", ""),
+                        depends_on=list(revision_task_ids),
+                        created_by=f"pipeline:{pname}",
+                        assignee_type=step.get("agent"),
+                        metadata=new_cd_md,
+                        expected_outputs=new_cd_step_expected,
+                    ))
+
+                    # Rewire downstream dependents of the old CD task to the new CD task.
+                    # Do this once, after the new CD task exists.
+                    excluded = set(revision_task_ids) | {new_cd_task.id}
+                    for dep_id in task_queue._find_dependents(cd_task.id, project_id):
+                        if dep_id in excluded:
+                            continue
+                        task_queue.replace_dependency(dep_id, cd_task.id, new_cd_task.id)
+
+                    logger.info(
+                        "[%s] CD REJECT: re-queued %d upstream step(s) %s as tasks %s; new CD task %s (reject_count=%d)",
+                        project_id,
+                        len(revised_upstream_ids),
+                        revised_upstream_ids,
+                        revision_task_ids,
+                        new_cd_task.id,
+                        reject_count + 1,
+                    )
+                    await ws_manager.broadcast({
+                        "type": "cd_reject_requeue",
+                        "data": {
+                            "project_id": project_id,
+                            "pipeline": pname,
+                            "cd_step": step_id,
+                            "upstream_steps": revised_upstream_ids,
+                            "revision_task_ids": revision_task_ids,
+                            "new_cd_task_id": new_cd_task.id,
+                            "reject_count": reject_count + 1,
+                            "reason": reason,
+                        },
+                    })
+
+                else:
+                    # >= 2 rejections: escalate to human gate
+                    # Find the next human gate downstream of this CD step
+                    downstream_gate = None
+                    for dep_id in task_queue._find_dependents(cd_task.id, project_id):
+                        dep = task_queue.get(dep_id)
+                        if dep and dep.status == TaskStatus.PENDING:
+                            dep_ctx = _gate_context(dep)
+                            if dep_ctx:  # it's a human gate
+                                downstream_gate = dep
+                                break
+
+                    escalation_msg = (
+                        f"CD rejected twice: {reason} — human review required\n\n"
+                        f"The CD step '{step_id}' has rejected this work {reject_count + 1} times. "
+                        "Please review the creative direction and either:\n"
+                        "  [approve] Override CD and proceed with current work\n"
+                        "  [revise] Provide specific direction for the agent to follow\n"
+                        "  [halt] Stop this pipeline branch"
+                    )
+
+                    if downstream_gate:
+                        # Convert the existing gate to an escalation gate
+                        task_queue.merge_metadata(
+                            downstream_gate.id,
+                            {
+                                "escalation_gate": True,
+                                "escalation_reason": escalation_msg,
+                                "cd_step": step_id,
+                                "cd_reject_count": reject_count + 1,
+                            },
+                        )
+                        logger.warning(
+                            "[%s] CD REJECT x2: escalated gate %s for step '%s'",
+                            project_id, downstream_gate.id, step_id,
+                        )
+                        await ws_manager.broadcast({
+                            "type": "cd_escalation_gate",
+                            "data": {
+                                "project_id": project_id,
+                                "pipeline": pname,
+                                "cd_step": step_id,
+                                "gate_task_id": downstream_gate.id,
+                                "reject_count": reject_count + 1,
+                                "reason": reason,
+                                "message": escalation_msg,
+                            },
+                        })
+                    else:
+                        # No downstream gate found — create a new escalation gate
+                        esc_gate = task_queue.create(TaskCreate(
+                            project_id=project_id,
+                            title=f"[{pname}] cd-escalation-gate",
+                            description=escalation_msg,
+                            depends_on=[cd_task.id],
+                            created_by=f"pipeline:{pname}",
+                            metadata={
+                                **md,
+                                "escalation_gate": True,
+                                "escalation_reason": escalation_msg,
+                                "cd_step": step_id,
+                                "cd_reject_count": reject_count + 1,
+                            },
+                        ))
+                        logger.warning(
+                            "[%s] CD REJECT x2: created escalation gate %s for step '%s'",
+                            project_id, esc_gate.id, step_id,
+                        )
+                        await ws_manager.broadcast({
+                            "type": "cd_escalation_gate",
+                            "data": {
+                                "project_id": project_id,
+                                "pipeline": pname,
+                                "cd_step": step_id,
+                                "gate_task_id": esc_gate.id,
+                                "reject_count": reject_count + 1,
+                                "reason": reason,
+                                "message": escalation_msg,
+                            },
+                        })
+
+
 async def _advance_pipeline(project_id: str):
     """Spawn agents for any newly-ready pipeline tasks."""
     pipeline_specs = _load_pipelines_yaml().get("pipelines", {}) or {}
@@ -1871,6 +2308,19 @@ async def _advance_pipeline(project_id: str):
         await _maybe_resolve_review_loops(project_id, pipeline_specs)
     except Exception as exc:
         logger.warning(f"review-loop resolution failed for {project_id}: {exc}")
+
+    # Enforce CD verdicts: re-queue upstream on REJECT, escalate after 2 rejections.
+    try:
+        await _maybe_enforce_cd_verdicts(project_id, pipeline_specs)
+    except Exception as exc:
+        logger.warning(f"CD verdict enforcement failed for {project_id}: {exc}")
+
+    # Playtest hard gate: if playtest_revise_{tag} exists, auto-skip human gate
+    # and inject a REVISE context for the implement/fix agent.
+    try:
+        await _maybe_apply_playtest_revise(project_id, pipeline_specs)
+    except Exception as exc:
+        logger.warning(f"Playtest revise check failed for {project_id}: {exc}")
 
     # Cyclic pipelines relaunch their first step once their terminal step
     # completes — do this BEFORE resolving ready tasks so the new first-step

@@ -27,7 +27,7 @@ class ProjectCreate(BaseModel):
     tech_stack: str = "threejs"
     create_repo: bool = False
     require_roster_approval: bool = True  # new projects default ON; back-compat handled at migration level
-    pipeline: str = "phased-producer"
+    pipeline: str | None = "phased-producer"
     auto_iterate: bool = False
     game_slug: str | None = None
     repo_url: str | None = None

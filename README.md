@@ -57,11 +57,16 @@ Full visual diagrams: [`docs/flowcharts/index.html`](docs/flowcharts/index.html)
 
 | Title | Codename | Live URL |
 |-------|----------|----------|
-| Cheekshot | butt-shooting-game v4 (latest shipped) | [itch.io](https://linnana8888888.itch.io/cheekshot) |
+| Cheekshot | butt-shooting-game v4 (latest itch build) | [itch.io](https://linnana8888888.itch.io/cheekshot) |
 | Cheekshot | butt-shooting-game v3 | [itch.io](https://linnana8888888.itch.io/cheekshot) |
 | Roblox Smoke Test | roblox-smoke-test v1 | [Roblox](https://www.roblox.com/games/126715565755517) (private) |
 
-In-development: `butt-shooting-game v6.1` (mobile-responsive HUD + on-screen joystick, iOS AudioContext fix) on `main`. Full iteration infra (GOALS.md, playtest bot, telemetry) live.
+**Post-v4 builds on `main` (unpublished):**
+- `v6.1` — mobile-responsive HUD + on-screen joystick, iOS AudioContext fix
+- `v7` (aesthetic levels) — per-level skydome + floor shaders, screen flash/shake/vignette, Toxic Swamp (L4) + Void Dimension (L5)
+- `v8` (session time + satisfaction) — continue screen (10s countdown, 50% HP respawn), end-of-run stats card, 10 localStorage achievements, tiered combo audio, wave progression + local leaderboard, Kenney Nature Kit scenery, 3D backdrop (replaces skydome), boss progression fix
+
+Latest `main` @ `8f480f9` merges PR #3 (v8). Next cycle: itch re-publish via the idempotent publisher.
 
 ## The agents
 

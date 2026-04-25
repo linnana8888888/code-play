@@ -4,7 +4,7 @@ status: active
 source:
   kind: external
   repo: https://github.com/linnana8888888/butt-shooting-game
-  default_branch_ref: 2cb373a  # main fast-forwarded to v4 on 2026-04-19
+  default_branch_ref: 8f480f9  # main fast-forwarded to v8 on 2026-04-25
 versions:
   - label: v2
     ref: eb4b0da
@@ -57,13 +57,54 @@ versions:
     ref: d09f232
     branch: main
     entry: index.html
-    status: active
+    status: superseded
     released_at: null
     notes: |
       v5: mobile-friendly HUD + on-screen joystick + fire/reload/stomp buttons.
       v6: responsive mobile browser adaptation — scaled touch controls, phone/landscape breakpoints.
       v6.1: AudioContext resume fix for iOS Safari.
       Full iteration infrastructure: GOALS.md (6 targets), playtest_bot.mjs, telemetry/, ITERATION_CONTRACT.md.
+      Superseded by v7 (aesthetic levels) merged into main via PR #2 on 2026-04-25.
+    published:
+      itch:     null
+      gh_pages: null
+      roblox:   null
+
+  - label: v7
+    ref: 29f3a39
+    branch: v7-aesthetic-levels
+    entry: index.html
+    status: released
+    released_at: 2026-04-25
+    notes: |
+      v7 aesthetic pass — distinct per-level visuals via shaders + new content. Additive, backward-compatible with v6 loop.
+      - Gradient skydome shader (SkyDome class, vertex+fragment shaders; per-level topColor/bottomColor uniforms)
+      - Procedural floor shader (makeFloorMaterial per kind, 32×32 UV segments)
+      - Screen flash + camera shake + vignette (juice.mjs)
+      - New levels: Toxic Swamp (L4) + Void Dimension (L5)
+      Merged to main via PR #2. No itch publish.
+    published:
+      itch:     null
+      gh_pages: null
+      roblox:   null
+
+  - label: v8
+    ref: bcf0d5b
+    branch: v8
+    entry: index.html
+    status: active
+    released_at: 2026-04-25
+    notes: |
+      v8 "Session Time & Satisfaction" — target avg session 1.5min → 5+ min.
+      - Continue screen: 10s countdown on death, respawn @ 50% HP + 2s i-frames + −30% score, 1 continue per run
+      - End-of-run stats card (time survived, accuracy %, kills, best combo, hi-score) on game-over + win
+      - 10 achievements via localStorage with toast notifications (First Blood, Sharpshooter, Combo Master, Survivor, Boss Slayer, Sewer Diver, Century, Void Walker, Mega Slayer, Second Wind)
+      - Tiered combo audio (x2 bell → x3 two-note → x4 triangle fanfare → x5 chord+noise+sparkle)
+      - Wave progression + expanded screen shake + local leaderboard
+      - Kenney Nature Kit per-level background scenery
+      - Boss progression bug fix + skydome replaced with 3D backdrop
+      Files: index.html, game.mjs, audio.mjs, achievements.mjs (new), backdrop.mjs (new).
+      Merged to main via PR #3. No itch publish yet.
     published:
       itch:     null
       gh_pages: null

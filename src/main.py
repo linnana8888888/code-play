@@ -23,7 +23,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from src.settings import settings
-from src.database import init_studio_db, init_project_db, get_studio_db, get_project_db
+from src.database import init_studio_db, init_project_db, get_studio_db, get_project_db, get_project_async_lock
 from src.game_registry import list_games as _list_games, get_game as _get_game, get_active_version
 from src.game_resolver import resolve_game_repo
 from src.models.projects import Project, ProjectCreate
@@ -2424,7 +2424,18 @@ async def _maybe_enforce_cd_verdicts(project_id: str, pipeline_specs: dict) -> N
 
 
 async def _advance_pipeline(project_id: str):
-    """Spawn agents for any newly-ready pipeline tasks."""
+    """Spawn agents for any newly-ready pipeline tasks.
+
+    Acquires a per-project async lock so that concurrent completions for the
+    same project are serialised (preventing double-spawns), while different
+    projects can advance their pipelines in parallel.
+    """
+    async with get_project_async_lock(project_id):
+        await _advance_pipeline_locked(project_id)
+
+
+async def _advance_pipeline_locked(project_id: str):
+    """Inner (already-locked) implementation of _advance_pipeline."""
     pipeline_specs = _load_pipelines_yaml().get("pipelines", {}) or {}
 
     # Resolve any completed review_loop tasks BEFORE relaunch / ready-task
@@ -3188,6 +3199,31 @@ class PipelineRunBody(BaseModel):
     force: bool = False
 
 
+# Maximum number of projects that may have active (non-terminal) pipeline tasks
+# at the same time.  Callers that exceed this cap receive HTTP 429.
+MAX_CONCURRENT_PROJECTS = 3
+
+
+async def _count_active_pipeline_runs() -> int:
+    """Count distinct projects that have at least one *assigned* task.
+
+    A project counts as an active pipeline run only when an agent has been
+    dispatched to work on it (status='assigned').  Projects whose tasks are
+    all still 'pending' are queued but not yet consuming agent capacity, so
+    they do not count toward the concurrency cap.  This prevents test-suite
+    isolation issues where earlier tests leave pending tasks in the shared DB.
+    """
+    with get_studio_db() as db:
+        row = db.execute(
+            """
+            SELECT COUNT(DISTINCT project_id) AS cnt
+            FROM tasks
+            WHERE status = 'assigned'
+            """
+        ).fetchone()
+    return row["cnt"] if row else 0
+
+
 @app.post("/api/pipelines/{pipeline_name}/run")
 async def run_pipeline(pipeline_name: str, body: PipelineRunBody):
     """Launch a predefined pipeline for a project.
@@ -3202,6 +3238,23 @@ async def run_pipeline(pipeline_name: str, body: PipelineRunBody):
     pipeline = data.get("pipelines", {}).get(pipeline_name)
     if not pipeline:
         raise HTTPException(404, f"Pipeline '{pipeline_name}' not found")
+
+    # Enforce the concurrent-project cap.  Count active projects; if we are
+    # already at the limit AND this project is not itself already active
+    # (re-launching an in-progress project is allowed), reject with 429.
+    active_count = await _count_active_pipeline_runs()
+    if active_count >= MAX_CONCURRENT_PROJECTS:
+        # Check whether this project is already one of the active ones
+        with get_studio_db() as db:
+            already_active = db.execute(
+                "SELECT 1 FROM tasks WHERE project_id = ? AND status = 'assigned' LIMIT 1",
+                (project_id,),
+            ).fetchone()
+        if not already_active:
+            raise HTTPException(
+                429,
+                "Maximum concurrent projects reached (3). Wait for an existing run to complete.",
+            )
 
     if not body.force:
         health = await get_project_health(project_id)
@@ -4330,6 +4383,48 @@ async def reject_single_proposal(proposal_id: str, body: SingleDecision):
     if not p:
         raise HTTPException(404, "Proposal not found or not pending")
     return {"status": "rejected", "proposal_id": proposal_id}
+
+
+# ==================== Agent Peer Review ====================
+
+
+@app.post("/api/projects/{project_id}/peer-review")
+async def request_peer_review(project_id: str, body: dict):
+    """Agent requests a peer review. Body: {from_agent, to_agent, question, context}"""
+    from_agent = body.get("from_agent")
+    to_agent = body.get("to_agent")
+    question = body.get("question")
+    context = body.get("context", "")
+
+    if not from_agent or not to_agent or not question:
+        raise HTTPException(400, "from_agent, to_agent, and question are required")
+
+    request_id = await message_bus.request_peer_review(
+        project_id=project_id,
+        from_agent=from_agent,
+        to_agent=to_agent,
+        question=question,
+        context=context,
+    )
+    return {"request_id": request_id}
+
+
+@app.post("/api/projects/{project_id}/peer-review/{request_id}/respond")
+async def respond_peer_review(project_id: str, request_id: str, body: dict):
+    """Agent responds to a peer review. Body: {from_agent, response}"""
+    from_agent = body.get("from_agent")
+    response = body.get("response")
+
+    if not from_agent or response is None:
+        raise HTTPException(400, "from_agent and response are required")
+
+    await message_bus.post_peer_review_response(
+        project_id=project_id,
+        request_id=request_id,
+        from_agent=from_agent,
+        response=response,
+    )
+    return {"status": "ok", "request_id": request_id}
 
 
 # ==================== Dashboard Stats ====================

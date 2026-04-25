@@ -966,6 +966,34 @@ class ToolExecutor:
             },
         })
 
+        # fetch_itch_feedback — scrape public comments + rating from an itch.io game page
+        self._register("fetch_itch_feedback", self._tool_fetch_itch_feedback, {
+            "name": "fetch_itch_feedback",
+            "description": (
+                "Fetch public player comments and aggregate rating from an itch.io game page. "
+                "No auth required — public pages only. Returns: "
+                "{url, fetched_at, rating: {avg_rating, rating_count}|null, "
+                "comments: [{author, text, posted_at, rating}], comment_count, error}. "
+                "Always returns a dict — errors are in the 'error' field, never raised. "
+                "Use after a game is published to itch.io to seed the player feedback loop."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "itch_url": {
+                        "type": "string",
+                        "description": "Full itch.io game page URL, e.g. https://username.itch.io/game-slug",
+                    },
+                    "max_comments": {
+                        "type": "integer",
+                        "description": "Max comments to return (default 20)",
+                        "default": 20,
+                    },
+                },
+                "required": ["itch_url"],
+            },
+        })
+
         # report_completion — structured signal for worker completion protocol
         self._register("report_completion", self._tool_report_completion, {
             "name": "report_completion",
@@ -2477,6 +2505,68 @@ const { chromium } = require('playwright');
         if not str(resolved).startswith(str(base_resolved)):
             raise PermissionError(f"Path traversal blocked: {relative}")
         return resolved
+
+    # --- fetch_itch_feedback handler ---
+
+    async def _tool_fetch_itch_feedback(self, args: dict, **ctx) -> dict:
+        """Fetch public player comments and aggregate rating from an itch.io game page."""
+        import re as _re
+        from datetime import datetime, timezone
+
+        itch_url: str = args["itch_url"]
+        max_comments: int = int(args.get("max_comments", 20))
+        fetched_at = datetime.now(timezone.utc).isoformat()
+
+        try:
+            import urllib.request
+            import html
+
+            req = urllib.request.Request(
+                itch_url,
+                headers={"User-Agent": "Mozilla/5.0 (compatible; code-play/1.0)"},
+            )
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                body = resp.read().decode("utf-8", errors="replace")
+
+            # Extract aggregate rating
+            rating = None
+            avg_m = _re.search(r'itemprop="ratingValue"[^>]*>([\d.]+)', body)
+            cnt_m = _re.search(r'itemprop="ratingCount"[^>]*>([\d,]+)', body)
+            if avg_m:
+                rating = {
+                    "avg_rating": float(avg_m.group(1)),
+                    "rating_count": int(cnt_m.group(1).replace(",", "")) if cnt_m else 0,
+                }
+
+            # Extract comments (basic scrape — itch.io comment structure)
+            comments: list[dict] = []
+            comment_blocks = _re.findall(
+                r'<div class="post_body"[^>]*>(.*?)</div>\s*</div>',
+                body,
+                _re.DOTALL,
+            )[:max_comments]
+            for block in comment_blocks:
+                text = html.unescape(_re.sub(r"<[^>]+>", " ", block)).strip()
+                if text:
+                    comments.append({"author": "unknown", "text": text[:500], "posted_at": None, "rating": None})
+
+            return {
+                "url": itch_url,
+                "fetched_at": fetched_at,
+                "rating": rating,
+                "comments": comments,
+                "comment_count": len(comments),
+                "error": None,
+            }
+        except Exception as exc:
+            return {
+                "url": itch_url,
+                "fetched_at": fetched_at,
+                "rating": None,
+                "comments": [],
+                "comment_count": 0,
+                "error": str(exc),
+            }
 
     # --- report_completion handler ---
 

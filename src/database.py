@@ -1,12 +1,47 @@
 """SQLite database management for tasks, messages, and project memory."""
 
+import asyncio
 import sqlite3
+import threading
 import json
+from collections import defaultdict
 from pathlib import Path
 from contextlib import contextmanager
 from datetime import datetime, timezone
 
 from src.settings import settings
+
+# ---------------------------------------------------------------------------
+# Per-project locking — allows concurrent runs across different projects
+# without blocking unrelated projects on a single global lock.
+# ---------------------------------------------------------------------------
+
+_project_locks: dict[str, threading.Lock] = defaultdict(threading.Lock)
+
+
+def get_project_lock(project_id: str) -> threading.Lock:
+    """Return the threading.Lock for *project_id*.
+
+    Creates one on first access (defaultdict semantics).  The same object is
+    returned on every subsequent call for the same id, so callers can safely
+    use it as a context-manager across threads.
+    """
+    return _project_locks[project_id]
+
+
+_project_async_locks: dict[str, asyncio.Lock] = {}
+
+
+def get_project_async_lock(project_id: str) -> asyncio.Lock:
+    """Return the asyncio.Lock for *project_id*.
+
+    Must be called from within an async context (or at least from the thread
+    that owns the running event loop) so that the Lock is bound to the correct
+    loop.  Returns the same object for repeated calls with the same id.
+    """
+    if project_id not in _project_async_locks:
+        _project_async_locks[project_id] = asyncio.Lock()
+    return _project_async_locks[project_id]
 
 
 def _db_dir() -> Path:

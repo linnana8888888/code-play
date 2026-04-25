@@ -76,6 +76,26 @@
   .node.analytics       { background: #2d1a2d; border-color: #ec4899; color: #f9a8d4; }
   .node.hud-designer    { background: #2d2a1a; border-color: #eab308; color: #fef08a; }
   .node.game-designer-iter { background: #1a2744; border-color: #3b82f6; color: #93c5fd; }
+  .node.producer        { background: #2d2418; border-color: #d97706; color: #fbbf24; }
+  .node.mechanic-res    { background: #2d2a1a; border-color: #f97316; color: #fed7aa; }
+  .node.peer-review     { background: #1a1f2e; border-color: #64748b; color: #cbd5e1; border-style: dashed; }
+  .node.rollback        { background: #2d1a1a; border-color: #b91c1c; color: #fca5a5; }
+  .node.lesson-store    { background: #2a1a2d; border-color: #a21caf; color: #f0abfc; }
+  .node.regression      { background: #1a2d2d; border-color: #0d9488; color: #5eead4; }
+
+  /* Governance rail */
+  .rail {
+    background: #11151d;
+    border: 1px solid #1e2535;
+    border-radius: 8px;
+    padding: 10px 14px;
+    margin: 14px 0;
+    font-size: 11px;
+    color: #94a3b8;
+    max-width: 600px;
+  }
+  .rail strong { color: #e2e8f0; font-weight: 600; }
+  .rail .tag { display: inline-block; background: #1e2535; border: 1px solid #334155; border-radius: 4px; padding: 1px 6px; margin: 0 3px; font-size: 10px; color: #cbd5e1; }
 
   /* Arrows */
   .arrow { display: flex; justify-content: center; align-items: center; height: 20px; color: #334155; font-size: 14px; }
@@ -162,14 +182,25 @@
 <!-- ═══════════════════════════════════════════════════════ NEW GAME PIPELINE -->
 <div id="new-game" class="panel active">
   <h2>New Game Pipeline — phased-producer</h2>
-  <p class="subtitle">Concept → Mechanics → Style → Look &amp; Feel → Tech Plan → Build → QA → Review → Publish</p>
+  <p class="subtitle">Producer Orchestrator → Concept → Mechanics → Research (parallel) → Look &amp; Feel → Tech Plan → Build → QA → Review → Publish</p>
+
+  <div class="rail">
+    <strong>Governance rail (every agent step):</strong>
+    <span class="tag">schema hard-block</span>
+    <span class="tag">cross-game lessons injected</span>
+    <span class="tag">peer review on-request</span>
+    <span class="tag">producer live status → WS feed</span>
+    <span class="tag">project lock (max 3 concurrent)</span>
+  </div>
 
   <div class="legend">
+    <div class="legend-item"><div class="legend-dot" style="background:#d97706"></div> producer (orchestrator)</div>
     <div class="legend-item"><div class="legend-dot" style="background:#3b82f6"></div> game-designer</div>
     <div class="legend-item"><div class="legend-dot" style="background:#a855f7"></div> creative-director (Opus)</div>
     <div class="legend-item"><div class="legend-dot" style="background:#22c55e"></div> human gate</div>
     <div class="legend-item"><div class="legend-dot" style="background:#f59e0b"></div> technical-artist</div>
     <div class="legend-item"><div class="legend-dot" style="background:#fb923c"></div> style-researcher</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#f97316"></div> mechanic-researcher</div>
     <div class="legend-item"><div class="legend-dot" style="background:#0ea5e9"></div> tech-lead</div>
     <div class="legend-item"><div class="legend-dot" style="background:#38bdf8"></div> frontend-developer</div>
     <div class="legend-item"><div class="legend-dot" style="background:#14b8a6"></div> qa-engineer</div>
@@ -177,17 +208,33 @@
     <div class="legend-item"><div class="legend-dot" style="background:#475569"></div> handoff-summarizer</div>
     <div class="legend-item"><div class="legend-dot" style="background:#8b5cf6"></div> telemetry-engineer</div>
     <div class="legend-item"><div class="legend-dot" style="background:#6366f1"></div> code-reviewer</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#64748b"></div> peer-review (any→any)</div>
     <div class="legend-item"><div class="legend-dot" style="background:#06b6d4"></div> rapid-prototyper</div>
     <div class="legend-item"><div class="legend-dot" style="background:#ef4444"></div> publisher</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#b91c1c"></div> rollback</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#a21caf"></div> agent-lessons store</div>
   </div>
 
   <div class="flow-wrapper">
   <div class="flow-inner">
 
+    <!-- ENTRY -->
+    <div class="phase-label">── pipeline entry ──</div>
+    <div class="row">
+      <div class="node producer">Acquire Project Lock<span class="agent-label">producer-orchestrator</span><span class="artifact-label">queues if ≥3 running</span></div>
+    </div>
+    <div class="connector"></div>
+    <div class="row">
+      <div class="node lesson-store">Load Cross-Game Lessons<span class="agent-label">agent_lessons.py</span><span class="artifact-label">injected into agent prompts</span></div>
+    </div>
+
+    <div class="connector"></div>
+    <hr class="section-divider">
+
     <!-- CONCEPT PHASE -->
     <div class="phase-label">── concept phase ──</div>
     <div class="row">
-      <div class="node game-designer">Concept<span class="agent-label">game-designer · Sonnet</span><span class="artifact-label">→ concept_options_v1</span></div>
+      <div class="node game-designer">Concept<span class="agent-label">game-designer · Sonnet<br/>kids 9-12 constraints</span><span class="artifact-label">→ concept_options_v1</span></div>
     </div>
     <div class="connector"></div>
     <div class="row">
@@ -219,7 +266,7 @@
       <div class="node human-gate">🧑 Gate: Mechanics<span class="agent-label">human review</span></div>
     </div>
 
-    <!-- PARALLEL: cd-mechanics-check + style-research -->
+    <!-- PARALLEL: cd-mechanics-check + style-research + mechanic-research -->
     <div class="connector"></div>
     <div class="parallel-block" style="margin:0 auto;">
       <div class="parallel-label">parallel</div>
@@ -229,6 +276,10 @@
       <div class="connector-h"></div>
       <div class="parallel-col">
         <div class="node style-researcher">Style Research<span class="agent-label">style-researcher · Sonnet</span><span class="artifact-label">→ style_research_v1</span></div>
+      </div>
+      <div class="connector-h"></div>
+      <div class="parallel-col">
+        <div class="node mechanic-res">Mechanic Research<span class="agent-label">mechanic-researcher · Sonnet</span><span class="artifact-label">→ mechanic_research_v1</span></div>
       </div>
     </div>
 
@@ -317,6 +368,10 @@
     </div>
     <div class="connector"></div>
     <div class="row">
+      <div class="node peer-review">Peer Review (any→any)<span class="agent-label">message_bus</span><span class="artifact-label">structured critique + reply</span></div>
+    </div>
+    <div class="connector"></div>
+    <div class="row">
       <div class="node rapid-proto">Scaffold Iteration<span class="agent-label">rapid-prototyper · Sonnet</span><span class="artifact-label">→ iteration_scaffold_v1</span></div>
     </div>
 
@@ -338,11 +393,22 @@
     </div>
     <div class="connector"></div>
     <div class="row">
-      <div class="node publisher">Publish<span class="agent-label">publisher · Haiku</span><span class="artifact-label">→ publish_manifest_v1</span></div>
+      <div class="node publisher">Publish (idempotent)<span class="agent-label">publisher · Haiku</span><span class="artifact-label">→ publish_manifest_v1<br/>noop if already shipped @ ref</span></div>
+    </div>
+    <div class="connector"></div>
+    <div class="parallel-block" style="margin:0 auto;">
+      <div class="parallel-label">outcome</div>
+      <div class="parallel-col">
+        <div class="node human-gate" style="background:#0d2d1a;border-color:#16a34a;">🎪 Live on itch.io / gh-pages / Roblox</div>
+      </div>
+      <div class="connector-h"></div>
+      <div class="parallel-col">
+        <div class="node rollback">Rollback<span class="agent-label">publisher · Haiku</span><span class="artifact-label">on partial-ship failure<br/>restores prior build</span></div>
+      </div>
     </div>
     <div class="connector"></div>
     <div class="row">
-      <div class="node human-gate" style="background:#0d2d1a;border-color:#16a34a;">🎪 Live on itch.io / gh-pages / Roblox</div>
+      <div class="node lesson-store">Record Lessons<span class="agent-label">agent_lessons.py</span><span class="artifact-label">persist failures + wins for next run</span></div>
     </div>
 
   </div>
@@ -352,9 +418,20 @@
 <!-- ═══════════════════════════════════════════════════════ ITERATE PIPELINE -->
 <div id="iterate" class="panel">
   <h2>Iterate Existing Game — iterate_artifact</h2>
-  <p class="subtitle">Cyclic: Playtest → Postmortem → 4× Proposals → Human picks → CD check → Implement → Review → repeat</p>
+  <p class="subtitle">Cyclic: Playtest → Postmortem → 4× Proposals → Human picks → CD check → Implement → Regression → Review → repeat</p>
+
+  <div class="rail">
+    <strong>Governance rail (every agent step):</strong>
+    <span class="tag">schema hard-block</span>
+    <span class="tag">cross-game lessons injected</span>
+    <span class="tag">peer review on-request</span>
+    <span class="tag">producer live status → WS feed</span>
+    <span class="tag">per-level difficulty tuning</span>
+    <span class="tag">before/after regression guard</span>
+  </div>
 
   <div class="legend">
+    <div class="legend-item"><div class="legend-dot" style="background:#d97706"></div> producer (orchestrator)</div>
     <div class="legend-item"><div class="legend-dot" style="background:#14b8a6"></div> qa-engineer</div>
     <div class="legend-item"><div class="legend-dot" style="background:#ec4899"></div> analytics-reporter</div>
     <div class="legend-item"><div class="legend-dot" style="background:#3b82f6"></div> game-designer</div>
@@ -363,11 +440,32 @@
     <div class="legend-item"><div class="legend-dot" style="background:#38bdf8"></div> frontend-developer</div>
     <div class="legend-item"><div class="legend-dot" style="background:#a855f7"></div> creative-director (Opus)</div>
     <div class="legend-item"><div class="legend-dot" style="background:#6366f1"></div> code-reviewer</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#64748b"></div> peer-review (any→any)</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#0d9488"></div> regression test</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#a21caf"></div> agent-lessons store</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#ef4444"></div> publisher (idempotent)</div>
     <div class="legend-item"><div class="legend-dot" style="background:#22c55e"></div> human gate</div>
   </div>
 
   <div class="flow-wrapper">
   <div class="flow-inner">
+
+    <!-- ENTRY -->
+    <div class="phase-label">── cycle entry ──</div>
+    <div class="row">
+      <div class="node producer">Acquire Project Lock<span class="agent-label">producer-orchestrator</span><span class="artifact-label">shared with new-game pipeline</span></div>
+    </div>
+    <div class="connector"></div>
+    <div class="row">
+      <div class="node lesson-store">Load Cross-Game Lessons<span class="agent-label">agent_lessons.py</span><span class="artifact-label">prior iteration wins/misses</span></div>
+    </div>
+    <div class="connector"></div>
+    <div class="row">
+      <div class="node regression">Capture Baseline<span class="agent-label">qa-engineer · Sonnet</span><span class="artifact-label">metrics snapshot @ v{n}</span></div>
+    </div>
+
+    <div class="connector"></div>
+    <hr class="section-divider">
 
     <div class="phase-label">── cycle start ──</div>
     <div class="row">
@@ -379,7 +477,7 @@
     </div>
     <div class="connector"></div>
     <div class="row">
-      <div class="node analytics">Postmortem<span class="agent-label">analytics-reporter · Haiku</span><span class="artifact-label">→ postmortem_{{tag}}</span></div>
+      <div class="node analytics">Postmortem<span class="agent-label">analytics-reporter · Haiku</span><span class="artifact-label">→ postmortem_{{tag}}<br/>per-level breakdown</span></div>
     </div>
 
     <div class="connector"></div>
@@ -416,16 +514,38 @@
     <div class="phase-label">── implement &amp; review ──</div>
 
     <div class="row">
-      <div class="node frontend-dev">Implement<span class="agent-label">frontend-developer · Sonnet</span><span class="artifact-label">→ game_html_v{n+1}</span></div>
+      <div class="node frontend-dev">Implement<span class="agent-label">frontend-developer · Sonnet<br/>per-level difficulty tuning</span><span class="artifact-label">→ game_html_v{n+1}</span></div>
     </div>
     <div class="connector"></div>
     <div class="row">
       <div class="node code-reviewer">Code Review<span class="agent-label">code-reviewer · Sonnet</span><span class="artifact-label">→ code_review_v{n+1}_r1<span class="loop-badge">review loop ×3</span></span></div>
     </div>
-
     <div class="connector"></div>
     <div class="row">
-      <div class="node human-gate" style="background:#1a2d2d;border-color:#0d9488;">↩ Loop back to Playtest<span class="agent-label">or halt if budget exhausted</span></div>
+      <div class="node peer-review">Peer Review (any→any)<span class="agent-label">message_bus</span><span class="artifact-label">structured critique + reply</span></div>
+    </div>
+    <div class="connector"></div>
+    <div class="row">
+      <div class="node regression">Before/After Regression<span class="agent-label">qa-engineer · Sonnet</span><span class="artifact-label">compare v{n+1} vs baseline<br/>REVISE if any metric regresses</span></div>
+    </div>
+
+    <div class="connector"></div>
+    <hr class="section-divider">
+    <div class="phase-label">── outcome ──</div>
+
+    <div class="parallel-block" style="margin:0 auto;">
+      <div class="parallel-label">branch</div>
+      <div class="parallel-col">
+        <div class="node human-gate" style="background:#1a2d2d;border-color:#0d9488;">↩ Loop back to Playtest<span class="agent-label">or halt if budget exhausted</span></div>
+      </div>
+      <div class="connector-h"></div>
+      <div class="parallel-col">
+        <div class="node publisher">Re-Publish (idempotent)<span class="agent-label">publisher · Haiku</span><span class="artifact-label">noop if ref already shipped<br/>else push update build</span></div>
+      </div>
+    </div>
+    <div class="connector"></div>
+    <div class="row">
+      <div class="node lesson-store">Record Cycle Lessons<span class="agent-label">agent_lessons.py</span><span class="artifact-label">hits/misses vs postmortem targets</span></div>
     </div>
 
   </div>

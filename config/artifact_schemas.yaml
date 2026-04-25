@@ -118,3 +118,11 @@ schemas:
       approved_at: {type: string}
       artifacts_confirmed: {type: list, min_items: 1}
       next_phase: {type: string}
+
+  difficulty_tuning_v1:
+    description: "Per-level difficulty tuning recommendations from telemetry"
+    required_fields: [cycle_tag, recommendations, generated_at]
+    field_rules:
+      recommendations: {type: list, min_items: 0}
+      cycle_tag: {type: string}
+      generated_at: {type: string}

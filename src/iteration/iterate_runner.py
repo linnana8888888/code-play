@@ -22,6 +22,7 @@ import statistics
 import subprocess
 import time
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable
 
@@ -160,6 +161,196 @@ def _wait_for_port(port: int, timeout_sec: float = 5.0) -> bool:
     return False
 
 
+# ── Telemetry baseline helpers ──────────────────────────────────────────────
+
+
+def _store_telemetry_baseline(
+    project_id: str,
+    cycle_tag: str,
+    telemetry: dict,
+) -> None:
+    """Persist telemetry as a named baseline in project memory.
+
+    Key format: ``telemetry_baseline_{cycle_tag}``  (e.g. ``telemetry_baseline_v3``).
+    """
+    project_memory.write(
+        project_id,
+        mem_type="artifact",
+        key=f"telemetry_baseline_{cycle_tag}",
+        content=json.dumps(telemetry, indent=2),
+        created_by=f"pipeline:iterate_artifact:{cycle_tag}",
+    )
+
+
+def _load_telemetry_baseline(project_id: str, previous_cycle_tag: str) -> dict | None:
+    """Load a previously stored telemetry baseline.  Returns None if absent."""
+    raw = project_memory.read(
+        project_id,
+        mem_type="artifact",
+        key=f"telemetry_baseline_{previous_cycle_tag}",
+    )
+    if raw is None:
+        return None
+    try:
+        return json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        _log.warning("Could not parse telemetry baseline for %s", previous_cycle_tag)
+        return None
+
+
+# ── Regression comparison ─────────────────────────────────────────────────────
+
+
+def _compare_telemetry_regression(
+    previous: dict,
+    current: dict,
+    *,
+    tolerance_pct: float = 5.0,
+) -> list[str]:
+    """Compare current telemetry against previous baseline.
+
+    Returns a list of regression description strings (empty list = no regression).
+
+    KPIs checked:
+    - avg_session_seconds: current must be >= previous * (1 - tolerance/100)
+    - death_rate_per_min:  current must be <= previous * (1 + tolerance/100)
+    - level1_completion_rate: current must be >= previous * (1 - tolerance/100)
+
+    tolerance_pct: allowed % degradation before flagging (default 5%).
+    """
+    regressions: list[str] = []
+    tol = tolerance_pct / 100.0
+
+    # avg_session_seconds — higher is better
+    prev_sess = previous.get("avg_session_seconds")
+    curr_sess = current.get("avg_session_seconds")
+    if prev_sess is not None and curr_sess is not None:
+        threshold = prev_sess * (1.0 - tol)
+        if curr_sess < threshold:
+            regressions.append(
+                f"avg_session_seconds regressed: {curr_sess:.1f}s < {threshold:.1f}s "
+                f"(previous {prev_sess:.1f}s, tolerance {tolerance_pct}%)"
+            )
+
+    # death_rate_per_min — lower is better
+    prev_dr = previous.get("death_rate_per_min")
+    curr_dr = current.get("death_rate_per_min")
+    if prev_dr is not None and curr_dr is not None:
+        threshold = prev_dr * (1.0 + tol)
+        if curr_dr > threshold:
+            regressions.append(
+                f"death_rate_per_min regressed: {curr_dr:.3f}/min > {threshold:.3f}/min "
+                f"(previous {prev_dr:.3f}/min, tolerance {tolerance_pct}%)"
+            )
+
+    # level1_completion_rate — higher is better
+    prev_cr = previous.get("level1_completion_rate")
+    curr_cr = current.get("level1_completion_rate")
+    if prev_cr is not None and curr_cr is not None:
+        threshold = prev_cr * (1.0 - tol)
+        if curr_cr < threshold:
+            regressions.append(
+                f"level1_completion_rate regressed: {curr_cr:.3f} < {threshold:.3f} "
+                f"(previous {prev_cr:.3f}, tolerance {tolerance_pct}%)"
+            )
+
+    return regressions
+
+
+# ── Per-level difficulty tuning ───────────────────────────────────────────────
+
+
+def _generate_difficulty_tuning(telemetry: dict) -> list[dict]:
+    """Parse telemetry and generate concrete per-level tuning recommendations.
+
+    Returns a list of recommendation dicts:
+        {"level": int, "metric": str, "current": float,
+         "target": float, "recommendation": str}
+
+    Rules applied:
+    - Level N death_rate > 3/min  → "reduce spawn rate by 20%"
+    - Level N death_rate < 0.5/min → "add elite enemy variant"
+    - Level N completion_rate > 90% → "add bonus challenge"
+    - Level N completion_rate < 30% → "reduce enemy speed by 15%"
+    - avg_session_seconds < 90  → "extend level duration or reduce difficulty"
+    - avg_session_seconds > 300 → "add skip option or reduce level length"
+
+    Returns empty list if telemetry doesn't have per-level data.
+    """
+    recommendations: list[dict] = []
+
+    # Per-level data: telemetry["per_level"] is a list of
+    # {"level": int, "death_rate": float, "completion_rate": float, ...}
+    per_level = telemetry.get("per_level", [])
+    if not per_level:
+        # No per-level data — nothing to tune at level granularity.
+        # Still check session-level metrics below.
+        pass
+
+    for entry in per_level:
+        level = entry.get("level", 0)
+        death_rate = entry.get("death_rate")
+        completion_rate = entry.get("completion_rate")
+
+        if death_rate is not None:
+            if death_rate > 3.0:
+                recommendations.append({
+                    "level": level,
+                    "metric": "death_rate",
+                    "current": float(death_rate),
+                    "target": 3.0,
+                    "recommendation": "reduce spawn rate by 20%",
+                })
+            elif death_rate < 0.5:
+                recommendations.append({
+                    "level": level,
+                    "metric": "death_rate",
+                    "current": float(death_rate),
+                    "target": 0.5,
+                    "recommendation": "add elite enemy variant",
+                })
+
+        if completion_rate is not None:
+            if completion_rate > 90.0:
+                recommendations.append({
+                    "level": level,
+                    "metric": "completion_rate",
+                    "current": float(completion_rate),
+                    "target": 90.0,
+                    "recommendation": "add bonus challenge",
+                })
+            elif completion_rate < 30.0:
+                recommendations.append({
+                    "level": level,
+                    "metric": "completion_rate",
+                    "current": float(completion_rate),
+                    "target": 30.0,
+                    "recommendation": "reduce enemy speed by 15%",
+                })
+
+    # Session-level checks (not per-level)
+    avg_session = telemetry.get("avg_session_seconds")
+    if avg_session is not None:
+        if avg_session < 90:
+            recommendations.append({
+                "level": 0,
+                "metric": "avg_session_seconds",
+                "current": float(avg_session),
+                "target": 90.0,
+                "recommendation": "extend level duration or reduce difficulty",
+            })
+        elif avg_session > 300:
+            recommendations.append({
+                "level": 0,
+                "metric": "avg_session_seconds",
+                "current": float(avg_session),
+                "target": 300.0,
+                "recommendation": "add skip option or reduce level length",
+            })
+
+    return recommendations
+
+
 # ── Playtest quality gate ────────────────────────────────────────────────────
 
 
@@ -278,11 +469,114 @@ def run_playtest_batch(
     else:
         _log.info("Playtest quality gate passed: %s", gate_reason)
 
+    # ── Build a flat KPI dict for regression comparison ───────────────────────
+    # Derive avg_session_seconds from the aggregated rollup.
+    agg = rollup.get("aggregates", {})
+    current_kpis: dict = {
+        "avg_session_seconds": agg.get("session_duration_sec", {}).get("median", 0.0),
+    }
+    # death_rate_per_min and level1_completion_rate come from sessions_for_gate
+    # (same data used by the quality gate above).
+    if sessions_for_gate:
+        level1_deaths_per_min = []
+        level1_completions = []
+        for s in sessions_for_gate:
+            events = s.get("events", [])
+            deaths = sum(1 for e in events if e.get("type") == "death" and e.get("level", 1) == 1)
+            duration_min = s.get("duration_seconds", 60) / 60
+            level1_deaths_per_min.append(deaths / max(duration_min, 0.1))
+            completions = [e for e in events if e.get("type") == "level_complete" and e.get("level", 0) == 1]
+            level1_completions.append(1.0 if completions else 0.0)
+        current_kpis["death_rate_per_min"] = (
+            sum(level1_deaths_per_min) / len(level1_deaths_per_min)
+        )
+        current_kpis["level1_completion_rate"] = (
+            sum(level1_completions) / len(level1_completions)
+        )
+
+    # ── Before/after regression check ────────────────────────────────────────
+    previous_tag = f"v{cycle_n - 1}" if cycle_n > 1 else None
+    regression_details: list[str] = []
+    if previous_tag:
+        prev_baseline = _load_telemetry_baseline(project_id, previous_tag)
+        if prev_baseline is not None:
+            regression_details = _compare_telemetry_regression(
+                prev_baseline, current_kpis
+            )
+            if regression_details:
+                _log.warning(
+                    "Playtest regression detected (cycle %d vs %s): %s",
+                    cycle_n, previous_tag, regression_details,
+                )
+                passes = False
+                gate_reason = "Regression vs previous baseline: " + "; ".join(regression_details)
+
+    # ── Store current run as new baseline ────────────────────────────────────
+    _store_telemetry_baseline(project_id, iteration_tag, current_kpis)
+
+    # ── Per-level difficulty tuning ───────────────────────────────────────────
+    # Build a telemetry dict that _generate_difficulty_tuning can consume.
+    # avg_session_seconds comes from the KPI dict; per_level data from sessions.
+    tuning_input: dict = {
+        "avg_session_seconds": current_kpis.get("avg_session_seconds"),
+        "per_level": [],  # populated below when per-level event data is available
+    }
+    # Aggregate per-level stats from session events if present.
+    level_stats: dict[int, dict] = {}
+    for s in sessions_for_gate:
+        for e in s.get("events", []):
+            lvl = e.get("level", 1)
+            if lvl not in level_stats:
+                level_stats[lvl] = {"deaths": 0, "completions": 0, "sessions": 0}
+            if e.get("type") == "death":
+                level_stats[lvl]["deaths"] += 1
+            if e.get("type") == "level_complete":
+                level_stats[lvl]["completions"] += 1
+        # Count sessions per level (rough: any event on that level)
+        levels_seen = {e.get("level", 1) for e in s.get("events", [])}
+        for lvl in levels_seen:
+            level_stats.setdefault(lvl, {"deaths": 0, "completions": 0, "sessions": 0})
+            level_stats[lvl]["sessions"] += 1
+
+    total_sessions = len(sessions_for_gate) or 1
+    for lvl, stats in sorted(level_stats.items()):
+        n = stats["sessions"] or total_sessions
+        duration_min = (
+            sum(s.get("duration_seconds", 60) for s in sessions_for_gate) / total_sessions / 60
+        )
+        tuning_input["per_level"].append({
+            "level": lvl,
+            "death_rate": stats["deaths"] / max(duration_min * n, 0.1),
+            "completion_rate": (stats["completions"] / n) * 100.0,
+        })
+
+    difficulty_tuning = _generate_difficulty_tuning(tuning_input)
+    now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    tuning_record = {
+        "cycle_tag": iteration_tag,
+        "recommendations": difficulty_tuning,
+        "generated_at": now_iso,
+    }
+    project_memory.write(
+        project_id,
+        mem_type="artifact",
+        key=f"difficulty_tuning_{iteration_tag}",
+        content=json.dumps(tuning_record, indent=2),
+        created_by=f"pipeline:iterate_artifact:cycle_{cycle_n}",
+    )
+    if difficulty_tuning:
+        _log.info(
+            "Difficulty tuning generated %d recommendations for %s",
+            len(difficulty_tuning), iteration_tag,
+        )
+
     rollup_full = {
         "cycle_n": cycle_n,
         "iteration_tag": iteration_tag,
         "playtest_gate_passes": passes,
         "playtest_gate_reason": gate_reason,
+        "regression_details": regression_details,
+        "difficulty_tuning": difficulty_tuning,
         **rollup,
     }
     project_memory.write(
@@ -303,6 +597,7 @@ def run_playtest_batch(
             content=json.dumps({
                 "auto_revise": True,
                 "reason": gate_reason,
+                "regression_details": regression_details,
                 "cycle_n": cycle_n,
                 "iteration_tag": iteration_tag,
             }, indent=2),

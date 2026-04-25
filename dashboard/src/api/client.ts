@@ -343,3 +343,16 @@ export const rejectProposal = (id: string, body: { decided_by?: string; reason?:
     `/governance/proposals/${id}/reject`,
     { method: "POST", body: JSON.stringify(body) },
   );
+
+/* ── Producer ── */
+export async function getProducerStatus(projectId: string) {
+  const res = await fetch(`${BASE}/projects/${projectId}/producer/status`);
+  if (!res.ok) return null;
+  return res.json();
+}
+
+export async function getProducerNotes(projectId: string) {
+  const res = await fetch(`${BASE}/projects/${projectId}/producer/notes`);
+  if (!res.ok) return [];
+  return res.json();
+}

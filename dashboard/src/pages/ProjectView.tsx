@@ -13,9 +13,10 @@ import ActivityFeed from "../components/activity/ActivityFeed";
 import GatesPanel from "../components/gates/GatesPanel";
 import CriteriaPanel from "../components/project/CriteriaPanel";
 import DocsBrowser from "../components/docs/DocsBrowser";
+import ProducerFeed from "../components/producer/ProducerFeed";
 import type { Project } from "../types/api";
 
-type Section = "tasks" | "plan" | "docs" | "agents" | "channels";
+type Section = "tasks" | "plan" | "docs" | "agents" | "channels" | "producer";
 
 interface GateBannerEntry {
   task_id: string;
@@ -47,6 +48,7 @@ export default function ProjectView() {
   );
   const [createTaskOpen, setCreateTaskOpen] = useState(false);
   const [gateBanner, setGateBanner] = useState<GateBannerEntry | null>(null);
+  const [producerAlert, setProducerAlert] = useState<{ severity: string; note: string } | null>(null);
   const [spawnFailures, setSpawnFailures] = useState<SpawnFailedEntry[]>([]);
   const [relaunchOpen, setRelaunchOpen] = useState(false);
   const [relaunchInput, setRelaunchInput] = useState("");
@@ -85,6 +87,14 @@ export default function ProjectView() {
     }
     if (e.type === "pipeline_started") {
       setRosterPending(null);
+      return;
+    }
+    if (e.type === "producer_status") {
+      const sev = e.data.severity as string | undefined;
+      if (sev === "warning" || sev === "error") {
+        const note = e.data.note as string | undefined;
+        if (note) setProducerAlert({ severity: sev, note });
+      }
       return;
     }
     if (e.type === "spawn_failed") {
@@ -303,6 +313,29 @@ export default function ProjectView() {
         </div>
       ) : null}
 
+      {producerAlert && (
+        <div
+          className="flex items-center justify-between gap-3 rounded-2xl border p-4 text-sm"
+          style={{
+            borderColor: producerAlert.severity === "error" ? "var(--color-danger)" : "var(--color-warning)",
+            background: producerAlert.severity === "error" ? "#fee2e2" : "#fef9c3",
+          }}
+        >
+          <div>
+            <p
+              className="mono-label"
+              style={{ color: producerAlert.severity === "error" ? "#991b1b" : "#92400e" }}
+            >
+              🎬 Producer {producerAlert.severity}
+            </p>
+            <p className="mt-1 text-xs text-text-muted">{producerAlert.note}</p>
+          </div>
+          <button onClick={() => setProducerAlert(null)} className="btn-ghost">
+            Dismiss
+          </button>
+        </div>
+      )}
+
       {gateBanner ? (
         <div
           className="flex items-center justify-between gap-3 rounded-2xl border p-4 text-sm"
@@ -334,7 +367,7 @@ export default function ProjectView() {
         className="inline-flex rounded-full border border-border-strong bg-white p-1"
         style={{ boxShadow: "rgba(0,0,0,0.03) 0px 1px 2px" }}
       >
-        {(["tasks", "plan", "docs", "agents", "channels"] as Section[]).map((s) => (
+        {(["tasks", "plan", "docs", "agents", "channels", "producer"] as Section[]).map((s) => (
           <button
             key={s}
             onClick={() => {
@@ -390,6 +423,8 @@ export default function ProjectView() {
           </div>
         </div>
       )}
+
+      {section === "producer" && <ProducerFeed projectId={id} />}
     </div>
   );
 }

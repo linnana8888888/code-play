@@ -156,6 +156,13 @@ agents:
     tools: [core, playwright_browser, mcp:playwright, update_criterion_status]
     skills: [superpowers:verification-before-completion]
 
+  kid-safety-reviewer:
+    model: "anthropic/anthropic.claude-haiku-4-5-20251001-v1:0"
+    fallback_model: "anthropic/anthropic.claude-sonnet-4-6"
+    description: "Checks game artifacts against kid-safety checklist (ages 9-12) before human gates"
+    tools: [core]
+    skills: []
+
   # Research
   style-researcher:
     model: "anthropic/anthropic.claude-opus-4-7"

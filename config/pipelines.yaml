@@ -130,9 +130,23 @@ pipelines:
             type: artifact
             key: laf_brief_v1
 
+      - id: kid-safety-laf
+        agent: kid-safety-reviewer
+        depends_on: [look-and-feel]
+        task: |
+          Read laf_brief_v1 from memory. Review against the kid-safety checklist.
+          The target audience is kids aged 9-12. Humor and silly subject matter (including
+          toilet humor) is acceptable — the checklist is about safety, not taste.
+          Save your verdict JSON to memory as artifact key 'kid_safety_laf_v1'.
+        output: kid_safety_laf
+        expected_outputs:
+          - kind: memory_key
+            type: artifact
+            key: kid_safety_laf_v1
+
       - id: gate-laf
         type: human-gate
-        depends_on: [look-and-feel]
+        depends_on: [kid-safety-laf]
         review_of: look-and-feel
         task: "Review the look-and-feel brief against the style research. Approve, or request changes."
 
@@ -273,9 +287,22 @@ pipelines:
             type: artifact
             key: qa_report_v1
 
+      - id: kid-safety-qa
+        agent: kid-safety-reviewer
+        depends_on: [qa-playtest]
+        task: |
+          Read game_html_v1 and qa_report_v1 from memory. Review the game against the
+          kid-safety checklist. Focus on: controls complexity, session length, humor tone.
+          Save your verdict JSON to memory as artifact key 'kid_safety_qa_v1'.
+        output: kid_safety_qa
+        expected_outputs:
+          - kind: memory_key
+            type: artifact
+            key: kid_safety_qa_v1
+
       - id: gate-qa
         type: human-gate
-        depends_on: [qa-playtest]
+        depends_on: [kid-safety-qa]
         review_of: qa-playtest
         task: |
           Review the QA report + screenshots and actually play the game (primary button on

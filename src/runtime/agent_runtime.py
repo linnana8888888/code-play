@@ -285,10 +285,11 @@ class AgentRuntime:
             system_content += f"\n\n[Project ID: {project_id}]"
 
         # Inject approved skills. Agents declare which skills they need via
-        # `skills:` in agents.yaml. An explicit empty list means "no skills"
-        # (saves ~2MB context). Only fall back to all builtins when skills is
-        # truly unset (None), which shouldn't happen with the defaults in place.
-        effective_skills = defn.skills if defn.skills is not None else skill_registry.get_builtin_skills()
+        # `skills:` in agents.yaml. An empty or unset skills list means
+        # "auto-seed from builtins" — the agent inherits the governance-approved
+        # builtin set. Only agents that explicitly opt out (skills: null in yaml)
+        # skip skill injection.
+        effective_skills = defn.skills if defn.skills else skill_registry.get_builtin_skills()
         if effective_skills:
             skill_content = skill_registry.get_injectable_content(defn.id, effective_skills)
             if skill_content:

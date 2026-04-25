@@ -281,7 +281,8 @@ def _generate_difficulty_tuning(telemetry: dict) -> list[dict]:
 
     # Per-level data: telemetry["per_level"] is a list of
     # {"level": int, "death_rate": float, "completion_rate": float, ...}
-    per_level = telemetry.get("per_level", [])
+    # Also accepts "levels" key and "death_rate_per_min" as aliases.
+    per_level = telemetry.get("per_level") or telemetry.get("levels", [])
     if not per_level:
         # No per-level data — nothing to tune at level granularity.
         # Still check session-level metrics below.
@@ -289,7 +290,8 @@ def _generate_difficulty_tuning(telemetry: dict) -> list[dict]:
 
     for entry in per_level:
         level = entry.get("level", 0)
-        death_rate = entry.get("death_rate")
+        # Accept both "death_rate" and "death_rate_per_min" as the same metric.
+        death_rate = entry.get("death_rate") if entry.get("death_rate") is not None else entry.get("death_rate_per_min")
         completion_rate = entry.get("completion_rate")
 
         if death_rate is not None:

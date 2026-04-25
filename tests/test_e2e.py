@@ -931,19 +931,23 @@ def test_tech_plan_tasks_created_and_wired_in_launch():
     tech_plan_task = task_queue.get(tasks_by_step["tech-plan"])
     gate_tech_task = task_queue.get(tasks_by_step["gate-tech"])
     handoff_tech_task = task_queue.get(tasks_by_step["handoff-summarize-tech"])
+    producer_check_tech_task = task_queue.get(tasks_by_step["producer-check-tech"])
     build_task = task_queue.get(tasks_by_step["build"])
 
     assert tech_plan_task is not None
     assert gate_tech_task is not None
     assert handoff_tech_task is not None
+    assert producer_check_tech_task is not None
     assert build_task is not None
 
     # Phase 2: gate-tech depends on handoff-summarize-tech (not tech-plan directly)
     assert handoff_tech_task.id in gate_tech_task.depends_on
     # handoff-summarize-tech depends on tech-plan
     assert tech_plan_task.id in handoff_tech_task.depends_on
-    # build depends on gate-tech
-    assert gate_tech_task.id in build_task.depends_on
+    # producer-check-tech depends on gate-tech (artifact verification step)
+    assert gate_tech_task.id in producer_check_tech_task.depends_on
+    # build depends on producer-check-tech (gate-tech → producer-check-tech → build)
+    assert producer_check_tech_task.id in build_task.depends_on
 
 
 # ==================== #4 A/B race + winner promotion ====================

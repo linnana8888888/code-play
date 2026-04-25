@@ -46,6 +46,8 @@ builtin:
   # Shared asset pools
   - asset_search
   - asset_fetch
+  # itch.io player feedback scraper (stdlib-only, public pages)
+  - fetch_itch_feedback
   # Headless browser for QA playtests
   - playwright_browser
   # Success criteria + revisioned docs + roster proposals

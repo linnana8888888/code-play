@@ -133,3 +133,99 @@ This is a *routing hint* for the producer, not a lock — slot owners may disagr
 - `direction_to_proposal` table present.
 - Channel post delivered; analytics-reporter pinged.
 - Any child-safety concerns escalated to the human before the artifact ships.
+
+---
+
+## 🔄 iterate_artifact Integration (Phase 4.2)
+
+In the `iterate_artifact` pipeline you are invoked as the `fetch-player-feedback` step,
+which runs at cycle start (parallel to `generate-bot`) before `postmortem`.
+
+### Reading raw feedback from memory
+
+The step writes raw itch.io data to memory as:
+```
+player_feedback_{{iteration_tag}}
+```
+Shape:
+```json
+{
+  "url": "https://username.itch.io/game",
+  "fetched_at": "2024-01-15T10:30:00+00:00",
+  "rating": {"avg_rating": 4.2, "rating_count": 47},
+  "comments": [
+    {"author": "coolkid99", "text": "the jump feels weird", "posted_at": "...", "rating": null}
+  ],
+  "comment_count": 23,
+  "error": null
+}
+```
+If `error` is non-null or `comment_count` < 3, write a minimal synthesis and continue.
+
+### Synthesizing into themes
+
+Group comments by these five buckets before theming:
+
+| Bucket | Keywords / signals |
+|---|---|
+| **controls** | jump, move, slide, dash, keys, button, input, slippery, slow, fast |
+| **difficulty** | hard, easy, impossible, too easy, unfair, cheap, die, stuck |
+| **humor** | funny, lol, haha, weird, silly, love the __, made me laugh |
+| **bugs** | broken, crash, glitch, doesn't work, stuck, freeze, error |
+| **requests** | add, please, wish, want, more, next time, could you |
+
+A comment can belong to multiple buckets. Apply the same three-quote minimum rule
+as the main workflow — buckets with < 3 quotes become `unresolved_quotes`.
+
+### Weighting real feedback vs. bot telemetry
+
+When both `player_feedback_{{iteration_tag}}` and `telemetry_{{iteration_tag}}` are
+available in memory:
+
+- **Player feedback = 60% weight** for player-impact ranking
+- **Bot telemetry = 40% weight** for player-impact ranking
+
+Formula for blended impact score per theme/metric:
+```
+blended_score = 0.6 × (player_theme_magnitude_pct / 100) + 0.4 × telemetry_metric_miss_severity
+```
+Where `telemetry_metric_miss_severity` is 0.0 (hit) to 1.0 (critical miss).
+
+If only one source is available, use it at 100% weight and note the absence.
+
+### Output format: `player_feedback_synthesis_{{iteration_tag}}`
+
+```json
+{
+  "key": "player_feedback_synthesis_v3",
+  "iteration_tag": "v3",
+  "source_comment_count": 23,
+  "themes": [
+    {
+      "name": "Controls feel slippery",
+      "bucket": "controls",
+      "magnitude_pct": 31,
+      "n": 7,
+      "sentiment": {"loved": 0, "mixed": 2, "hated": 5},
+      "quotes": [
+        {"text": "the jump feels weird", "author": "coolkid99", "posted_at": "..."},
+        {"text": "i keep sliding off", "author": "player42", "posted_at": "..."},
+        {"text": "too slippery", "author": "unknown", "posted_at": "..."}
+      ],
+      "direction": "Stop/jump momentum over-tuned; direction: reduce slide distance."
+    }
+  ],
+  "top_requests": ["pause button", "more levels"],
+  "sentiment": "mixed",
+  "weighted_with_telemetry": "60% player feedback / 40% telemetry",
+  "unresolved_quotes": [],
+  "discarded": []
+}
+```
+
+`sentiment` field values: `"positive"` | `"mixed"` | `"negative"` | `"insufficient_data"`
+
+`weighted_with_telemetry` field values:
+- `"60% player feedback / 40% telemetry"` — both sources present
+- `"100% player feedback — no telemetry"` — telemetry missing
+- `"skipped — fewer than 3 comments"` — not enough data

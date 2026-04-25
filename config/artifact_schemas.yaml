@@ -133,3 +133,10 @@ schemas:
       recommendations: {type: list, min_items: 0}
       cycle_tag: {type: string}
       generated_at: {type: string}
+
+  roblox_script_v1:
+    description: "Main Roblox Luau script"
+    required_fields: [script_content, entry_point]
+    field_rules:
+      script_content: {type: string}
+      entry_point: {type: string}

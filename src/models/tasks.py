@@ -71,5 +71,7 @@ class TaskCreate(BaseModel):
 
 
 class TaskUpdate(BaseModel):
-    """Partial update of an existing task — currently just the model override."""
+    """Partial update of an existing task."""
     model_override: str | None = None
+    status: str | None = None  # Allow force-completing blocked/failed tasks via API
+    result: str | None = None  # Optional result summary when force-completing

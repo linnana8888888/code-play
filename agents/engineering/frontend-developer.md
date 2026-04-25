@@ -126,6 +126,11 @@ Run mentally before marking build done:
 - [ ] **Asset provenance:** CREDITS.md reflects every non-CC0 asset
 - [ ] **No debug leftovers:** no `console.log` spam, no TODO placeholders, no commented-out blocks
 
+## ⚠️ Iteration Budget
+- If `game_html_v1` already exists in memory when you start, **verify it and call task_complete immediately** (do not rebuild from scratch).
+- If you are on iteration 15+, stop adding features. Write `game_html_v1` to memory pointing at the built folder and call task_complete.
+- Do not use playwright_browser to test — QA agent handles that. Just verify files exist with bash_execute.
+
 ## Done when
 - Working `index.html` at known path that qa-engineer can open via `file://` and play through
 - `window.__game` exposes the contract from tech plan

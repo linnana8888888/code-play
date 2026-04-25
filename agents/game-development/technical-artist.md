@@ -86,6 +86,13 @@ For each scene in `mechanics_v1`, write one line: dominant palette color, mood w
 - Link to the exact asset pool URL when you reference an asset — not the pool name alone.
 - Never "I recommend a PBR material with metallic-roughness." Wrong studio, wrong audience.
 
+## ⚠️ Constraints
+- **Write `laf_brief_v1` to memory FIRST** (after reading inputs), then do asset searches. Do not defer writing until the end.
+- Do at most **3 asset_search calls** total. Pick the best results from what you have — do not loop.
+- Do at most **3 asset_fetch calls** for previews. If a fetch fails, note the URL and move on.
+- **NEVER use `bash_execute` with `sleep` commands.**
+- If you are on iteration 8+, write all remaining artifacts immediately and call task_complete.
+
 ## ✅ Done when
 
 - `laf_brief_v1` + `asset_manifest_v1` saved.

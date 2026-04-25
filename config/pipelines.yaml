@@ -817,9 +817,46 @@ pipelines:
             type: artifact
             key: telemetry_{{iteration_tag}}
 
+      - id: fetch-player-feedback
+        agent: player-feedback-synthesizer
+        task: |
+          Fetch real player feedback from itch.io for iteration {{iteration_tag}}.
+
+          1. Read memory key 'publish_manifest_v1'. Extract the 'itch_url' field.
+             If the key is missing or 'itch_url' is absent/empty, skip the fetch
+             and write an empty feedback record:
+               {"url": null, "fetched_at": "<now ISO>", "rating": null,
+                "comments": [], "comment_count": 0, "error": "no itch_url in publish_manifest_v1"}
+             Save it to memory as 'player_feedback_{{iteration_tag}}' and finish.
+
+          2. Call the `fetch_itch_feedback` tool with the itch_url.
+             The tool returns:
+               {url, fetched_at, rating, comments, comment_count, error}
+
+          3. Save the result verbatim to memory as artifact
+             'player_feedback_{{iteration_tag}}'.
+
+          4. If comment_count >= 3, synthesize the comments into themes:
+             - Group by: controls, difficulty, humor, bugs, requests
+             - Weight: player feedback 60%, bot telemetry 40% (when both available)
+             - Output format per theme: {name, magnitude_pct, n, sentiment, quotes, direction}
+             Save synthesis to memory as 'player_feedback_synthesis_{{iteration_tag}}'.
+
+          If comment_count < 3, save a minimal synthesis:
+            {"themes": [], "top_requests": [], "sentiment": "insufficient_data",
+             "weighted_with_telemetry": "skipped — fewer than 3 comments"}
+          as 'player_feedback_synthesis_{{iteration_tag}}'.
+
+          Do NOT block the pipeline on any error — always write both artifacts.
+        output: player_feedback
+        expected_outputs:
+          - kind: memory_key
+            type: artifact
+            key: player_feedback_{{iteration_tag}}
+
       - id: postmortem
         agent: analytics-reporter
-        depends_on: [playtest]
+        depends_on: [playtest, fetch-player-feedback]
         task: |
           Write the cycle-{{cycle_n}} postmortem for iteration {{iteration_tag}}.
 
@@ -827,12 +864,20 @@ pipelines:
           written by the playtest step) and 'goals_md' (the project's GOALS.md).
           If either is missing, fail the task — don't invent numbers.
 
+          Also read 'player_feedback_synthesis_{{iteration_tag}}' if present.
+          When real player feedback is available (comment_count >= 3), fold it
+          into the analysis: weight player feedback at 60% and bot telemetry at
+          40% when assessing player-impact. Note the top player-reported themes
+          in the summary paragraph and reference them in the Top 3 problems list.
+
           Structure (≤ 600 words total):
-            - One-paragraph summary of what the batch did well vs. missed.
+            - One-paragraph summary of what the batch did well vs. missed
+              (include player sentiment if feedback is available).
             - Per §2/§3 of GOALS.md: for EACH §3 target, report observed value
               and whether it's a hit/miss. Cite metric names verbatim from the
               contract (see src/iteration/contract.METRIC_NAMES).
-            - Top 3 problems ranked by player-impact, each tied to a metric.
+            - Top 3 problems ranked by player-impact (blend telemetry + real
+              feedback when available), each tied to a metric.
             - 1-2 open questions for the proposal step (not solutions).
 
           All metric names you mention must pass validate_goals_md — same
@@ -1092,3 +1137,61 @@ pipelines:
               VERDICT: APPROVE
               VERDICT: APPROVE WITH FIXES
               VERDICT: REVISE
+
+  roblox-producer:
+    name: "Roblox Producer (human-gated)"
+    description: "Concept → mechanics → Roblox build → QA → publish to Roblox"
+    steps:
+      - id: roblox-concept
+        agent: game-designer
+        task: "Draft 3 Roblox game concepts for: {input}. Each must be achievable in Roblox Studio with standard Luau scripting. Save as concept_options_v1."
+
+      - id: handoff-summarize-roblox-concept
+        agent: handoff-summarizer
+        depends_on: [roblox-concept]
+        task: "Summarize roblox-concept phase. Save as handoff_brief_v1."
+
+      - id: gate-roblox-concept
+        type: human-gate
+        depends_on: [handoff-summarize-roblox-concept]
+
+      - id: roblox-mechanics
+        agent: roblox-experience-designer
+        depends_on: [gate-roblox-concept]
+        task: "Expand approved concept into Roblox mechanics: player actions, Roblox-specific systems (DataStore, RemoteEvents, leaderstats), win/lose conditions. Save as mechanics_v1."
+
+      - id: gate-roblox-mechanics
+        type: human-gate
+        depends_on: [roblox-mechanics]
+
+      - id: roblox-build
+        agent: roblox-systems-scripter
+        depends_on: [gate-roblox-mechanics]
+        task: "Build the Roblox game in Luau. Create all scripts, models, and game structure. Save main script as roblox_script_v1 and place file list as roblox_files_v1."
+        expected_outputs:
+          - kind: memory_key
+            type: artifact
+            key: roblox_script_v1
+
+      - id: roblox-qa
+        agent: qa-engineer
+        depends_on: [roblox-build]
+        task: "QA the Roblox build. Check: scripts compile without errors, game loop works, kid-safe content, mobile controls work. Save report as qa_report_v1."
+
+      - id: kid-safety-roblox
+        agent: kid-safety-reviewer
+        depends_on: [roblox-build]
+        task: "Review roblox_script_v1 for kid safety. Save as kid_safety_roblox_v1."
+
+      - id: gate-roblox-qa
+        type: human-gate
+        depends_on: [roblox-qa, kid-safety-roblox]
+
+      - id: roblox-publish
+        agent: roblox-experience-designer
+        depends_on: [gate-roblox-qa]
+        task: "Publish the Roblox experience using roblox_open_cloud tool. Save publish result as publish_manifest_v1."
+        expected_outputs:
+          - kind: memory_key
+            type: artifact
+            key: publish_manifest_v1

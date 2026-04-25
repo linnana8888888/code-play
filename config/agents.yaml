@@ -117,12 +117,14 @@ agents:
 
   # Roblox
   roblox-systems-scripter:
-    model: "omlx/Qwen3.5-9B-MLX-4bit"
+    model: "anthropic/anthropic.claude-haiku-4-5-20251001-v1:0"
+    fallback_model: "anthropic/anthropic.claude-haiku-4-5-20251001-v1:0"
     description: "Roblox Luau scripting specialist"
     tools: [builtin, core, mcp:Roblox-Studio, mcp]
 
   roblox-experience-designer:
-    model: "omlx/Qwen3.5-9B-MLX-4bit"
+    model: "anthropic/anthropic.claude-haiku-4-5-20251001-v1:0"
+    fallback_model: "anthropic/anthropic.claude-haiku-4-5-20251001-v1:0"
     description: "Roblox engagement and monetization specialist"
     tools: [builtin, core, web_search, web_fetch, mcp:Roblox-Studio, mcp]
 

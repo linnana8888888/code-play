@@ -2093,7 +2093,13 @@ async def _maybe_enforce_cd_verdicts(project_id: str, pipeline_specs: dict) -> N
                 )
 
                 if reject_count < 2:
-                    # Re-queue the upstream agent step(s)
+                    # Re-queue the upstream agent step(s). For multi-upstream
+                    # CD steps (e.g. cd-proposal-check with 4 propose-* steps),
+                    # create all revision tasks first, then a single new CD
+                    # task that depends on every revision. This keeps the
+                    # fan-in structure identical to the original pipeline.
+                    revision_task_ids: list[str] = []
+                    revised_upstream_ids: list[str] = []
                     for upstream_id in upstream_steps:
                         upstream_title = f"[{pname}] {upstream_id}"
                         # Find the most recent completed upstream task for this cycle
@@ -2150,52 +2156,65 @@ async def _maybe_enforce_cd_verdicts(project_id: str, pipeline_specs: dict) -> N
                             metadata=new_upstream_md,
                             expected_outputs=step_expected,
                         ))
+                        revision_task_ids.append(revision_task.id)
+                        revised_upstream_ids.append(upstream_id)
 
-                        # Rewire the CD task's own dependents (the next step after CD)
-                        # to wait on the new revision task instead of the old CD task.
-                        # We also need a new CD check after the revision.
-                        new_cd_md = dict(md)
-                        new_cd_md["cd_reject_count"] = reject_count + 1
-                        new_cd_step_expected = substitute_expected_outputs(
-                            step.get("expected_outputs"),
-                            iteration_tag=iteration_tag,
-                            cycle_n=cycle_n,
+                    if not revision_task_ids:
+                        logger.warning(
+                            "[%s] CD REJECT: no upstream revisions created — skipping",
+                            project_id,
                         )
-                        new_cd_task = task_queue.create(TaskCreate(
-                            project_id=project_id,
-                            title=step_title,
-                            description=step.get("task", ""),
-                            depends_on=[revision_task.id],
-                            created_by=f"pipeline:{pname}",
-                            assignee_type=step.get("agent"),
-                            metadata=new_cd_md,
-                            expected_outputs=new_cd_step_expected,
-                        ))
+                        continue
 
-                        # Rewire downstream dependents of the old CD task to the new CD task
-                        excluded = {revision_task.id, new_cd_task.id}
-                        for dep_id in task_queue._find_dependents(cd_task.id, project_id):
-                            if dep_id in excluded:
-                                continue
-                            task_queue.replace_dependency(dep_id, cd_task.id, new_cd_task.id)
+                    # Create exactly one new CD task that depends on all revisions.
+                    new_cd_md = dict(md)
+                    new_cd_md["cd_reject_count"] = reject_count + 1
+                    new_cd_step_expected = substitute_expected_outputs(
+                        step.get("expected_outputs"),
+                        iteration_tag=iteration_tag,
+                        cycle_n=cycle_n,
+                    )
+                    new_cd_task = task_queue.create(TaskCreate(
+                        project_id=project_id,
+                        title=step_title,
+                        description=step.get("task", ""),
+                        depends_on=list(revision_task_ids),
+                        created_by=f"pipeline:{pname}",
+                        assignee_type=step.get("agent"),
+                        metadata=new_cd_md,
+                        expected_outputs=new_cd_step_expected,
+                    ))
 
-                        logger.info(
-                            "[%s] CD REJECT: re-queued '%s' as task %s (reject_count=%d)",
-                            project_id, upstream_id, revision_task.id, reject_count + 1,
-                        )
-                        await ws_manager.broadcast({
-                            "type": "cd_reject_requeue",
-                            "data": {
-                                "project_id": project_id,
-                                "pipeline": pname,
-                                "cd_step": step_id,
-                                "upstream_step": upstream_id,
-                                "revision_task_id": revision_task.id,
-                                "new_cd_task_id": new_cd_task.id,
-                                "reject_count": reject_count + 1,
-                                "reason": reason,
-                            },
-                        })
+                    # Rewire downstream dependents of the old CD task to the new CD task.
+                    # Do this once, after the new CD task exists.
+                    excluded = set(revision_task_ids) | {new_cd_task.id}
+                    for dep_id in task_queue._find_dependents(cd_task.id, project_id):
+                        if dep_id in excluded:
+                            continue
+                        task_queue.replace_dependency(dep_id, cd_task.id, new_cd_task.id)
+
+                    logger.info(
+                        "[%s] CD REJECT: re-queued %d upstream step(s) %s as tasks %s; new CD task %s (reject_count=%d)",
+                        project_id,
+                        len(revised_upstream_ids),
+                        revised_upstream_ids,
+                        revision_task_ids,
+                        new_cd_task.id,
+                        reject_count + 1,
+                    )
+                    await ws_manager.broadcast({
+                        "type": "cd_reject_requeue",
+                        "data": {
+                            "project_id": project_id,
+                            "pipeline": pname,
+                            "cd_step": step_id,
+                            "upstream_steps": revised_upstream_ids,
+                            "revision_task_ids": revision_task_ids,
+                            "new_cd_task_id": new_cd_task.id,
+                            "reject_count": reject_count + 1,
+                            "reason": reason,
+                        },
+                    })
 
                 else:
                     # >= 2 rejections: escalate to human gate

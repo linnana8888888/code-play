@@ -58,15 +58,17 @@ versions:
     branch: main
     entry: index.html
     status: superseded
-    released_at: null
+    released_at: 2026-04-25
+    itch_build: 1626386
+    itch_userversion: v6.1
     notes: |
       v5: mobile-friendly HUD + on-screen joystick + fire/reload/stomp buttons.
       v6: responsive mobile browser adaptation — scaled touch controls, phone/landscape breakpoints.
       v6.1: AudioContext resume fix for iOS Safari.
       Full iteration infrastructure: GOALS.md (6 targets), playtest_bot.mjs, telemetry/, ITERATION_CONTRACT.md.
-      Superseded by v7 (aesthetic levels) merged into main via PR #2 on 2026-04-25.
+      Shipped to itch build #1626386 as Cheekshot. Superseded by v7 (aesthetic levels) merged into main via PR #2 on 2026-04-25.
     published:
-      itch:     null
+      itch:     https://linnana8888888.itch.io/cheekshot
       gh_pages: null
       roblox:   null
 
@@ -92,8 +94,11 @@ versions:
     ref: bcf0d5b
     branch: v8
     entry: index.html
-    status: active
+    status: shipped
     released_at: 2026-04-25
+    shipped_as: Cheekshot
+    itch_build: 1636527
+    itch_userversion: v8-bcf0d5b
     notes: |
       v8 "Session Time & Satisfaction" — target avg session 1.5min → 5+ min.
       - Continue screen: 10s countdown on death, respawn @ 50% HP + 2s i-frames + −30% score, 1 continue per run
@@ -104,8 +109,8 @@ versions:
       - Kenney Nature Kit per-level background scenery
       - Boss progression bug fix + skydome replaced with 3D backdrop
       Files: index.html, game.mjs, audio.mjs, achievements.mjs (new), backdrop.mjs (new).
-      Merged to main via PR #3. No itch publish yet.
+      Merged to main via PR #3. Shipped to itch build #1636527 (from #1626386) via `butler push` on 2026-04-25.
     published:
-      itch:     null
+      itch:     https://linnana8888888.itch.io/cheekshot
       gh_pages: null
       roblox:   null

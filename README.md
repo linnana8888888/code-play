@@ -55,18 +55,15 @@ Full visual diagrams: [`docs/flowcharts/index.html`](docs/flowcharts/index.html)
 
 ## Shipped games
 
-| Title | Codename | Live URL |
-|-------|----------|----------|
-| Cheekshot | butt-shooting-game v4 (latest itch build) | [itch.io](https://linnana8888888.itch.io/cheekshot) |
-| Cheekshot | butt-shooting-game v3 | [itch.io](https://linnana8888888.itch.io/cheekshot) |
-| Roblox Smoke Test | roblox-smoke-test v1 | [Roblox](https://www.roblox.com/games/126715565755517) (private) |
+| Title | Codename | Live itch build | Notes |
+|-------|----------|-----------------|-------|
+| Cheekshot | butt-shooting-game v8 (latest) | [itch.io](https://linnana8888888.itch.io/cheekshot) build #1636527 | session-time + achievements + 3D backdrop |
+| Cheekshot | butt-shooting-game v6.1 | itch build #1626386 | mobile-responsive HUD, iOS AudioContext fix |
+| Cheekshot | butt-shooting-game v4 | itch build #1623921 | XP gems, level-up modal, stomp |
+| Cheekshot | butt-shooting-game v3 | itch build #1623215 | module split + playtest bot |
+| Roblox Smoke Test | roblox-smoke-test v1 | [Roblox](https://www.roblox.com/games/126715565755517) (private) | orchestrator Roblox pipeline smoke |
 
-**Post-v4 builds on `main` (unpublished):**
-- `v6.1` — mobile-responsive HUD + on-screen joystick, iOS AudioContext fix
-- `v7` (aesthetic levels) — per-level skydome + floor shaders, screen flash/shake/vignette, Toxic Swamp (L4) + Void Dimension (L5)
-- `v8` (session time + satisfaction) — continue screen (10s countdown, 50% HP respawn), end-of-run stats card, 10 localStorage achievements, tiered combo audio, wave progression + local leaderboard, Kenney Nature Kit scenery, 3D backdrop (replaces skydome), boss progression fix
-
-Latest `main` @ `8f480f9` merges PR #3 (v8). Next cycle: itch re-publish via the idempotent publisher.
+Latest `main` @ `8f480f9` merges PR #3 (v8). v7 (aesthetic levels — per-level skydome+floor shaders, Toxic Swamp, Void Dimension) merged to main but superseded by v8 on itch.
 
 ## The agents
 

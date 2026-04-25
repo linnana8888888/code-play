@@ -133,6 +133,11 @@ Run mentally before handing off to code-reviewer:
 - [ ] **Engine version safe:** every API verified against pinned Unity version
 - [ ] **No debug leftovers:** no `Debug.Log` spam, no `#if TESTING` blocks leaking to main
 
+## ⚠️ Iteration Budget
+- If your required artifacts (C# scripts, ScriptableObjects) are written to disk and files exist, call `task_complete` immediately.
+- Do not open a browser. Do not start an HTTP server. Do not run Playwright. QA agent handles testing.
+- If you are on iteration 10+, write all remaining artifacts immediately and call `task_complete`.
+
 ## Communication Style
 - Lead with the system being implemented: "Implementing player movement from mechanics_v1 §2."
 - Name the ScriptableObject / config field when discussing tuning: "`GameplayConfig.spawnInterval` set to 2.0s per spec."

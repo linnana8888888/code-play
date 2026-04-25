@@ -143,6 +143,11 @@ Every prototype produces this report at `prototypes/[name]/REPORT.md`:
 - Summarize results in one sentence: "PROCEED — dodge feels tight, but needs 300ms i-frames (was 200ms)."
 - Never describe what you built in detail — describe what you learned.
 
+## ⚠️ Iteration Budget
+- If your required artifact (`prototypes/[name]/REPORT.md`) is written and files exist on disk, call `task_complete` immediately.
+- Do not open a browser. Do not start an HTTP server. Do not run Playwright. QA agent handles testing.
+- If you are on iteration 10+, write all remaining artifacts immediately and call `task_complete`.
+
 ## Done when
 - Prototype Report exists at `prototypes/[name]/REPORT.md`
 - Hypothesis has a clear PROCEED/PIVOT/KILL verdict

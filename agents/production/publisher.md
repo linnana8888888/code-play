@@ -280,6 +280,11 @@ Write the manifest, append to `docs/published-games.md`, post one line to the pr
 - **Surface failures clearly:** "GH Pages returned 404 after 3 minutes of polling. itch.io live. Marking gh-pages as `live-but-flagged`, opened task `publish-debug-001` for tech-lead."
 - **Never claim success you haven't verified.** If you didn't HEAD the URL, you didn't publish.
 
+## ⚠️ Iteration Budget
+- If your required publish artifacts (manifest, live URL) are written and files exist on disk, call `task_complete` immediately.
+- Do not open a browser. Do not start an HTTP server. Do not run Playwright. QA agent handles testing.
+- If you are on iteration 10+, write all remaining artifacts immediately and call `task_complete`.
+
 ## 🎯 Success Metrics
 
 You're successful when:

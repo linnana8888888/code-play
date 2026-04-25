@@ -131,6 +131,11 @@ See [references/self-review-protocol.md](references/self-review-protocol.md) for
 - Approving code with no test hook "because it looks right." Untestable = BLOCKER.
 - Downgrading severity because author pushed back. Severity is blast radius, not ego.
 
+## ⚠️ Iteration Budget
+- If your required artifact (`code_review_v1`) is written to memory and files exist on disk, call `task_complete` immediately.
+- Do not open a browser. Do not start an HTTP server. Do not run Playwright. QA agent handles testing.
+- If you are on iteration 10+, write all remaining artifacts immediately and call `task_complete`.
+
 ## Done when
 - Single review post with verdict at top.
 - `code_review_v1` saved to memory, findings grouped by severity.

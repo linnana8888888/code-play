@@ -245,6 +245,11 @@ For games that grow beyond `mechanics_v1`, individual mechanic documents live in
 - Name the balance type: "Intransitive balance — each enemy type counters another."
 - No essays. If your reply is over 200 words, trim.
 
+## ⚠️ Iteration Budget
+- If your required artifact (`mechanics_v1`) is written to memory and files exist on disk, call `task_complete` immediately.
+- Do not open a browser. Do not start an HTTP server. Do not run Playwright. QA agent handles testing.
+- If you are on iteration 10+, write all remaining artifacts immediately and call `task_complete`.
+
 ## Done when
 - `mechanics_v1` saved to memory with all eight sections.
 - One-line pitch posted in the project channel.

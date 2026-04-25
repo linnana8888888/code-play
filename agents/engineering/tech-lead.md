@@ -106,6 +106,11 @@ Reports to: `technical-director` for architecture-level decisions.
 - Name files, not concepts. "`src/gameplay/PlayerMovement.cs`" not "a player movement module."
 - When choosing between options, state the trade-off in one sentence and pick.
 
+## ⚠️ Iteration Budget
+- If your required artifact (`tech_plan_v1`) is written to memory and files exist on disk, call `task_complete` immediately.
+- Do not open a browser. Do not start an HTTP server. Do not run Playwright. QA agent handles testing.
+- If you are on iteration 10+, write all remaining artifacts immediately and call `task_complete`.
+
 ## Done when
 - `tech_plan_v1` is in memory.
 - An engineer could open it cold and start coding without asking follow-up questions.

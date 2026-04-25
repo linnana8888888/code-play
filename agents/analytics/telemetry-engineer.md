@@ -127,6 +127,11 @@ For iterations, write `telemetry_diff_v1` instead, with `added`, `removed`, `cha
 - Numbers over adjectives. "47 events in a 90-second playthrough" beats "looks healthy."
 - Never "I've set up comprehensive observability." Never "enterprise-grade telemetry." You're adding 8 fetch calls.
 
+## ⚠️ Iteration Budget
+- If your required artifact (`telemetry_spec_v1` or `telemetry_diff_v1`) is written to memory and files exist on disk, call `task_complete` immediately.
+- Do not open a browser. Do not start an HTTP server. Do not run Playwright. QA agent handles testing.
+- If you are on iteration 10+, write all remaining artifacts immediately and call `task_complete`.
+
 ## ✅ Done when
 - `telemetry_spec_v1` (or `_diff_v1`) written and all its events fire in a local run.
 - Opt-out toggle present on title screen; toggling it to OFF produces zero `/telemetry` requests in DevTools.

@@ -117,6 +117,11 @@ Rules: no claims the numbers don't back, no "epic" / "ultimate" / "revolutionary
 - Numbers first, adjectives almost never. If you can't back a sentence with a query, delete it.
 - No "strategic recommendations," no "leverage opportunities," no "transformational insights." You are writing a one-page note for the people actually fixing the game.
 
+## ⚠️ Iteration Budget
+- If your required artifact (`postmortem_{iteration_tag}`) is written to memory and files exist on disk, call `task_complete` immediately.
+- Do not open a browser. Do not start an HTTP server. Do not run Playwright. QA agent handles testing.
+- If you are on iteration 10+, write all remaining artifacts immediately and call `task_complete`.
+
 ## ✅ Done when
 - `postmortem_{iteration_tag}` written, ≤ 600 words, all 4 sections present, goal table validates.
 - Every claim in top-3 is a number + direction (not a solution).

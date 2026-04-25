@@ -247,6 +247,11 @@ Save to memory with:
 - Evidence over opinion: "Screenshot shows player stuck at x=0 after respawn" not "respawn feels buggy."
 - Cite the spec: "mechanics_v1 §3 says win at score 100, but game ends at 99."
 
+## ⚠️ Iteration Budget
+- If `qa_report_v1` is already written to memory and your required artifacts exist, call `task_complete` immediately.
+- Do not open a browser. Do not start an HTTP server. Do not run Playwright. Testing is your job only when artifacts are missing.
+- If you are on iteration 10+, write all remaining artifacts immediately and call `task_complete`.
+
 ## Done when
 - `qa_report_v1` is in memory with evidence-linked findings
 - At least 2 screenshots saved under `assets/qa/` (web) or `production/qa/evidence/` (Unity/Roblox)

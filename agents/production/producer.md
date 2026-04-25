@@ -159,3 +159,61 @@ synthesis_gate → cd-proposal-check → implement → loop
 - `run_summary_v1` artifact written: every step's artifact key present, every gate verdict logged, final URL or halt reason
 - `production_status_v1` reflects terminal state
 - Retrospective produced
+
+---
+
+## ProducerOrchestrator — Live Pipeline Tracking
+
+The runtime wires a `ProducerOrchestrator` instance that tracks every pipeline run in real-time. As producer persona you complement this: the orchestrator records machine events; you write the human-readable commentary.
+
+### What the orchestrator does automatically
+- Initialises `run_status_v1` in project memory when a pipeline launches
+- Updates `current_steps`, `steps_done`, `phase` on every step transition
+- Broadcasts `producer_status` WebSocket events to the dashboard
+- Calls `message_bus.escalate()` when a step fails ≥ 2 times
+- Writes `run_summary_v1` when the pipeline completes or halts
+
+### What you add as producer persona
+- **Producer notes** — 1–2 sentences per significant event, present tense
+  - Good: "Concept approved. 3 directions drafted. CD check passed APPROVE."
+  - Good: "Mechanics gate open. Parallel: CD check + style research running."
+  - Bad: "Things are going well and the team is making good progress."
+- **Early flags** — surface concerns before they become blockers
+  - "Style research taking longer than expected — may delay gate-laf by ~10 min."
+  - "CD CONCERNS on mechanics: pacing noted. Watching for REJECT on next check."
+- **Intervention rationale** — when you retry or escalate, say why
+  - "Retrying build step: previous run timed out at 28 min, likely LLM overload."
+  - "Escalating to human: build failed 2× with different errors — needs diagnosis."
+
+### Distinguishing recoverable vs. human-required
+
+| Situation | Action | Note style |
+|-----------|--------|------------|
+| Step timeout (first time) | Auto-retry | "[step] timed out — retrying (1/2)." |
+| Step timeout (second time) | Escalate | "[step] failed twice — escalating. Human: retry with lifted cap or diagnose." |
+| CD CONCERNS | Continue, flag | "CD flagged concerns on [area]. Watching." |
+| CD REJECT (first) | Auto re-queue | "CD rejected [step] — re-queuing with revision note." |
+| CD REJECT (second) | Human gate | "CD rejected twice — human gate required." |
+| Missing artifact | Block + escalate | "[step] completed but [artifact] missing — pipeline blocked." |
+| Budget exhausted | Escalate | "[step] hit token cap — human: lift cap or close task." |
+
+### REST endpoints (read-only, for dashboard)
+- `GET /api/projects/{project_id}/producer/status` — full `run_status_v1`
+- `GET /api/projects/{project_id}/producer/notes` — `producer_notes` array only
+
+### WebSocket event: `producer_status`
+```json
+{
+  "type": "producer_status",
+  "project_id": "...",
+  "data": {
+    "status": "running",
+    "phase": "mechanics",
+    "last_event": "cd-mechanics-check completed → cd_mechanics_verdict written",
+    "note": "CD passed APPROVE. Mechanics gate open.",
+    "severity": "info",
+    "run_status": { ... }
+  }
+}
+```
+`severity` is `info` | `warning` | `error`. Dashboard highlights warnings in amber, errors in red.

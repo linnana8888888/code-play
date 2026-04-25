@@ -31,6 +31,7 @@ from src.models.tasks import TaskCreate, TaskStatus, TaskUpdate
 from src.models.agents import AgentStatus
 from src.orchestrator.agent_registry import registry
 from src.orchestrator.task_queue import task_queue
+from src.orchestrator.producer_orchestrator import ProducerOrchestrator
 from src.runtime.llm_router import router
 from src.runtime.tool_executor import tool_executor
 from src.runtime.agent_runtime import agent_runtime
@@ -123,6 +124,14 @@ class ConnectionManager:
 
 
 ws_manager = ConnectionManager()
+
+# Producer orchestrator — wired to broadcast after ws_manager is ready.
+# broadcast_fn is set lazily in lifespan so it captures ws_manager.broadcast.
+producer_orchestrator = ProducerOrchestrator(
+    project_memory=project_memory,
+    message_bus=message_bus,
+    broadcast_fn=lambda data: ws_manager.broadcast(data),
+)
 
 
 # --- App lifecycle ---
@@ -936,6 +945,21 @@ async def _run_agent_task(instance, task_prompt: str, session_id: str = None):
             task_id, instance.id, instance.agent_type or "unknown", instance.model or "unknown",
         )
 
+    # Producer hook: step started
+    if task_id and instance.project_id:
+        _task_for_hook = task_queue.get(task_id)
+        _step_id_for_hook = (
+            _task_for_hook.criterion_id
+            or (_task_for_hook.title.split('] ', 1)[-1] if _task_for_hook and '] ' in (_task_for_hook.title or '') else task_id)
+        ) if _task_for_hook else task_id
+        asyncio.create_task(
+            producer_orchestrator.on_step_started(
+                project_id=instance.project_id,
+                step_id=_step_id_for_hook,
+                agent_id=instance.agent_type or instance.id,
+            )
+        )
+
     final_content = ""
     try:
         # Inject project memory context if available
@@ -1269,6 +1293,21 @@ async def _run_agent_task(instance, task_prompt: str, session_id: str = None):
                         "hint": result["hint"],
                     },
                 })
+                # Producer hook: schema / output violation
+                if instance.project_id:
+                    _sv_task = task_queue.get(instance.task_id)
+                    _sv_sid = (
+                        _sv_task.criterion_id
+                        or (_sv_task.title.split('] ', 1)[-1] if _sv_task and '] ' in (_sv_task.title or '') else instance.task_id)
+                    ) if _sv_task else instance.task_id
+                    asyncio.create_task(
+                        producer_orchestrator.on_schema_violation(
+                            project_id=instance.project_id,
+                            step_id=_sv_sid,
+                            artifact_key="expected_outputs",
+                            errors=missing[:5],
+                        )
+                    )
                 return
 
             # Success — merge worker signal data into result if present
@@ -1290,6 +1329,26 @@ async def _run_agent_task(instance, task_prompt: str, session_id: str = None):
                 })
             except Exception as exc:
                 logger.warning(f"Failed to mark task {instance.task_id} completed: {exc}")
+            else:
+                # Producer hook: step completed (main success path)
+                if instance.project_id and instance.task_id:
+                    _ct = task_queue.get(instance.task_id)
+                    _sid = (
+                        _ct.criterion_id
+                        or (_ct.title.split('] ', 1)[-1] if _ct and '] ' in (_ct.title or '') else instance.task_id)
+                    ) if _ct else instance.task_id
+                    _arts = [
+                        e['key'] for e in ((_ct.expected_outputs or []) if _ct else [])
+                        if e.get('kind') == 'memory_key'
+                    ]
+                    asyncio.create_task(
+                        producer_orchestrator.on_step_completed(
+                            project_id=instance.project_id,
+                            step_id=_sid,
+                            agent_id=instance.agent_type or instance.id,
+                            artifacts_written=_arts,
+                        )
+                    )
         if task_id and worker_monitor.is_running(task_id):
             worker_monitor.unregister(task_id, success=True)
         if instance.project_id:
@@ -1329,6 +1388,22 @@ async def _run_agent_task(instance, task_prompt: str, session_id: str = None):
                 "failure_category": category,
             },
         })
+        # Producer hook: step failed (outer exception path)
+        if instance.project_id and instance.task_id:
+            _ft = task_queue.get(instance.task_id)
+            _fsid = (
+                _ft.criterion_id
+                or (_ft.title.split('] ', 1)[-1] if _ft and '] ' in (_ft.title or '') else instance.task_id)
+            ) if _ft else instance.task_id
+            _retry_count = int((_ft.metadata or {}).get("cd_reject_count", 0)) if _ft else 0
+            asyncio.create_task(
+                producer_orchestrator.on_step_failed(
+                    project_id=instance.project_id,
+                    step_id=_fsid,
+                    reason=err_text[:400],
+                    retry_count=_retry_count,
+                )
+            )
     finally:
         if task_id and worker_monitor.is_running(task_id):
             worker_monitor.unregister(task_id, success=False)
@@ -1541,6 +1616,10 @@ async def _maybe_auto_iterate(project_id: str):
 
     # Default: notify human that V1 is ready for review + goals setup
     logger.info(f"[{project_id}] phased-producer complete — V1 ready for human review")
+    # Producer hook: run completed (shipped)
+    asyncio.create_task(
+        producer_orchestrator.on_run_completed(project_id=project_id, outcome="shipped")
+    )
     await ws_manager.broadcast({
         "type": "v1_review_ready",
         "data": {
@@ -2071,6 +2150,16 @@ async def _maybe_enforce_cd_verdicts(project_id: str, pipeline_specs: dict) -> N
 
                 # Mark enforced regardless of verdict so we don't re-process
                 task_queue.merge_metadata(cd_task.id, {"cd_verdict_enforced": True, "cd_verdict": verdict})
+
+                # Producer hook: CD verdict
+                asyncio.create_task(
+                    producer_orchestrator.on_cd_verdict(
+                        project_id=project_id,
+                        step_id=step_id,
+                        verdict=verdict,
+                        reason=reason,
+                    )
+                )
 
                 if verdict in ("APPROVE", "CONCERNS"):
                     logger.info(
@@ -2873,6 +2962,24 @@ async def search_memory(project_id: str, query: str, mem_type: str = None):
     return results
 
 
+# ==================== Producer status ====================
+
+@app.get("/api/projects/{project_id}/producer/status")
+async def get_producer_status(project_id: str):
+    """Return current run_status_v1 for the project."""
+    status = producer_orchestrator.get_run_status(project_id)
+    if status is None:
+        raise HTTPException(404, "No active or recent producer run for this project")
+    return status
+
+
+@app.get("/api/projects/{project_id}/producer/notes")
+async def get_producer_notes(project_id: str):
+    """Return producer_notes array from run_status_v1."""
+    notes = producer_orchestrator.get_producer_notes(project_id)
+    return {"project_id": project_id, "notes": notes}
+
+
 # ==================== Pipelines ====================
 
 def _load_pipelines_yaml():
@@ -3198,6 +3305,17 @@ async def run_pipeline(pipeline_name: str, body: PipelineRunBody):
             "tasks": created_tasks,
         },
     })
+
+    # Producer orchestrator: kick off run tracking
+    run_id = str(uuid.uuid4())
+    asyncio.create_task(
+        producer_orchestrator.on_run_start(
+            project_id=project_id,
+            pipeline_id=pipeline_name,
+            run_id=run_id,
+            total_steps=len(created_tasks),
+        )
+    )
 
     return {
         "pipeline": pipeline_name,

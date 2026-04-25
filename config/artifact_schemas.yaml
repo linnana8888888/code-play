@@ -68,5 +68,21 @@ schemas:
         type: list
         min_items: 3
 
+  handoff_brief_v1:
+    required_fields: [decisions, artifacts_ready, whats_next, watch_for]
+    field_rules:
+      decisions:
+        type: string
+        min_length: 50
+      artifacts_ready:
+        type: string
+        min_length: 50
+      whats_next:
+        type: string
+        min_length: 50
+      watch_for:
+        type: string
+        min_length: 50
+
   publish_manifest_v1:
     required_fields: [title, description, tags, screenshots, game_url]

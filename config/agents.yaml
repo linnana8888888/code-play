@@ -254,6 +254,12 @@ agents:
     tools: [core, update_criterion_status, propose_agent]
     skills: [product-management:roadmap-management, product-management:feature-spec, superpowers:verification-before-completion]
 
+  handoff-summarizer:
+    model: "anthropic/anthropic.claude-haiku-4-5-20251001-v1:0" # fast summarization, no reasoning needed
+    description: "Writes concise handoff briefs before each human gate — decisions made, artifacts ready, what's next, watch-fors"
+    tools: [core]
+    skills: []
+
   # Publishing — ship gate for QA'd builds (added 2026-04-18)
   # Twisted title generation + itch.io + GH Pages + Roblox Open Cloud (v2).
   # Every external publish tool below is RESTRICTED and routed through the

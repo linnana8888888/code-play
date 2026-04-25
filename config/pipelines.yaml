@@ -15,9 +15,25 @@ pipelines:
             type: artifact
             key: concept_options_v1
 
+      - id: handoff-summarize-concept
+        agent: handoff-summarizer
+        depends_on: ['concept']
+        task: |
+          Read concept_options_v1 from memory. Write a concise handoff brief with:
+                    - Decisions made: 3 directions drafted, target audience identified
+                    - Artifacts ready: concept_options_v1 in memory
+                    - What's next: CD evaluation against Vision Articulation Framework; if approved, mechanics expansion
+                    - Watch for: Are the 3 directions distinct enough? Is the chosen direction's target feel achievable?
+                    Keep under 400 words. Save to memory as artifact key 'handoff_brief_v1'.
+        output: handoff_brief
+        expected_outputs:
+          - kind: memory_key
+            type: artifact
+            key: handoff_brief_v1
+
       - id: gate-concept
         type: human-gate
-        depends_on: [concept]
+        depends_on: [handoff-summarize-concept]
         review_of: concept
         task: "Review the 3 concept directions. Pick one, request changes, or regenerate."
 
@@ -51,9 +67,25 @@ pipelines:
             type: artifact
             key: mechanics_v1
 
+      - id: handoff-summarize-mechanics
+        agent: handoff-summarizer
+        depends_on: ['mechanics', 'cd-concept-check']
+        task: |
+          Read concept_options_v1, mechanics_v1, cd_concept_verdict from memory. Write a concise handoff brief with:
+                    - Decisions made: Concept locked in; core loop defined (player verbs, progression, win/lose); signature systems sketched
+                    - Artifacts ready: mechanics_v1, cd_concept_verdict in memory; style research queued
+                    - What's next: Style research finds 6-10 references; LAF brief grounds visual direction; tech plan picks engine
+                    - Watch for: Are signature systems balanced for target skill level? Does progression curve feel right?
+                    Keep under 400 words. Save to memory as artifact key 'handoff_brief_v1'.
+        output: handoff_brief
+        expected_outputs:
+          - kind: memory_key
+            type: artifact
+            key: handoff_brief_v1
+
       - id: gate-mechanics
         type: human-gate
-        depends_on: [mechanics]
+        depends_on: [handoff-summarize-mechanics]
         review_of: mechanics
         task: "Review the mechanics doc. Approve, or request changes with specific feedback."
 
@@ -144,9 +176,25 @@ pipelines:
             type: artifact
             key: kid_safety_laf_v1
 
+      - id: handoff-summarize-laf
+        agent: handoff-summarizer
+        depends_on: ['kid-safety-laf']
+        task: |
+          Read style_research_v1, laf_brief_v1, kid_safety_laf_v1 from memory. Write a concise handoff brief with:
+                    - Decisions made: Visual direction locked in (palette, character silhouettes, UI chrome, audio tone); kid-safety review passed
+                    - Artifacts ready: laf_brief_v1, style_research_v1 (6-10 reference games), asset_ids mapped
+                    - What's next: Tech plan picks engine and file layout; build step implements game in code
+                    - Watch for: Do chosen assets match research synthesis? Is character design age-appropriate?
+                    Keep under 400 words. Save to memory as artifact key 'handoff_brief_v1'.
+        output: handoff_brief
+        expected_outputs:
+          - kind: memory_key
+            type: artifact
+            key: handoff_brief_v1
+
       - id: gate-laf
         type: human-gate
-        depends_on: [kid-safety-laf]
+        depends_on: [handoff-summarize-laf]
         review_of: look-and-feel
         task: "Review the look-and-feel brief against the style research. Approve, or request changes."
 
@@ -191,9 +239,25 @@ pipelines:
             type: artifact
             key: tech_plan_v1
 
+      - id: handoff-summarize-tech
+        agent: handoff-summarizer
+        depends_on: ['tech-plan']
+        task: |
+          Read tech_plan_v1, laf_brief_v1, mechanics_v1 from memory. Write a concise handoff brief with:
+                    - Decisions made: Engine chosen (three.js/babylon.js/canvas); file layout decided; asset loader strategy defined; test hook set
+                    - Artifacts ready: tech_plan_v1 in memory; scene/screen list; input model; game loop shape
+                    - What's next: Frontend developer builds playable prototype; QA playtests; code review gates shipping
+                    - Watch for: Is test hook convention clear for QA? Does asset loader handle all referenced asset_ids?
+                    Keep under 400 words. Save to memory as artifact key 'handoff_brief_v1'.
+        output: handoff_brief
+        expected_outputs:
+          - kind: memory_key
+            type: artifact
+            key: handoff_brief_v1
+
       - id: gate-tech
         type: human-gate
-        depends_on: [tech-plan]
+        depends_on: [handoff-summarize-tech]
         review_of: tech-plan
         task: "Review the tech plan. Approve the stack + structure, or request changes."
 
@@ -300,9 +364,25 @@ pipelines:
             type: artifact
             key: kid_safety_qa_v1
 
+      - id: handoff-summarize-qa
+        agent: handoff-summarizer
+        depends_on: ['kid-safety-qa']
+        task: |
+          Read qa_report_v1, game_html_v1, kid_safety_qa_v1, telemetry_spec_v1 from memory. Write a concise handoff brief with:
+                    - Decisions made: Game built and passes functional QA; telemetry instrumented; kid-safety review passed; code review approved
+                    - Artifacts ready: game_html_v1 in memory (playable build); qa_report_v1 (all checks pass); telemetry_spec_v1
+                    - What's next: Human plays the game; approves to ship or kicks back to frontend-developer for fixes
+                    - Watch for: Did QA catch all player verbs? Are telemetry events firing? Any console errors?
+                    Keep under 400 words. Save to memory as artifact key 'handoff_brief_v1'.
+        output: handoff_brief
+        expected_outputs:
+          - kind: memory_key
+            type: artifact
+            key: handoff_brief_v1
+
       - id: gate-qa
         type: human-gate
-        depends_on: [kid-safety-qa]
+        depends_on: [handoff-summarize-qa]
         review_of: qa-playtest
         task: |
           Review the QA report + screenshots and actually play the game (primary button on
@@ -491,9 +571,25 @@ pipelines:
             type: artifact
             key: publish_plan_v1
 
+      - id: handoff-summarize-publish
+        agent: handoff-summarizer
+        depends_on: ['publish-prep']
+        task: |
+          Read publish_plan_v1, game_html_v1, qa_report_v1, concept_options_v1 from memory. Write a concise handoff brief with:
+                    - Decisions made: Build QA'd and approved; publish targets confirmed (itch.io, gh-pages, roblox); twisted title candidates generated
+                    - Artifacts ready: publish_plan_v1 in memory (slug, version, resolved ref, package sha256); preflight checklist passed
+                    - What's next: Human picks one twisted title; approves metadata; publisher pushes to live targets
+                    - Watch for: Do title candidates fit the game's tone? Are all asset licenses CC0/CC-BY/Kenney? Is package sha256 stable?
+                    Keep under 400 words. Save to memory as artifact key 'handoff_brief_v1'.
+        output: handoff_brief
+        expected_outputs:
+          - kind: memory_key
+            type: artifact
+            key: handoff_brief_v1
+
       - id: gate-publish
         type: human-gate
-        depends_on: [publish-prep]
+        depends_on: [handoff-summarize-publish]
         review_of: publish-prep
         task: |
           Ship gate. Review publish_plan_v1:

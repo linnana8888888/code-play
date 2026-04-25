@@ -69,16 +69,29 @@ _TRANSIENT_MARKERS = (
 )
 
 
-def _classify_failure(err_text: str, *, terminated_for_budget: bool = False) -> str:
-    """Return `budget_exhausted` | `transient` | `permanent` for a failure.
+def _classify_failure(err_text: str, *, terminated_for_budget: bool = False, exc: Exception | None = None) -> str:
+    """Return `budget_exhausted` | `upstream_timeout` | `transient` | `permanent` for a failure.
 
     Used by `_run_agent_task` and `_advance_pipeline` to tag `task.result`
     so the dashboard can render the right affordance (lift cap, retry,
     or "permanent — fix config").
+
+    `upstream_timeout` is returned when the LLM proxy (e.g. LEGO) returned
+    repeated 504/502 errors and all retries were exhausted. The task is marked
+    `blocked` (not `failed`) so it can be retried cleanly once the upstream
+    recovers.
     """
     if terminated_for_budget:
         return "budget_exhausted"
+    # Check exception type first for precise classification.
+    if exc is not None:
+        from src.runtime.llm_router import UpstreamTimeoutError
+        if isinstance(exc, UpstreamTimeoutError):
+            return "upstream_timeout"
+    # Fall back to string matching for cases where the exception is not available.
     low = (err_text or "").lower()
+    if "upstreamtimeouterror" in low or "upstream_timeout" in low:
+        return "upstream_timeout"
     for m in _TRANSIENT_MARKERS:
         if m in low:
             return "transient"
@@ -1391,7 +1404,7 @@ async def _run_agent_task(instance, task_prompt: str, session_id: str = None):
             await _advance_pipeline(instance.project_id)
     except Exception as e:
         err_text = str(e)
-        category = _classify_failure(err_text)
+        category = _classify_failure(err_text, exc=e)
         logger.error(f"Agent {instance.id} failed ({category}): {err_text}")
         if instance.task_id:
             try:
@@ -3514,6 +3527,27 @@ def _resolve_cycle_tag(task) -> tuple[int | None, str | None]:
 
 def _gate_context(task) -> dict:
     """Look up the pipeline spec for a gate task and pull in the preceding step's result."""
+    # Special case: dynamically-created review-cap-gate tasks are not in the
+    # pipeline YAML, but they carry review_gate_kind="review_cap" in metadata.
+    # Return a synthetic context so /api/gates/{id}/approve can handle them.
+    meta = task.metadata or {}
+    if meta.get("review_gate_kind") == "review_cap":
+        cycle_n, iteration_tag = _resolve_cycle_tag(task)
+        return {
+            "pipeline": (task.created_by or "").split(":", 1)[-1],
+            "pipeline_label": "Review Cap Gate",
+            "step_id": "review-cap-gate",
+            "review_gate_kind": "review_cap",
+            "linked_review_task_id": meta.get("linked_review_task_id"),
+            "review_round_n": meta.get("review_round_n"),
+            "review_of": None,
+            "review_of_agent": None,
+            "prompt": task.description or "",
+            "preceding_result": None,
+            "cycle_n": cycle_n,
+            "iteration_tag": iteration_tag,
+        }
+
     created_by = task.created_by or ""
     if not created_by.startswith("pipeline:"):
         return {}
@@ -3888,6 +3922,38 @@ async def approve_gate(task_id: str, body: GateDecisionBody | None = None):
     result: dict = {"decision": "approved", "feedback": feedback}
     if winner:
         result["pick_winner"] = winner
+
+    # Review-cap-gate: dynamically spawned when the review loop exhausts its
+    # budget. The human can [halt], [extend] (+2 rounds), or just approve to
+    # advance past the loop with an APPROVED verdict.
+    if ctx.get("review_gate_kind") == "review_cap":
+        note = (feedback or "").lower()
+        if "halt" in note:
+            from src.iteration import cycle_state as _cs
+            _cs.set_halt(task.project_id, "review_rounds_exhausted", created_by=f"gate:{task.id}")
+            result["action"] = "halt"
+            result["halt_reason"] = "review_rounds_exhausted"
+            logger.info(f"[{task.project_id}] review-cap-gate {task.id}: halt requested")
+        elif "extend" in note:
+            from src.iteration import review_state as _rs
+            current_budget = _rs.get_budget(task.project_id)
+            new_budget = current_budget + 2
+            _rs.set_budget(task.project_id, new_budget, created_by=f"gate:{task.id}")
+            result["action"] = "extend"
+            result["new_budget"] = new_budget
+            logger.info(
+                f"[{task.project_id}] review-cap-gate {task.id}: extended budget "
+                f"{current_budget} -> {new_budget}"
+            )
+        else:
+            # Default: treat as APPROVED verdict — advance past the review loop
+            result["action"] = "approved"
+            result["verdict"] = "APPROVED"
+            logger.info(f"[{task.project_id}] review-cap-gate {task.id}: approved, advancing pipeline")
+        task_queue.update_status(task.id, TaskStatus.COMPLETED, result=result)
+        await ws_manager.broadcast({"type": "gate_approved", "data": {"task_id": task.id, "review_cap_action": result.get("action")}})
+        await _advance_pipeline(task.project_id)
+        return {"status": "approved", "task_id": task.id, "review_cap_action": result.get("action")}
 
     # Budget gate: the human picks parallel / extend_cap / drop_ideas. We
     # serialise the decision, then dynamically fan out engineer sub-tasks

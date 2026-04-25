@@ -81,7 +81,7 @@ Latest `main` @ `8f480f9` merges PR #3 (v8). v7 (aesthetic levels — per-level 
 | **Research** | style-researcher, mechanic-researcher | Visual references, mechanic teardowns (run in parallel) |
 | **Shared** | common base template | Shared conventions across agents |
 
-Agents route through **Anthropic** (Claude Opus/Sonnet/Haiku), **OpenAI** (GPT-5 via LEGO proxy), and **oMLX** (local Qwen/Gemma — text-only tasks) with automatic fallback chains. Each agent gets scoped tools (lean `core` tier + role-specific extras) and curated skills (brainstorming for designers, TDD for devs, data-viz for analytics, etc.).
+Agents route through **Anthropic** (Claude Opus/Sonnet/Haiku), **OpenAI** (GPT-5), and **oMLX** (local Qwen/Gemma — text-only tasks) with automatic fallback chains. Each agent gets scoped tools (lean `core` tier + role-specific extras) and curated skills (brainstorming for designers, TDD for devs, data-viz for analytics, etc.).
 
 ## Pipelines
 

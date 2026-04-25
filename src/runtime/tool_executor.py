@@ -2310,6 +2310,17 @@ const { chromium } = require('playwright');
         target = args["target"]
         version = args.get("version")
 
+        # BUTLER_SKIP=true/1: simulate a successful publish without butler.
+        # Used in CI/test environments where butler is not installed.
+        butler_skip = _os.environ.get("BUTLER_SKIP", "").lower()
+        if butler_skip in ("true", "1"):
+            return json.dumps({
+                "status": "simulated",
+                "note": "BUTLER_SKIP=true — butler not installed, publish simulated",
+                "target": target,
+                "build_dir": str(build_dir),
+            })
+
         if not build_dir.exists():
             raise FileNotFoundError(f"Build dir not found: {build_dir}")
         if not (build_dir / "index.html").exists():

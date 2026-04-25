@@ -46,7 +46,7 @@ Every `[gate]` is a moment where you review, approve, or redirect. Between gates
 
 ## The agents
 
-34 agents across 8 disciplines, each with a focused role and its own model routing:
+35 agents across 8 disciplines, each with a focused role and its own model routing:
 
 | Discipline | Agents | What they do |
 |-----------|--------|-------------|
@@ -55,11 +55,11 @@ Every `[gate]` is a moment where you review, approve, or redirect. Between gates
 | **Engineering** | frontend-developer, code-reviewer, tech-lead, rapid-prototyper, gameplay-programmer, 5 Unity specialists | Web builds (Three.js/canvas), Unity C#, code review, tech plans |
 | **Leadership** | creative-director, technical-director | Vision guardrails, architecture ownership |
 | **Production** | producer, publisher | Pipeline driver, itch.io/GH Pages/Roblox shipping |
-| **Testing** | qa-engineer, game-performance-tester, game-release-gate | Headless playtests, perf budgets, ship/no-ship gate |
+| **Testing** | qa-engineer, game-performance-tester, game-release-gate, **kid-safety-reviewer** | Headless playtests, perf budgets, ship/no-ship gate, kid-safety checks |
 | **Analytics** | telemetry-engineer, metrics-dashboard-builder, analytics-reporter, player-feedback-synthesizer | Instrumentation, dashboards, postmortems, comment digests |
 | **Research** | style-researcher, mechanic-researcher | Visual references, mechanic teardowns |
 
-Agents route through **Anthropic** (Claude Opus/Sonnet), **OpenAI** (GPT-5), and **oMLX** (local Qwen/Gemma) with automatic fallback chains. Each agent gets scoped tools (lean `core` tier + role-specific extras) and curated skills (brainstorming for designers, TDD for devs, data-viz for analytics, etc.).
+Agents route through **Anthropic** (Claude Opus/Sonnet/Haiku), **OpenAI** (GPT-5 via LEGO proxy), and **oMLX** (local Qwen/Gemma — text-only tasks) with automatic fallback chains. Each agent gets scoped tools (lean `core` tier + role-specific extras) and curated skills (brainstorming for designers, TDD for devs, data-viz for analytics, etc.).
 
 ## Pipelines
 
@@ -161,11 +161,38 @@ code-play/
 └── tests/           # Integration + unit tests
 ```
 
+## Quality gates
+
+Every artifact written to project memory is validated against `config/artifact_schemas.yaml` — required fields are checked at write time, with warnings logged for missing structure.
+
+The **Creative Director** agent issues APPROVE / CONCERNS / REJECT verdicts after every concept, mechanics, and look-and-feel phase. A REJECT automatically re-queues the upstream agent (max 2 retries before escalating to a human gate).
+
+The **playtest bot** acts as a hard gate: if average session length < 90s or level-1 death rate > 3/min, the build is automatically sent back for revision without requiring human review.
+
+A **kid-safety-reviewer** agent (Claude Haiku) runs before the LAF and QA human gates, checking every build against a 7-point checklist for ages 9-12 (violence, controls, readability, humor tone, session length, difficulty, language).
+
 ## Tests
 
 ```bash
+# Unit + integration tests
 python3 -m pytest tests/ -v
+
+# Live integration tests (requires running service)
+CODE_PLAY_URL=http://localhost:8080 python3 -m pytest tests/test_integration_live.py -v
 ```
+
+**Test health (phase1-improvements):** 308 passing, 2 pre-existing failures (aspirational TDD for unbuilt features), 0 regressions.
+
+## Changelog
+
+### phase1-improvements (2026-04-25)
+- **Artifact schema validation** — `config/artifact_schemas.yaml` defines required fields for all 11 memory artifact keys; `task_validator.py` warns on malformed writes
+- **CD verdict enforcement** — Creative Director REJECT now re-queues upstream agent (max 2 retries → human escalation)
+- **Playtest hard gate** — auto-REVISE if session < 90s or death rate > 3/min in level 1
+- **Kid-safety-reviewer agent** — Haiku-powered 7-point safety check before LAF and QA gates
+- **Model routing fix** — oMLX removed from fallback chains for all tool-use agents; replaced with Claude Haiku
+- **Bug fix** — `workspace.py` git worktree cleanup fallback now runs correctly on git failure
+- **+24 live integration tests** covering Phase 1 wiring end-to-end
 
 ## License
 

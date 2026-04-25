@@ -103,7 +103,7 @@ pipelines:
 
       - id: look-and-feel
         agent: technical-artist
-        depends_on: [style-research]
+        depends_on: [cd-mechanics-check, style-research]
         task: |
           Read style_research_v1 from memory FIRST — the brief must match it. Then read
           concept_options_v1 + mechanics_v1. Now ground the look-and-feel:

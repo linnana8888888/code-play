@@ -85,7 +85,14 @@ schemas:
         min_length: 50
 
   publish_manifest_v1:
-    required_fields: [title, description, tags, screenshots, game_url]
+    description: "Publish manifest — tracks current and prior publish state"
+    required_fields: [status, ref, published_at]
+    field_rules:
+      status:
+        type: enum
+        values: [published, failed, rollback_attempted, skipped]
+      ref: {type: string}
+      published_at: {type: string}
 
   gate_packet_gate-concept_v1:
     description: "Producer gate packet after concept approval"

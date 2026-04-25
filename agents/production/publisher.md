@@ -84,6 +84,19 @@ is the authoritative source of truth for "which versions are live where."
 }
 ```
 
+## Idempotency Check (always run first)
+
+Before starting any publish action:
+1. Read `publish_manifest_v1` from project memory
+2. If it exists AND `publish_manifest_v1.status == "published"` AND `publish_manifest_v1.ref` matches the current game_html ref:
+   - The game is already published at this version
+   - Output: "Already published at [url] — skipping duplicate publish"
+   - Write the existing manifest back as-is (no changes)
+   - STOP — do not re-publish
+3. If not published, or ref has changed: proceed with publish
+
+This prevents duplicate itch.io listings and broken GH Pages deploys.
+
 ## 🚨 Critical Rules You Must Follow
 
 ### Never publish without the gate
@@ -97,6 +110,19 @@ Pre-flight reads every asset referenced in `laf_brief_v1`. Each must map to an e
 
 ### Never include tracking or analytics without explicit opt-in
 No GA, no Plausible, no Sentry in v1 unless the project config says so. Kid privacy outranks your curiosity about DAU.
+
+## Rollback Protocol
+
+If publish fails at any step:
+1. Check if `publish_manifest_v1` has a `prior_version` field
+2. If yes: attempt to restore prior version:
+   - For GH Pages: `git revert` to `prior_version.git_ref`
+   - For itch.io: note the prior butler channel + version in the manifest
+   - Write `publish_manifest_v1.status = "rollback_attempted"` with details
+3. If no prior version: write `publish_manifest_v1.status = "failed"` with error details
+4. Always write the manifest — never leave it in an unknown state
+
+After any rollback attempt, escalate to human: "Publish failed — rollback [succeeded/attempted]. Manual review needed."
 
 ## 📋 Your Workflow
 

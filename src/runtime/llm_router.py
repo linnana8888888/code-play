@@ -16,6 +16,27 @@ _log = logging.getLogger(__name__)
 _RETRY_STATUS = {429, 502, 503, 504}
 _RETRY_DELAYS = (1.0, 2.0, 4.0)
 
+# If an agent's accumulated context (input tokens) exceeds this threshold,
+# log a warning so operators know summarisation may be needed.
+# Configurable via MAX_CONTEXT_TOKENS_BEFORE_SUMMARIZE env var (default 8000).
+import os as _os
+try:
+    max_context_tokens_before_summarize: int = int(
+        _os.environ.get("MAX_CONTEXT_TOKENS_BEFORE_SUMMARIZE", "8000")
+    )
+except (ValueError, TypeError):
+    max_context_tokens_before_summarize = 8000
+
+
+class UpstreamTimeoutError(RuntimeError):
+    """Raised when all retry attempts for a 504/502 upstream error are exhausted.
+
+    Callers (agent_runtime / _run_agent_task) catch this to mark the task
+    `blocked` with failure_category="upstream_timeout" rather than "failed",
+    so it can be retried cleanly once the upstream recovers.
+    """
+    pass
+
 
 class LLMRouter:
     def __init__(self):
@@ -40,6 +61,7 @@ class LLMRouter:
         caller's fallback_model path can kick in.
         """
         last_exc: Exception | None = None
+        last_status: int | None = None
         for attempt, delay in enumerate((*_RETRY_DELAYS, 0.0)):
             try:
                 resp = await self._client.post(url, json=json, headers=headers)
@@ -52,8 +74,13 @@ class LLMRouter:
                     )
                     await asyncio.sleep(delay)
                     continue
-                raise
+                # Final transport error — raise as UpstreamTimeoutError so the
+                # task runner can mark it blocked/retryable rather than failed.
+                raise UpstreamTimeoutError(
+                    f"{provider} transport error after {len(_RETRY_DELAYS)} retries: {e}"
+                ) from e
             if resp.status_code in _RETRY_STATUS and delay > 0:
+                last_status = resp.status_code
                 _log.warning(
                     "%s upstream %d, retrying in %.1fs (attempt %d)",
                     provider, resp.status_code, delay, attempt + 1,
@@ -62,13 +89,41 @@ class LLMRouter:
                 continue
             return resp
         if last_exc:
-            raise last_exc
-        return resp  # exhausted retries on 5xx — let caller raise_for_status
+            raise UpstreamTimeoutError(
+                f"{provider} transport error after {len(_RETRY_DELAYS)} retries: {last_exc}"
+            ) from last_exc
+        # Exhausted retries on a 5xx status code.
+        if last_status in (502, 503, 504):
+            raise UpstreamTimeoutError(
+                f"{provider} upstream {last_status} after {len(_RETRY_DELAYS)} retries"
+            )
+        return resp  # exhausted retries on 429 or other — let caller raise_for_status
 
     async def complete(self, request: LLMRequest) -> LLMResponse:
         """Route an LLM request to the appropriate provider."""
         provider = self._resolve_provider(request.model)
         model_id = self._strip_provider_prefix(request.model)
+
+        # Warn when the conversation context is large enough that summarisation
+        # may be needed to avoid context-window / cost issues.
+        if request.messages:
+            # Rough token estimate: ~4 chars per token for the serialised messages.
+            import json as _json_mod
+            try:
+                approx_chars = sum(
+                    len(m.get("content") or "") if isinstance(m.get("content"), str)
+                    else len(_json_mod.dumps(m.get("content") or ""))
+                    for m in request.messages
+                )
+                approx_tokens = approx_chars // 4
+                if approx_tokens > max_context_tokens_before_summarize:
+                    _log.warning(
+                        "Context size ~%d tokens exceeds max_context_tokens_before_summarize=%d "
+                        "for model %s — consider summarising the conversation.",
+                        approx_tokens, max_context_tokens_before_summarize, request.model,
+                    )
+            except Exception:
+                pass  # estimation failure is non-fatal
 
         try:
             if provider == Provider.OPENROUTER:
@@ -81,6 +136,11 @@ class LLMRouter:
                 return await self._call_openai(model_id, request)
             else:
                 raise ValueError(f"Unknown provider: {provider}")
+        except UpstreamTimeoutError:
+            # Don't mark provider unhealthy for transient upstream timeouts —
+            # the proxy may recover. Re-raise so the task runner can classify
+            # the failure as upstream_timeout rather than permanent.
+            raise
         except Exception as e:
             self._provider_health[provider.value] = False
             raise

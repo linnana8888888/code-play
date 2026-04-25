@@ -608,12 +608,19 @@ def test_gate_list_approve_and_advance():
     # None are ready yet — upstream steps are still running/pending
     assert all(not g["ready"] for g in gates)
 
-    # Simulate the concept agent completing so the first gate becomes ready
+    # Simulate the concept agent AND handoff-summarizer completing so the first gate becomes ready
     from src.orchestrator.task_queue import task_queue
     from src.models.tasks import TaskStatus
     concept_id = tasks_by_step["concept"]
     task_queue.update_status(
         concept_id,
+        TaskStatus.COMPLETED,
+        result={"summary": "3 concept directions: (A)/(B)/(C)"},
+    )
+    # Phase 2: gate-concept now depends on handoff-summarize-concept, not concept directly
+    handoff_concept_id = tasks_by_step["handoff-summarize-concept"]
+    task_queue.update_status(
+        handoff_concept_id,
         TaskStatus.COMPLETED,
         result={"summary": "3 concept directions: (A)/(B)/(C)"},
     )
@@ -655,15 +662,27 @@ def test_gate_revise_spawns_revision_and_rebinds():
     concept_id = launch["tasks"]["concept"]
     mechanics_id = launch["tasks"]["mechanics"]
 
-    # Complete concept, approve its gate so mechanics becomes ready
+    # Complete concept + its handoff step, approve gate so mechanics becomes ready
+    # Phase 2: gate-concept depends on handoff-summarize-concept, not concept directly
     task_queue.update_status(concept_id, TaskStatus.COMPLETED, result={"summary": "ok"})
+    task_queue.update_status(
+        launch["tasks"]["handoff-summarize-concept"],
+        TaskStatus.COMPLETED,
+        result={"summary": "ok"},
+    )
     gates = client.get(f"/api/projects/{project_id}/gates").json()
     concept_gate = next(g for g in gates if g["step_id"] == "gate-concept")
     client.post(f"/api/gates/{concept_gate['task_id']}/approve", json={})
 
-    # Complete mechanics so gate-mechanics becomes ready
+    # Complete mechanics + its handoff step so gate-mechanics becomes ready
+    # Phase 2: gate-mechanics depends on handoff-summarize-mechanics, not mechanics directly
     task_queue.update_status(
         mechanics_id,
+        TaskStatus.COMPLETED,
+        result={"summary": "mechanics v1"},
+    )
+    task_queue.update_status(
+        launch["tasks"]["handoff-summarize-mechanics"],
         TaskStatus.COMPLETED,
         result={"summary": "mechanics v1"},
     )
@@ -764,8 +783,14 @@ def test_gate_ready_broadcast_on_pipeline_advance(monkeypatch):
     assert not any(m.get("type") == "gate_ready" for m in captured), \
         "gate_ready fired before upstream completed"
 
-    # Complete concept, then advance — gate_ready should now fire.
+    # Complete concept + handoff step, then advance — gate_ready should now fire.
+    # Phase 2: gate-concept depends on handoff-summarize-concept, not concept directly.
     task_queue.update_status(concept_id, TaskStatus.COMPLETED, result={"summary": "ok"})
+    task_queue.update_status(
+        launch["tasks"]["handoff-summarize-concept"],
+        TaskStatus.COMPLETED,
+        result={"summary": "ok"},
+    )
     captured.clear()
     asyncio.get_event_loop().run_until_complete(_advance_pipeline(project_id))
 
@@ -905,14 +930,18 @@ def test_tech_plan_tasks_created_and_wired_in_launch():
 
     tech_plan_task = task_queue.get(tasks_by_step["tech-plan"])
     gate_tech_task = task_queue.get(tasks_by_step["gate-tech"])
+    handoff_tech_task = task_queue.get(tasks_by_step["handoff-summarize-tech"])
     build_task = task_queue.get(tasks_by_step["build"])
 
     assert tech_plan_task is not None
     assert gate_tech_task is not None
+    assert handoff_tech_task is not None
     assert build_task is not None
 
-    # gate-tech depends on the tech-plan task
-    assert tech_plan_task.id in gate_tech_task.depends_on
+    # Phase 2: gate-tech depends on handoff-summarize-tech (not tech-plan directly)
+    assert handoff_tech_task.id in gate_tech_task.depends_on
+    # handoff-summarize-tech depends on tech-plan
+    assert tech_plan_task.id in handoff_tech_task.depends_on
     # build depends on gate-tech
     assert gate_tech_task.id in build_task.depends_on
 

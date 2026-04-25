@@ -120,11 +120,31 @@ class TaskQueue:
         return self.get(task_id)
 
     def update(self, task_id: str, patch: TaskUpdate) -> Task | None:
-        """Partial update of a task (currently just model_override)."""
+        """Partial update of a task.
+
+        Handles force-complete via `status` + `result` fields:
+        - `status` is stored as its string value (e.g. "completed").
+        - `result` is a free-form string summary; stored as JSON so it is
+          consistent with the rest of the result column (which holds dicts).
+        """
         fields = patch.model_dump(exclude_unset=True)
         if not fields:
             return self.get(task_id)
         now = datetime.now(timezone.utc).isoformat()
+        # Normalise field values before writing to DB.
+        # `status` may arrive as a TaskStatus enum or plain string.
+        if "status" in fields and fields["status"] is not None:
+            sv = fields["status"]
+            fields["status"] = sv.value if hasattr(sv, "value") else str(sv)
+        # `result` arrives as a plain string summary; wrap it in a dict so the
+        # column stays JSON-decodable (task.result is always dict | None).
+        if "result" in fields and fields["result"] is not None:
+            raw_result = fields["result"]
+            if isinstance(raw_result, str):
+                fields["result"] = json.dumps({"summary": raw_result, "force_completed": True})
+            elif isinstance(raw_result, dict):
+                fields["result"] = json.dumps(raw_result)
+            # else leave as-is (already serialised)
         cols = ", ".join(f"{k}=?" for k in fields.keys())
         values = list(fields.values()) + [now, task_id]
         with get_studio_db() as db:

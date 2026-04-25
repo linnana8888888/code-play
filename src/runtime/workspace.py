@@ -91,13 +91,16 @@ class WorkspaceManager:
         """Remove a git worktree and its branch."""
         abs_workspace = workspace_path.resolve()
         try:
-            subprocess.run(
+            result = subprocess.run(
                 ["git", "worktree", "remove", str(abs_workspace), "--force"],
                 cwd=str(project_dir),
                 capture_output=True,
                 text=True,
                 timeout=30,
             )
+            if result.returncode != 0:
+                # git command failed (e.g. not a real worktree) — fall back to rmtree
+                raise subprocess.CalledProcessError(result.returncode, result.args)
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
             # Force cleanup
             shutil.rmtree(workspace_path, ignore_errors=True)

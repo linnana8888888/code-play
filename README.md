@@ -94,6 +94,52 @@ Agents route through **Anthropic** (Claude Opus/Sonnet/Haiku), **OpenAI** (GPT-5
 
 After a game ships, `iterate_artifact` takes over. A headless playtest bot (`playtest_bot.mjs`) drives the game through `window.GameAPI`, collects telemetry, and feeds it into a cyclic pipeline:
 
+```
+live game v{n} on itch.io
+    │
+    ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│  iterate_artifact — cyclic improvement loop                             │
+│                                                                         │
+│  ▸ acquire project lock   ▸ inject cross-game lessons                   │
+│  ▸ qa-engineer snapshots baseline metrics (regression guard)            │
+│                                                                         │
+│  generate bot ── playtest ×5 ── postmortem                              │
+│      │              │              │                                    │
+│      ▼              ▼              ▼                                    │
+│  bot_gen_{{tag}}  telemetry   per-level grade                           │
+│                                                                         │
+│  ─── propose (parallel, all read postmortem) ───                        │
+│     ┌─────────┬─────────┬──────────┬──────────┐                         │
+│     │ designer│ hud/ux  │ art/juice│ code/perf│                         │
+│     └─────────┴─────────┴──────────┴──────────┘                         │
+│                      │                                                  │
+│                      ▼                                                  │
+│              [synthesis gate]  ◄── handoff-summarizer brief             │
+│                      │                                                  │
+│                      ▼                                                  │
+│              CD proposal check (Opus) ── budget estimate                │
+│                      │                                                  │
+│                      ▼                                                  │
+│  implement ── code review ↻×3 ── peer review ── regression test         │
+│  (per-level difficulty tuning)                     │                    │
+│                                                    │                    │
+│               ┌────────────────────────────────────┤                    │
+│               ▼                                    ▼                    │
+│      ↩ loop back to playtest             re-publish (idempotent)        │
+│      (or halt if budget exhausted)                 │                    │
+│                                                    ▼                    │
+│                                             🎪 updated build            │
+│                                                    │                    │
+│                                                    ▼                    │
+│                                    record cycle lessons → next run      │
+│                                                                         │
+│  ─── governance rail on every step ───                                  │
+│  schema hard-block · peer review on-request · WS live status feed ·     │
+│  before/after regression guard (auto-REVISE on regress)                 │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
 0. **Cycle entry** — Producer acquires project lock, cross-game lessons injected, qa-engineer snapshots baseline metrics for regression guard
 1. **Generate bot** — QA engineer reads game source, writes a game-specific bot (not a random walk)
 2. **Playtest** — bot runs 5x, writes telemetry JSON

@@ -86,3 +86,35 @@ schemas:
 
   publish_manifest_v1:
     required_fields: [title, description, tags, screenshots, game_url]
+
+  gate_packet_gate-concept_v1:
+    description: "Producer gate packet after concept approval"
+    required_fields: [approved_at, artifacts_confirmed, next_phase]
+    field_rules:
+      approved_at: {type: string}
+      artifacts_confirmed: {type: list, min_items: 1}
+      next_phase: {type: string}
+
+  gate_packet_gate-mechanics_v1:
+    description: "Producer gate packet after mechanics approval"
+    required_fields: [approved_at, artifacts_confirmed, next_phase]
+    field_rules:
+      approved_at: {type: string}
+      artifacts_confirmed: {type: list, min_items: 1}
+      next_phase: {type: string}
+
+  gate_packet_gate-laf_v1:
+    description: "Producer gate packet after LAF approval"
+    required_fields: [approved_at, artifacts_confirmed, next_phase]
+    field_rules:
+      approved_at: {type: string}
+      artifacts_confirmed: {type: list, min_items: 1}
+      next_phase: {type: string}
+
+  gate_packet_gate-tech_v1:
+    description: "Producer gate packet after tech approval"
+    required_fields: [approved_at, artifacts_confirmed, next_phase]
+    field_rules:
+      approved_at: {type: string}
+      artifacts_confirmed: {type: list, min_items: 1}
+      next_phase: {type: string}

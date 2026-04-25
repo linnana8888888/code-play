@@ -37,9 +37,29 @@ pipelines:
         review_of: concept
         task: "Review the 3 concept directions. Pick one, request changes, or regenerate."
 
+
+      - id: producer-check-concept
+        agent: producer
+        depends_on: [gate-concept]
+        task: |
+          Verify all expected artifacts are present in project memory before advancing.
+          Check each of: concept_options_v1.
+          For each artifact: confirm it exists, has content, and is not a stub.
+          If any artifact is missing or empty, halt and report which step needs to re-run.
+          If all present, write a one-paragraph gate packet to memory as artifact key 'gate_packet_gate-concept_v1':
+            - What was approved at this gate
+            - Artifacts confirmed present
+            - Next phase: CD concept evaluation then mechanics expansion
+            - Any concerns flagged by the human reviewer
+        output: gate_packet
+        expected_outputs:
+          - kind: memory_key
+            type: artifact
+            key: gate_packet_gate-concept_v1
+
       - id: cd-concept-check
         agent: creative-director
-        depends_on: [gate-concept]
+        depends_on: [producer-check-concept]
         task: |
           Read concept_options_v1 from memory (the human just approved one direction).
           Evaluate against the Vision Articulation Framework:
@@ -89,9 +109,29 @@ pipelines:
         review_of: mechanics
         task: "Review the mechanics doc. Approve, or request changes with specific feedback."
 
+
+      - id: producer-check-mechanics
+        agent: producer
+        depends_on: [gate-mechanics]
+        task: |
+          Verify all expected artifacts are present in project memory before advancing.
+          Check each of: concept_options_v1, mechanics_v1.
+          For each artifact: confirm it exists, has content, and is not a stub.
+          If any artifact is missing or empty, halt and report which step needs to re-run.
+          If all present, write a one-paragraph gate packet to memory as artifact key 'gate_packet_gate-mechanics_v1':
+            - What was approved at this gate
+            - Artifacts confirmed present
+            - Next phase: parallel CD mechanics check + style research, then look-and-feel
+            - Any concerns flagged by the human reviewer
+        output: gate_packet
+        expected_outputs:
+          - kind: memory_key
+            type: artifact
+            key: gate_packet_gate-mechanics_v1
+
       - id: cd-mechanics-check
         agent: creative-director
-        depends_on: [gate-mechanics]
+        depends_on: [producer-check-mechanics]
         task: |
           Read mechanics_v1 + concept_options_v1 from memory.
           Evaluate against pillars and player psychology:
@@ -112,7 +152,7 @@ pipelines:
 
       - id: style-research
         agent: style-researcher
-        depends_on: [gate-mechanics]
+        depends_on: [producer-check-mechanics]
         task: |
           Read concept_options_v1 + mechanics_v1 from memory. The target platform style
           reference is Roblox (kids audience, low-poly stylized 3D). Find 6-10 live Roblox
@@ -198,9 +238,29 @@ pipelines:
         review_of: look-and-feel
         task: "Review the look-and-feel brief against the style research. Approve, or request changes."
 
+
+      - id: producer-check-laf
+        agent: producer
+        depends_on: [gate-laf]
+        task: |
+          Verify all expected artifacts are present in project memory before advancing.
+          Check each of: concept_options_v1, mechanics_v1, style_research_v1, laf_brief_v1, kid_safety_laf_v1.
+          For each artifact: confirm it exists, has content, and is not a stub.
+          If any artifact is missing or empty, halt and report which step needs to re-run.
+          If all present, write a one-paragraph gate packet to memory as artifact key 'gate_packet_gate-laf_v1':
+            - What was approved at this gate
+            - Artifacts confirmed present
+            - Next phase: CD LAF check then tech plan
+            - Any concerns flagged by the human reviewer
+        output: gate_packet
+        expected_outputs:
+          - kind: memory_key
+            type: artifact
+            key: gate_packet_gate-laf_v1
+
       - id: cd-laf-check
         agent: creative-director
-        depends_on: [gate-laf]
+        depends_on: [producer-check-laf]
         task: |
           Read laf_brief_v1 + style_research_v1 + concept_options_v1 from memory.
           Evaluate visual/audio coherence with creative vision:
@@ -261,9 +321,29 @@ pipelines:
         review_of: tech-plan
         task: "Review the tech plan. Approve the stack + structure, or request changes."
 
+
+      - id: producer-check-tech
+        agent: producer
+        depends_on: [gate-tech]
+        task: |
+          Verify all expected artifacts are present in project memory before advancing.
+          Check each of: tech_plan_v1.
+          For each artifact: confirm it exists, has content, and is not a stub.
+          If any artifact is missing or empty, halt and report which step needs to re-run.
+          If all present, write a one-paragraph gate packet to memory as artifact key 'gate_packet_gate-tech_v1':
+            - What was approved at this gate
+            - Artifacts confirmed present
+            - Next phase: build phase — frontend-developer implements game
+            - Any concerns flagged by the human reviewer
+        output: gate_packet
+        expected_outputs:
+          - kind: memory_key
+            type: artifact
+            key: gate_packet_gate-tech_v1
+
       - id: build
         agent: frontend-developer
-        depends_on: [gate-tech]
+        depends_on: [producer-check-tech]
         task: |
           Build a playable web prototype from the approved plan. Read these memory keys verbatim
           BEFORE writing any code: concept_options_v1, mechanics_v1, style_research_v1,

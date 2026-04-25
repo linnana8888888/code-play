@@ -172,7 +172,7 @@ def validate_outputs(
                     f"memory[{mem_type}/{key}] — have {have} bytes, need ≥{min_bytes}"
                 )
             else:
-                # Phase 1: warn-only artifact content validation (hard failures in Phase 2)
+                # Phase 2: hard-block on schema validation failures
                 try:
                     import json as _json
                     parsed = _json.loads(content)
@@ -181,6 +181,7 @@ def validate_outputs(
                 schema_errors = validate_artifact_content(key, parsed)
                 for err in schema_errors:
                     _log.warning("[artifact schema] %s (task=%s): %s", key, task.id, err)
+                    missing.append(f"schema violation: {err}")
 
         elif kind == "branch_commit":
             branch = str(entry.get("branch", ""))

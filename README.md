@@ -1,6 +1,6 @@
 # Code PLAY
 
-An AI game studio where 34 specialized agents collaborate to build, playtest, and ship kid-friendly web and Roblox games — from a one-line brief to a live itch.io URL.
+An AI game studio where 35 specialized agents collaborate to build, playtest, and ship kid-friendly web and Roblox games — from a one-line brief to a live itch.io URL.
 
 Not a framework. A studio. You describe a game, agents design it, build it, QA it, and publish it. You make the creative calls at human gates. They do the rest.
 

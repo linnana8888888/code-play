@@ -1560,6 +1560,50 @@ _VERDICT_LINE_RE = re.compile(
     re.IGNORECASE | re.MULTILINE,
 )
 
+# CD verdict format: [CD-CONCEPT]: APPROVE | CONCERNS | REJECT
+_CD_VERDICT_RE = re.compile(
+    r"\[CD-[A-Z]+\]:\s*(APPROVE|CONCERNS|REJECT)(.*?)(?=\n|$)",
+    re.IGNORECASE,
+)
+
+# Map CD step id → (verdict_artifact_key_template, upstream_step_id)
+# For iterate_artifact, cd-proposal-check uses a templated key.
+_CD_STEP_MAP: dict[str, tuple[str, str | list[str]]] = {
+    "cd-concept-check":   ("cd_concept_verdict",   "concept"),
+    "cd-mechanics-check": ("cd_mechanics_verdict",  "mechanics"),
+    "cd-laf-check":       ("cd_laf_verdict",        "look-and-feel"),
+    "cd-proposal-check":  ("cd_iterate_verdict_{{iteration_tag}}", ["propose-designer", "propose-ux", "propose-artist", "propose-proto"]),
+}
+
+
+def _check_cd_verdict(project_id: str, verdict_key: str, db) -> tuple[str, str]:
+    """Read a CD verdict artifact from project memory and parse it.
+
+    Returns (verdict, reason) where verdict is one of:
+      'APPROVE', 'CONCERNS', 'REJECT'
+    and reason is the explanation text (may be empty).
+    Falls back to 'APPROVE' if the artifact is missing or unparseable.
+    """
+    text = project_memory.read(project_id, "artifact", verdict_key)
+    if not text:
+        logger.warning("[%s] CD verdict artifact '%s' missing — treating as APPROVE", project_id, verdict_key)
+        return "APPROVE", ""
+
+    match = _CD_VERDICT_RE.search(text)
+    if not match:
+        logger.warning("[%s] CD verdict artifact '%s' has no parseable verdict — treating as APPROVE", project_id, verdict_key)
+        return "APPROVE", ""
+
+    verdict = match.group(1).upper()
+    reason = match.group(2).strip().lstrip(":").strip()
+    # If reason is empty, try to extract the rest of the line or next sentence
+    if not reason:
+        # Grab everything after the verdict line for context
+        after = text[match.end():].strip()
+        if after:
+            reason = after.split("\n")[0].strip()[:200]
+    return verdict, reason
+
 
 def _parse_verdict(text: str | None) -> str:
     """Extract a normalized verdict from review artifact text.
@@ -1861,6 +1905,259 @@ async def _maybe_resolve_review_loops(project_id: str, pipeline_specs: dict) -> 
                 })
 
 
+async def _maybe_enforce_cd_verdicts(project_id: str, pipeline_specs: dict) -> None:
+    """Check completed CD steps and enforce REJECT verdicts by re-queuing upstream agents.
+
+    For each CD step that has completed without a `cd_verdict_enforced` metadata flag:
+      - APPROVE / CONCERNS: mark enforced, continue.
+      - REJECT (< 2 prior rejections): re-queue the upstream agent step with
+        cd_reject_count incremented and a revision note.
+      - REJECT (>= 2 prior rejections): convert the next human gate to an
+        escalation gate.
+    """
+    all_tasks = task_queue.list_tasks(project_id=project_id)
+
+    for pname, pspec in pipeline_specs.items():
+        steps = pspec.get("steps", []) or []
+        for step in steps:
+            step_id = step.get("id", "")
+            if step_id not in _CD_STEP_MAP:
+                continue
+
+            verdict_key_tpl, upstream_step_or_steps = _CD_STEP_MAP[step_id]
+            step_title = f"[{pname}] {step_id}"
+
+            # Find completed CD tasks not yet enforced
+            candidates = [
+                t for t in all_tasks
+                if t.title == step_title
+                and t.status == TaskStatus.COMPLETED
+                and not (t.metadata or {}).get("cd_verdict_enforced")
+            ]
+
+            for cd_task in candidates:
+                md = cd_task.metadata or {}
+                iteration_tag = md.get("iteration_tag")
+                cycle_n = md.get("cycle_n")
+
+                # Resolve templated verdict key
+                verdict_key = verdict_key_tpl
+                if iteration_tag:
+                    verdict_key = verdict_key.replace("{{iteration_tag}}", str(iteration_tag))
+
+                with get_studio_db() as db:
+                    verdict, reason = _check_cd_verdict(project_id, verdict_key, db)
+
+                # Mark enforced regardless of verdict so we don't re-process
+                task_queue.merge_metadata(cd_task.id, {"cd_verdict_enforced": True, "cd_verdict": verdict})
+
+                if verdict in ("APPROVE", "CONCERNS"):
+                    logger.info(
+                        "[%s] CD step '%s' verdict: %s — continuing pipeline",
+                        project_id, step_id, verdict,
+                    )
+                    continue
+
+                # REJECT path
+                reject_count = int(md.get("cd_reject_count", 0))
+                logger.warning(
+                    "[%s] CD step '%s' REJECT (count=%d): %s",
+                    project_id, step_id, reject_count, reason,
+                )
+
+                upstream_steps = (
+                    upstream_step_or_steps
+                    if isinstance(upstream_step_or_steps, list)
+                    else [upstream_step_or_steps]
+                )
+
+                if reject_count < 2:
+                    # Re-queue the upstream agent step(s)
+                    for upstream_id in upstream_steps:
+                        upstream_title = f"[{pname}] {upstream_id}"
+                        # Find the most recent completed upstream task for this cycle
+                        upstream_candidates = [
+                            t for t in all_tasks
+                            if t.title == upstream_title
+                            and t.status == TaskStatus.COMPLETED
+                        ]
+                        if not upstream_candidates:
+                            logger.warning(
+                                "[%s] CD REJECT: upstream step '%s' not found — cannot re-queue",
+                                project_id, upstream_id,
+                            )
+                            continue
+
+                        upstream_task = max(
+                            upstream_candidates,
+                            key=lambda t: t.updated_at or t.created_at or datetime.min,
+                        )
+                        upstream_step_spec = next(
+                            (s for s in steps if s.get("id") == upstream_id), {}
+                        )
+                        upstream_agent = upstream_step_spec.get("agent")
+                        if not upstream_agent:
+                            logger.warning(
+                                "[%s] CD REJECT: upstream step '%s' has no agent — cannot re-queue",
+                                project_id, upstream_id,
+                            )
+                            continue
+
+                        revision_desc = (
+                            (upstream_task.description or "") +
+                            f"\n\n[CD REVISION REQUEST — attempt {reject_count + 1}/2]\n"
+                            f"CD rejected: {reason} — please revise"
+                        )
+                        new_upstream_md = dict(md)
+                        new_upstream_md["cd_reject_count"] = reject_count + 1
+                        new_upstream_md["cd_reject_reason"] = reason
+
+                        # Re-use the original expected_outputs contract
+                        step_expected = substitute_expected_outputs(
+                            upstream_step_spec.get("expected_outputs"),
+                            iteration_tag=iteration_tag,
+                            cycle_n=cycle_n,
+                        )
+
+                        revision_task = task_queue.create(TaskCreate(
+                            project_id=project_id,
+                            title=f"[{pname}] {upstream_id}",
+                            description=revision_desc,
+                            depends_on=[cd_task.id],
+                            created_by=f"pipeline:{pname}",
+                            assignee_type=upstream_agent,
+                            metadata=new_upstream_md,
+                            expected_outputs=step_expected,
+                        ))
+
+                        # Rewire the CD task's own dependents (the next step after CD)
+                        # to wait on the new revision task instead of the old CD task.
+                        # We also need a new CD check after the revision.
+                        new_cd_md = dict(md)
+                        new_cd_md["cd_reject_count"] = reject_count + 1
+                        new_cd_step_expected = substitute_expected_outputs(
+                            step.get("expected_outputs"),
+                            iteration_tag=iteration_tag,
+                            cycle_n=cycle_n,
+                        )
+                        new_cd_task = task_queue.create(TaskCreate(
+                            project_id=project_id,
+                            title=step_title,
+                            description=step.get("task", ""),
+                            depends_on=[revision_task.id],
+                            created_by=f"pipeline:{pname}",
+                            assignee_type=step.get("agent"),
+                            metadata=new_cd_md,
+                            expected_outputs=new_cd_step_expected,
+                        ))
+
+                        # Rewire downstream dependents of the old CD task to the new CD task
+                        excluded = {revision_task.id, new_cd_task.id}
+                        for dep_id in task_queue._find_dependents(cd_task.id, project_id):
+                            if dep_id in excluded:
+                                continue
+                            task_queue.replace_dependency(dep_id, cd_task.id, new_cd_task.id)
+
+                        logger.info(
+                            "[%s] CD REJECT: re-queued '%s' as task %s (reject_count=%d)",
+                            project_id, upstream_id, revision_task.id, reject_count + 1,
+                        )
+                        await ws_manager.broadcast({
+                            "type": "cd_reject_requeue",
+                            "data": {
+                                "project_id": project_id,
+                                "pipeline": pname,
+                                "cd_step": step_id,
+                                "upstream_step": upstream_id,
+                                "revision_task_id": revision_task.id,
+                                "new_cd_task_id": new_cd_task.id,
+                                "reject_count": reject_count + 1,
+                                "reason": reason,
+                            },
+                        })
+
+                else:
+                    # >= 2 rejections: escalate to human gate
+                    # Find the next human gate downstream of this CD step
+                    downstream_gate = None
+                    for dep_id in task_queue._find_dependents(cd_task.id, project_id):
+                        dep = task_queue.get(dep_id)
+                        if dep and dep.status == TaskStatus.PENDING:
+                            dep_ctx = _gate_context(dep)
+                            if dep_ctx:  # it's a human gate
+                                downstream_gate = dep
+                                break
+
+                    escalation_msg = (
+                        f"CD rejected twice: {reason} — human review required\n\n"
+                        f"The CD step '{step_id}' has rejected this work {reject_count + 1} times. "
+                        "Please review the creative direction and either:\n"
+                        "  [approve] Override CD and proceed with current work\n"
+                        "  [revise] Provide specific direction for the agent to follow\n"
+                        "  [halt] Stop this pipeline branch"
+                    )
+
+                    if downstream_gate:
+                        # Convert the existing gate to an escalation gate
+                        task_queue.merge_metadata(
+                            downstream_gate.id,
+                            {
+                                "escalation_gate": True,
+                                "escalation_reason": escalation_msg,
+                                "cd_step": step_id,
+                                "cd_reject_count": reject_count + 1,
+                            },
+                        )
+                        logger.warning(
+                            "[%s] CD REJECT x2: escalated gate %s for step '%s'",
+                            project_id, downstream_gate.id, step_id,
+                        )
+                        await ws_manager.broadcast({
+                            "type": "cd_escalation_gate",
+                            "data": {
+                                "project_id": project_id,
+                                "pipeline": pname,
+                                "cd_step": step_id,
+                                "gate_task_id": downstream_gate.id,
+                                "reject_count": reject_count + 1,
+                                "reason": reason,
+                                "message": escalation_msg,
+                            },
+                        })
+                    else:
+                        # No downstream gate found — create a new escalation gate
+                        esc_gate = task_queue.create(TaskCreate(
+                            project_id=project_id,
+                            title=f"[{pname}] cd-escalation-gate",
+                            description=escalation_msg,
+                            depends_on=[cd_task.id],
+                            created_by=f"pipeline:{pname}",
+                            metadata={
+                                **md,
+                                "escalation_gate": True,
+                                "escalation_reason": escalation_msg,
+                                "cd_step": step_id,
+                                "cd_reject_count": reject_count + 1,
+                            },
+                        ))
+                        logger.warning(
+                            "[%s] CD REJECT x2: created escalation gate %s for step '%s'",
+                            project_id, esc_gate.id, step_id,
+                        )
+                        await ws_manager.broadcast({
+                            "type": "cd_escalation_gate",
+                            "data": {
+                                "project_id": project_id,
+                                "pipeline": pname,
+                                "cd_step": step_id,
+                                "gate_task_id": esc_gate.id,
+                                "reject_count": reject_count + 1,
+                                "reason": reason,
+                                "message": escalation_msg,
+                            },
+                        })
+
+
 async def _advance_pipeline(project_id: str):
     """Spawn agents for any newly-ready pipeline tasks."""
     pipeline_specs = _load_pipelines_yaml().get("pipelines", {}) or {}
@@ -1871,6 +2168,12 @@ async def _advance_pipeline(project_id: str):
         await _maybe_resolve_review_loops(project_id, pipeline_specs)
     except Exception as exc:
         logger.warning(f"review-loop resolution failed for {project_id}: {exc}")
+
+    # Enforce CD verdicts: re-queue upstream on REJECT, escalate after 2 rejections.
+    try:
+        await _maybe_enforce_cd_verdicts(project_id, pipeline_specs)
+    except Exception as exc:
+        logger.warning(f"CD verdict enforcement failed for {project_id}: {exc}")
 
     # Cyclic pipelines relaunch their first step once their terminal step
     # completes — do this BEFORE resolving ready tasks so the new first-step

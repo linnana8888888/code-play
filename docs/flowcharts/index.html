@@ -1,0 +1,444 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Code PLAY — Pipeline Flowcharts</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: #0f1117; color: #e2e8f0; font-family: 'Inter', system-ui, sans-serif; }
+
+  .tabs { display: flex; gap: 4px; padding: 16px 20px 0; border-bottom: 1px solid #1e2535; }
+  .tab { padding: 8px 20px; border-radius: 8px 8px 0 0; cursor: pointer; font-size: 13px; font-weight: 600; background: #1a1f2e; color: #64748b; border: 1px solid #1e2535; border-bottom: none; transition: all .15s; }
+  .tab.active { background: #1e2535; color: #e2e8f0; border-color: #2d3748; }
+  .tab:hover:not(.active) { color: #94a3b8; }
+
+  .panel { display: none; padding: 24px 20px; }
+  .panel.active { display: block; }
+
+  h2 { font-size: 16px; font-weight: 700; color: #f1f5f9; margin-bottom: 6px; }
+  .subtitle { font-size: 12px; color: #64748b; margin-bottom: 24px; }
+
+  /* Legend */
+  .legend { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 24px; }
+  .legend-item { display: flex; align-items: center; gap: 6px; font-size: 11px; color: #94a3b8; }
+  .legend-dot { width: 12px; height: 12px; border-radius: 3px; flex-shrink: 0; }
+
+  /* Flow */
+  .flow { display: flex; flex-direction: column; gap: 0; }
+  .row { display: flex; align-items: flex-start; justify-content: center; gap: 8px; margin-bottom: 0; }
+  .row.parallel { align-items: stretch; }
+
+  /* Nodes */
+  .node {
+    border-radius: 8px;
+    padding: 8px 12px;
+    font-size: 11px;
+    font-weight: 600;
+    min-width: 140px;
+    max-width: 180px;
+    text-align: center;
+    position: relative;
+    border: 1px solid transparent;
+    line-height: 1.4;
+  }
+  .node .agent-label {
+    font-size: 9px;
+    font-weight: 400;
+    opacity: 0.75;
+    margin-top: 2px;
+    display: block;
+  }
+  .node .artifact-label {
+    font-size: 9px;
+    font-weight: 500;
+    opacity: 0.6;
+    margin-top: 3px;
+    display: block;
+    font-style: italic;
+  }
+
+  /* Node types */
+  .node.game-designer   { background: #1a2744; border-color: #3b82f6; color: #93c5fd; }
+  .node.creative-dir    { background: #2d1a44; border-color: #a855f7; color: #d8b4fe; }
+  .node.human-gate      { background: #1a2d1a; border-color: #22c55e; color: #86efac; }
+  .node.tech-lead       { background: #1a2535; border-color: #0ea5e9; color: #7dd3fc; }
+  .node.frontend-dev    { background: #1a2535; border-color: #38bdf8; color: #bae6fd; }
+  .node.technical-artist{ background: #2d2a1a; border-color: #f59e0b; color: #fcd34d; }
+  .node.style-researcher{ background: #2d2a1a; border-color: #fb923c; color: #fdba74; }
+  .node.qa-engineer     { background: #1a2d2d; border-color: #14b8a6; color: #5eead4; }
+  .node.code-reviewer   { background: #1a2535; border-color: #6366f1; color: #a5b4fc; }
+  .node.telemetry-eng   { background: #1a2535; border-color: #8b5cf6; color: #c4b5fd; }
+  .node.publisher       { background: #2d1a1a; border-color: #ef4444; color: #fca5a5; }
+  .node.rapid-proto     { background: #1a2535; border-color: #06b6d4; color: #a5f3fc; }
+  .node.kid-safety      { background: #1a2d1a; border-color: #4ade80; color: #bbf7d0; }
+  .node.handoff         { background: #1e2535; border-color: #475569; color: #94a3b8; }
+  .node.analytics       { background: #2d1a2d; border-color: #ec4899; color: #f9a8d4; }
+  .node.hud-designer    { background: #2d2a1a; border-color: #eab308; color: #fef08a; }
+  .node.game-designer-iter { background: #1a2744; border-color: #3b82f6; color: #93c5fd; }
+
+  /* Arrows */
+  .arrow { display: flex; justify-content: center; align-items: center; height: 20px; color: #334155; font-size: 14px; }
+  .arrow-h { display: flex; align-items: center; color: #334155; font-size: 14px; padding: 0 4px; align-self: center; }
+
+  /* Parallel block */
+  .parallel-block {
+    display: flex;
+    gap: 8px;
+    align-items: flex-start;
+    justify-content: center;
+    padding: 12px;
+    border: 1px dashed #2d3748;
+    border-radius: 10px;
+    background: #0d1117;
+    position: relative;
+  }
+  .parallel-label {
+    position: absolute;
+    top: -9px;
+    left: 12px;
+    background: #0d1117;
+    padding: 0 6px;
+    font-size: 9px;
+    color: #475569;
+    font-weight: 600;
+    letter-spacing: .05em;
+    text-transform: uppercase;
+  }
+  .parallel-col { display: flex; flex-direction: column; align-items: center; gap: 0; }
+
+  /* Phase labels */
+  .phase-label {
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    color: #475569;
+    text-align: center;
+    margin: 4px 0 2px;
+  }
+
+  /* Connector lines */
+  .connector { width: 1px; height: 16px; background: #1e2535; margin: 0 auto; }
+  .connector-h { height: 1px; width: 20px; background: #1e2535; align-self: center; }
+
+  /* Review loop badge */
+  .loop-badge {
+    display: inline-block;
+    background: #1e2535;
+    border: 1px solid #334155;
+    border-radius: 4px;
+    font-size: 9px;
+    color: #64748b;
+    padding: 1px 5px;
+    margin-top: 3px;
+  }
+
+  .section-divider {
+    border: none;
+    border-top: 1px dashed #1e2535;
+    margin: 16px 0;
+  }
+
+  .flow-wrapper {
+    overflow-x: auto;
+    padding-bottom: 24px;
+  }
+  .flow-inner {
+    min-width: 600px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+</style>
+</head>
+<body>
+
+<div class="tabs">
+  <div class="tab active" onclick="switchTab('new-game')">🎮 New Game Pipeline</div>
+  <div class="tab" onclick="switchTab('iterate')">🔄 Iterate Existing Game</div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════ NEW GAME PIPELINE -->
+<div id="new-game" class="panel active">
+  <h2>New Game Pipeline — phased-producer</h2>
+  <p class="subtitle">Concept → Mechanics → Style → Look &amp; Feel → Tech Plan → Build → QA → Review → Publish</p>
+
+  <div class="legend">
+    <div class="legend-item"><div class="legend-dot" style="background:#3b82f6"></div> game-designer</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#a855f7"></div> creative-director (Opus)</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#22c55e"></div> human gate</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#f59e0b"></div> technical-artist</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#fb923c"></div> style-researcher</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#0ea5e9"></div> tech-lead</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#38bdf8"></div> frontend-developer</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#14b8a6"></div> qa-engineer</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#4ade80"></div> kid-safety-reviewer</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#475569"></div> handoff-summarizer</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#8b5cf6"></div> telemetry-engineer</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#6366f1"></div> code-reviewer</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#06b6d4"></div> rapid-prototyper</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#ef4444"></div> publisher</div>
+  </div>
+
+  <div class="flow-wrapper">
+  <div class="flow-inner">
+
+    <!-- CONCEPT PHASE -->
+    <div class="phase-label">── concept phase ──</div>
+    <div class="row">
+      <div class="node game-designer">Concept<span class="agent-label">game-designer · Sonnet</span><span class="artifact-label">→ concept_options_v1</span></div>
+    </div>
+    <div class="connector"></div>
+    <div class="row">
+      <div class="node handoff">Handoff Brief<span class="agent-label">handoff-summarizer · Haiku</span><span class="artifact-label">→ handoff_brief_v1</span></div>
+    </div>
+    <div class="connector"></div>
+    <div class="row">
+      <div class="node human-gate">🧑 Gate: Concept<span class="agent-label">human review</span></div>
+    </div>
+    <div class="connector"></div>
+    <div class="row">
+      <div class="node creative-dir">CD Concept Check<span class="agent-label">creative-director · Opus</span><span class="artifact-label">→ cd_concept_verdict</span></div>
+    </div>
+
+    <div class="connector"></div>
+    <hr class="section-divider">
+
+    <!-- MECHANICS PHASE -->
+    <div class="phase-label">── mechanics phase ──</div>
+    <div class="row">
+      <div class="node game-designer">Mechanics<span class="agent-label">game-designer · Sonnet</span><span class="artifact-label">→ mechanics_v1</span></div>
+    </div>
+    <div class="connector"></div>
+    <div class="row">
+      <div class="node handoff">Handoff Brief<span class="agent-label">handoff-summarizer · Haiku</span><span class="artifact-label">→ handoff_brief_v1</span></div>
+    </div>
+    <div class="connector"></div>
+    <div class="row">
+      <div class="node human-gate">🧑 Gate: Mechanics<span class="agent-label">human review</span></div>
+    </div>
+
+    <!-- PARALLEL: cd-mechanics-check + style-research -->
+    <div class="connector"></div>
+    <div class="parallel-block" style="margin:0 auto;">
+      <div class="parallel-label">parallel</div>
+      <div class="parallel-col">
+        <div class="node creative-dir">CD Mechanics Check<span class="agent-label">creative-director · Opus</span><span class="artifact-label">→ cd_mechanics_verdict</span></div>
+      </div>
+      <div class="connector-h"></div>
+      <div class="parallel-col">
+        <div class="node style-researcher">Style Research<span class="agent-label">style-researcher · Sonnet</span><span class="artifact-label">→ style_research_v1</span></div>
+      </div>
+    </div>
+
+    <div class="connector"></div>
+    <hr class="section-divider">
+
+    <!-- LAF PHASE -->
+    <div class="phase-label">── look &amp; feel phase ──</div>
+    <div class="row">
+      <div class="node technical-artist">Look &amp; Feel<span class="agent-label">technical-artist · Sonnet</span><span class="artifact-label">→ laf_brief_v1</span></div>
+    </div>
+    <div class="connector"></div>
+    <div class="row">
+      <div class="node kid-safety">Kid Safety (LAF)<span class="agent-label">kid-safety-reviewer · Haiku</span><span class="artifact-label">→ kid_safety_laf_v1</span></div>
+    </div>
+    <div class="connector"></div>
+    <div class="row">
+      <div class="node handoff">Handoff Brief<span class="agent-label">handoff-summarizer · Haiku</span><span class="artifact-label">→ handoff_brief_v1</span></div>
+    </div>
+    <div class="connector"></div>
+    <div class="row">
+      <div class="node human-gate">🧑 Gate: LAF<span class="agent-label">human review</span></div>
+    </div>
+    <div class="connector"></div>
+    <div class="row">
+      <div class="node creative-dir">CD LAF Check<span class="agent-label">creative-director · Opus</span><span class="artifact-label">→ cd_laf_verdict</span></div>
+    </div>
+
+    <div class="connector"></div>
+    <hr class="section-divider">
+
+    <!-- TECH PHASE -->
+    <div class="phase-label">── tech phase ──</div>
+    <div class="row">
+      <div class="node tech-lead">Tech Plan<span class="agent-label">tech-lead · Sonnet</span><span class="artifact-label">→ tech_plan_v1</span></div>
+    </div>
+    <div class="connector"></div>
+    <div class="row">
+      <div class="node handoff">Handoff Brief<span class="agent-label">handoff-summarizer · Haiku</span><span class="artifact-label">→ handoff_brief_v1</span></div>
+    </div>
+    <div class="connector"></div>
+    <div class="row">
+      <div class="node human-gate">🧑 Gate: Tech<span class="agent-label">human review</span></div>
+    </div>
+
+    <div class="connector"></div>
+    <hr class="section-divider">
+
+    <!-- BUILD PHASE -->
+    <div class="phase-label">── build phase ──</div>
+    <div class="row">
+      <div class="node frontend-dev">Build<span class="agent-label">frontend-developer · Sonnet</span><span class="artifact-label">→ game_html_v1</span></div>
+    </div>
+    <div class="connector"></div>
+    <div class="row">
+      <div class="node telemetry-eng">Telemetry Spec<span class="agent-label">telemetry-engineer · Haiku</span><span class="artifact-label">→ telemetry_spec_v1</span></div>
+    </div>
+    <div class="connector"></div>
+    <div class="row">
+      <div class="node frontend-dev">Instrument<span class="agent-label">frontend-developer · Sonnet</span><span class="artifact-label">→ game_html_v1 (updated)</span></div>
+    </div>
+
+    <div class="connector"></div>
+    <hr class="section-divider">
+
+    <!-- QA PHASE -->
+    <div class="phase-label">── qa phase ──</div>
+    <div class="row">
+      <div class="node qa-engineer">QA Playtest<span class="agent-label">qa-engineer · Sonnet</span><span class="artifact-label">→ qa_report_v1</span></div>
+    </div>
+    <div class="connector"></div>
+    <div class="row">
+      <div class="node kid-safety">Kid Safety (QA)<span class="agent-label">kid-safety-reviewer · Haiku</span><span class="artifact-label">→ kid_safety_qa_v1</span></div>
+    </div>
+    <div class="connector"></div>
+    <div class="row">
+      <div class="node handoff">Handoff Brief<span class="agent-label">handoff-summarizer · Haiku</span><span class="artifact-label">→ handoff_brief_v1</span></div>
+    </div>
+    <div class="connector"></div>
+    <div class="row">
+      <div class="node human-gate">🧑 Gate: QA<span class="agent-label">human review + play</span></div>
+    </div>
+    <div class="connector"></div>
+    <div class="row">
+      <div class="node code-reviewer">Code Review<span class="agent-label">code-reviewer · Sonnet</span><span class="artifact-label">→ code_review_r1<span class="loop-badge">review loop ×3</span></span></div>
+    </div>
+    <div class="connector"></div>
+    <div class="row">
+      <div class="node rapid-proto">Scaffold Iteration<span class="agent-label">rapid-prototyper · Sonnet</span><span class="artifact-label">→ iteration_scaffold_v1</span></div>
+    </div>
+
+    <div class="connector"></div>
+    <hr class="section-divider">
+
+    <!-- PUBLISH PHASE -->
+    <div class="phase-label">── publish phase ──</div>
+    <div class="row">
+      <div class="node publisher">Publish Prep<span class="agent-label">publisher · Haiku</span><span class="artifact-label">→ publish_plan_v1</span></div>
+    </div>
+    <div class="connector"></div>
+    <div class="row">
+      <div class="node handoff">Handoff Brief<span class="agent-label">handoff-summarizer · Haiku</span><span class="artifact-label">→ handoff_brief_v1</span></div>
+    </div>
+    <div class="connector"></div>
+    <div class="row">
+      <div class="node human-gate">🧑 Gate: Publish<span class="agent-label">pick title + approve</span></div>
+    </div>
+    <div class="connector"></div>
+    <div class="row">
+      <div class="node publisher">Publish<span class="agent-label">publisher · Haiku</span><span class="artifact-label">→ publish_manifest_v1</span></div>
+    </div>
+    <div class="connector"></div>
+    <div class="row">
+      <div class="node human-gate" style="background:#0d2d1a;border-color:#16a34a;">🎪 Live on itch.io / gh-pages / Roblox</div>
+    </div>
+
+  </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════ ITERATE PIPELINE -->
+<div id="iterate" class="panel">
+  <h2>Iterate Existing Game — iterate_artifact</h2>
+  <p class="subtitle">Cyclic: Playtest → Postmortem → 4× Proposals → Human picks → CD check → Implement → Review → repeat</p>
+
+  <div class="legend">
+    <div class="legend-item"><div class="legend-dot" style="background:#14b8a6"></div> qa-engineer</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#ec4899"></div> analytics-reporter</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#3b82f6"></div> game-designer</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#eab308"></div> hud-designer</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#f59e0b"></div> technical-artist</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#38bdf8"></div> frontend-developer</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#a855f7"></div> creative-director (Opus)</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#6366f1"></div> code-reviewer</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#22c55e"></div> human gate</div>
+  </div>
+
+  <div class="flow-wrapper">
+  <div class="flow-inner">
+
+    <div class="phase-label">── cycle start ──</div>
+    <div class="row">
+      <div class="node qa-engineer">Generate Bot<span class="agent-label">qa-engineer · Sonnet</span><span class="artifact-label">→ bot_generation_{{tag}}</span></div>
+    </div>
+    <div class="connector"></div>
+    <div class="row">
+      <div class="node qa-engineer">Playtest ×5<span class="agent-label">qa-engineer · Sonnet</span><span class="artifact-label">→ telemetry_{{tag}}</span></div>
+    </div>
+    <div class="connector"></div>
+    <div class="row">
+      <div class="node analytics">Postmortem<span class="agent-label">analytics-reporter · Haiku</span><span class="artifact-label">→ postmortem_{{tag}}</span></div>
+    </div>
+
+    <div class="connector"></div>
+    <hr class="section-divider">
+    <div class="phase-label">── 4 parallel proposals ──</div>
+
+    <div class="parallel-block" style="margin:0 auto; gap:6px;">
+      <div class="parallel-label">parallel · all read postmortem</div>
+      <div class="parallel-col">
+        <div class="node game-designer-iter" style="min-width:120px;max-width:130px;">Mechanics<span class="agent-label">game-designer</span><span class="artifact-label">proposal_designer</span></div>
+      </div>
+      <div class="parallel-col">
+        <div class="node hud-designer" style="min-width:120px;max-width:130px;">HUD / UX<span class="agent-label">hud-designer</span><span class="artifact-label">proposal_ux</span></div>
+      </div>
+      <div class="parallel-col">
+        <div class="node technical-artist" style="min-width:120px;max-width:130px;">Art / Juice<span class="agent-label">technical-artist</span><span class="artifact-label">proposal_artist</span></div>
+      </div>
+      <div class="parallel-col">
+        <div class="node frontend-dev" style="min-width:120px;max-width:130px;">Code / Perf<span class="agent-label">frontend-dev</span><span class="artifact-label">proposal_proto</span></div>
+      </div>
+    </div>
+
+    <div class="connector"></div>
+    <div class="row">
+      <div class="node human-gate">🧑 Synthesis Gate<span class="agent-label">pick 1 proposal (or halt)</span></div>
+    </div>
+    <div class="connector"></div>
+    <div class="row">
+      <div class="node creative-dir">CD Proposal Check<span class="agent-label">creative-director · Opus</span><span class="artifact-label">→ cd_iterate_verdict_{{tag}}</span></div>
+    </div>
+
+    <div class="connector"></div>
+    <hr class="section-divider">
+    <div class="phase-label">── implement &amp; review ──</div>
+
+    <div class="row">
+      <div class="node frontend-dev">Implement<span class="agent-label">frontend-developer · Sonnet</span><span class="artifact-label">→ game_html_v{n+1}</span></div>
+    </div>
+    <div class="connector"></div>
+    <div class="row">
+      <div class="node code-reviewer">Code Review<span class="agent-label">code-reviewer · Sonnet</span><span class="artifact-label">→ code_review_v{n+1}_r1<span class="loop-badge">review loop ×3</span></span></div>
+    </div>
+
+    <div class="connector"></div>
+    <div class="row">
+      <div class="node human-gate" style="background:#1a2d2d;border-color:#0d9488;">↩ Loop back to Playtest<span class="agent-label">or halt if budget exhausted</span></div>
+    </div>
+
+  </div>
+  </div>
+</div>
+
+<script>
+function switchTab(id) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+  document.getElementById(id).classList.add('active');
+  event.target.classList.add('active');
+}
+</script>
+</body>
+</html>

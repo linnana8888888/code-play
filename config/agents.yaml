@@ -23,7 +23,7 @@
 
 defaults:
   model: "omlx/Qwen3.5-9B-MLX-4bit"
-  fallback_model: "omlx/Qwen3.5-9B-MLX-4bit"
+  fallback_model: "anthropic/anthropic.claude-haiku-4-5-20251001-v1:0"
   temperature: 0.7
   max_tokens: 4096
   budget_max_tokens: 2000000   # 2M tokens — system prompt + tools consume ~600k baseline
@@ -46,14 +46,14 @@ agents:
 
   game-audio-engineer:
     model: "anthropic/anthropic.claude-sonnet-4-6"
-    fallback_model: "omlx/Qwen3.5-9B-MLX-4bit"
+    fallback_model: "anthropic/anthropic.claude-haiku-4-5-20251001-v1:0"
     description: "Picks 5-7 SFX from approved free pools + wires Web Audio API / Roblox SoundService"
     tools: [core, asset_search, asset_fetch]
     skills: [superpowers:verification-before-completion]
 
   technical-artist:
     model: "anthropic/anthropic.claude-sonnet-4-6"
-    fallback_model: "omlx/Qwen3.5-9B-MLX-4bit"
+    fallback_model: "anthropic/anthropic.claude-haiku-4-5-20251001-v1:0"
     description: "Palette + sprite atlas + hero glyph + 8-pool asset license audit for web/Roblox"
     tools: [core, web_search, web_fetch, asset_search, asset_fetch]
     skills: [document-skills:canvas-design, superpowers:verification-before-completion]
@@ -128,7 +128,7 @@ agents:
 
   roblox-avatar-creator:
     model: "anthropic/anthropic.claude-sonnet-4-6"
-    fallback_model: "omlx/Qwen3.5-9B-MLX-4bit"
+    fallback_model: "anthropic/anthropic.claude-haiku-4-5-20251001-v1:0"
     description: "Roblox UGC / avatar pipeline specialist — rigging, Classic + Layered Clothing, Creator Marketplace submission"
     tools: [core, asset_search, asset_fetch, mcp:Roblox-Studio]
 
@@ -145,7 +145,7 @@ agents:
 
   game-performance-tester:
     model: "anthropic/anthropic.claude-sonnet-4-6"
-    fallback_model: "omlx/Qwen3.5-9B-MLX-4bit"
+    fallback_model: "anthropic/anthropic.claude-haiku-4-5-20251001-v1:0"
     description: "Runtime performance QA — frame rate, load time, heap on web (playwright) + static/microprofiler reasoning on Roblox"
     tools: [core, playwright_browser, mcp:playwright]
 
@@ -210,7 +210,7 @@ agents:
   # stripped — these are kid-game roles, not microsite/IA/design-system roles.
   hud-designer:
     model: "anthropic/anthropic.claude-sonnet-4-6"
-    fallback_model: "omlx/Qwen3.5-9B-MLX-4bit"
+    fallback_model: "anthropic/anthropic.claude-haiku-4-5-20251001-v1:0"
     description: "Lays out title + HUD + pause + win/lose screens for kid web/Roblox games; produces hud_spec_v1"
     tools: [core, web_search, web_fetch]
     skills: [document-skills:frontend-design, design-consultation]
@@ -254,7 +254,7 @@ agents:
   # approval queue, same pattern as git_push.
   publisher:
     model: "anthropic/anthropic.claude-sonnet-4-6"
-    fallback_model: "omlx/Qwen3.5-9B-MLX-4bit"
+    fallback_model: "anthropic/anthropic.claude-haiku-4-5-20251001-v1:0"
     description: "Packages approved builds, generates twisted title candidates, publishes to itch.io + GH Pages + Roblox, verifies live URLs, records manifest"
     tools: [core, web_fetch, playwright_browser, mcp:playwright, itchio_publish, gh_pages_publish, roblox_publish, git_push]
 
@@ -282,7 +282,7 @@ agents:
   # Tableau, PostgreSQL tuning) stripped — kid-game studio scale is sqlite + fetch().
   telemetry-engineer:
     model: "anthropic/anthropic.claude-sonnet-4-6"
-    fallback_model: "omlx/Qwen3.5-9B-MLX-4bit"
+    fallback_model: "anthropic/anthropic.claude-haiku-4-5-20251001-v1:0"
     description: "Instruments game_html + Roblox ServerScripts with the 8-event default catalogue; produces telemetry_spec_v1/_diff_v1; kid-safe, no PII, ≤2 events/sec"
     tools: [core, repo_file_read, repo_file_write, repo_file_list, external_repo_commit]
 
@@ -302,6 +302,6 @@ agents:
 
   player-feedback-synthesizer:
     model: "anthropic/anthropic.claude-sonnet-4-6"
-    fallback_model: "omlx/Qwen3.5-9B-MLX-4bit"
+    fallback_model: "anthropic/anthropic.claude-haiku-4-5-20251001-v1:0"
     description: "Digests itch.io/GH Pages/Roblox comments + studio DMs into 3-5 themes with ≥3 backing quotes each; produces player_feedback_v{N}"
     tools: [core, web_fetch, playwright_browser, mcp:playwright]

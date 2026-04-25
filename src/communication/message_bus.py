@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import uuid
 from datetime import datetime, timezone
 
 from src.models.messages import Message, EscalationRequest
@@ -18,6 +19,8 @@ class MessageBus:
         # Pending escalations: escalation_id -> asyncio.Event
         self._pending_escalations: dict[int, asyncio.Event] = {}
         self._escalation_responses: dict[int, str] = {}
+        # Peer review: request_id -> asyncio.Future
+        self._peer_review_requests: dict[str, asyncio.Future] = {}
         # WebSocket broadcast callback (set by FastAPI)
         self._ws_broadcast: callable = None
 
@@ -248,6 +251,88 @@ class MessageBus:
                 (project_id,),
             ).fetchall()
         return [r["channel"] for r in rows]
+
+    # --- Agent-to-Agent Peer Review ---
+
+    async def request_peer_review(
+        self,
+        project_id: str,
+        from_agent: str,
+        to_agent: str,
+        question: str,
+        context: str = "",
+    ) -> str:
+        """
+        Send a direct review request from one agent to another.
+        Posts a message to the project channel tagged for the target agent.
+        Returns a request_id the caller can use to poll for the response.
+        """
+        request_id = str(uuid.uuid4())
+        loop = asyncio.get_event_loop()
+        future: asyncio.Future = loop.create_future()
+        self._peer_review_requests[request_id] = future
+
+        content = json.dumps({
+            "type": "peer_review_request",
+            "request_id": request_id,
+            "from_agent": from_agent,
+            "to_agent": to_agent,
+            "question": question,
+            "context": context,
+        })
+        await self.post(
+            project_id=project_id,
+            channel="peer-review",
+            sender=from_agent,
+            content=content,
+            mentions=[to_agent],
+        )
+        return request_id
+
+    async def post_peer_review_response(
+        self,
+        project_id: str,
+        request_id: str,
+        from_agent: str,
+        response: str,
+    ) -> None:
+        """
+        Post a response to a peer review request.
+        Resolves the pending request_id.
+        """
+        content = json.dumps({
+            "type": "peer_review_response",
+            "request_id": request_id,
+            "from_agent": from_agent,
+            "response": response,
+        })
+        await self.post(
+            project_id=project_id,
+            channel="peer-review",
+            sender=from_agent,
+            content=content,
+        )
+        future = self._peer_review_requests.get(request_id)
+        if future and not future.done():
+            future.set_result(response)
+
+    async def wait_for_peer_review(
+        self,
+        request_id: str,
+        timeout_seconds: float = 30.0,
+    ) -> str | None:
+        """
+        Wait for a peer review response.
+        Returns the response string, or None on timeout.
+        """
+        future = self._peer_review_requests.get(request_id)
+        if future is None:
+            return None
+        try:
+            result = await asyncio.wait_for(asyncio.shield(future), timeout=timeout_seconds)
+            return result
+        except asyncio.TimeoutError:
+            return None
 
 
 # Singleton

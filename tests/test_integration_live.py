@@ -372,20 +372,34 @@ def test_live_phase1_style_research_before_laf(pipeline_project):
 
 
 def test_live_phase1_tech_plan_before_gate_tech(pipeline_project):
-    """Phase 1: gate-tech depends on tech-plan."""
+    """Phase 2: gate-tech depends on handoff-summarize-tech, which depends on tech-plan."""
     tasks = pipeline_project["launch"].get("tasks", {})
     assert "tech-plan" in tasks
     assert "gate-tech" in tasks
+    assert "handoff-summarize-tech" in tasks, (
+        "Phase 2: handoff-summarize-tech task must be created by pipeline launch"
+    )
 
     pid = pipeline_project["project"]["id"]
     gate_tech_id = tasks["gate-tech"]
     tech_plan_id = tasks["tech-plan"]
+    handoff_tech_id = tasks["handoff-summarize-tech"]
 
     gt_r = requests.get(api(f"/api/tasks/{gate_tech_id}"), timeout=10)
     assert gt_r.status_code == 200
     gate_tech_task = gt_r.json()
 
-    assert tech_plan_id in gate_tech_task.get("depends_on", []), (
-        f"gate-tech does not depend on tech-plan. "
+    ht_r = requests.get(api(f"/api/tasks/{handoff_tech_id}"), timeout=10)
+    assert ht_r.status_code == 200
+    handoff_tech_task = ht_r.json()
+
+    # Phase 2: gate-tech depends on handoff-summarize-tech (not tech-plan directly)
+    assert handoff_tech_id in gate_tech_task.get("depends_on", []), (
+        f"gate-tech does not depend on handoff-summarize-tech. "
         f"depends_on={gate_tech_task.get('depends_on')}"
+    )
+    # handoff-summarize-tech depends on tech-plan
+    assert tech_plan_id in handoff_tech_task.get("depends_on", []), (
+        f"handoff-summarize-tech does not depend on tech-plan. "
+        f"depends_on={handoff_tech_task.get('depends_on')}"
     )

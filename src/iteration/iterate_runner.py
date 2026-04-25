@@ -15,6 +15,7 @@ aggregation path on canned JSONs — see tests/test_iterate_runner.py.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import socket
 import statistics
@@ -23,6 +24,8 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
+
+_log = logging.getLogger(__name__)
 
 from src.iteration.contract import METRIC_NAMES, SCHEMA_VERSION
 from src.memory.project_memory import project_memory
@@ -157,6 +160,43 @@ def _wait_for_port(port: int, timeout_sec: float = 5.0) -> bool:
     return False
 
 
+# ── Playtest quality gate ────────────────────────────────────────────────────
+
+
+def _check_playtest_thresholds(telemetry_data: dict) -> tuple[bool, str]:
+    """
+    Returns (passes, reason).
+    passes=True means game meets minimum quality bar.
+    """
+    sessions = telemetry_data.get("sessions", [])
+    if not sessions:
+        return False, "No playtest sessions recorded"
+
+    # Average session length (seconds)
+    session_lengths = [s.get("duration_seconds", 0) for s in sessions]
+    avg_session = sum(session_lengths) / len(session_lengths) if session_lengths else 0
+
+    # Death rate per minute in level 1
+    level1_deaths = []
+    for s in sessions:
+        events = s.get("events", [])
+        deaths = sum(1 for e in events if e.get("type") == "death" and e.get("level", 1) == 1)
+        duration_min = s.get("duration_seconds", 60) / 60
+        level1_deaths.append(deaths / max(duration_min, 0.1))
+    avg_death_rate = sum(level1_deaths) / len(level1_deaths) if level1_deaths else 0
+
+    # Thresholds
+    MIN_SESSION_SECONDS = 90
+    MAX_DEATH_RATE_PER_MIN = 3.0
+
+    if avg_session < MIN_SESSION_SECONDS:
+        return False, f"Session too short: {avg_session:.0f}s avg (min {MIN_SESSION_SECONDS}s)"
+    if avg_death_rate > MAX_DEATH_RATE_PER_MIN:
+        return False, f"Death rate too high in level 1: {avg_death_rate:.1f}/min (max {MAX_DEATH_RATE_PER_MIN})"
+
+    return True, f"OK — session {avg_session:.0f}s, death rate {avg_death_rate:.1f}/min"
+
+
 # ── Public entry point ───────────────────────────────────────────────────────
 
 
@@ -218,9 +258,31 @@ def run_playtest_batch(
 
     records, paths = load_telemetry_dir(telemetry_dir, iteration_tag)
     rollup = aggregate_telemetry(records)
+
+    # Build a sessions list for the quality gate from the raw telemetry records.
+    # Each record maps to one session; `session_duration_sec` → `duration_seconds`.
+    # The `events` field is not present in per-run records, so death-rate check
+    # gracefully returns 0 (no events = no deaths counted).
+    sessions_for_gate = [
+        {
+            "duration_seconds": float(r.get("session_duration_sec", 0) or 0),
+            "events": r.get("events", []),
+        }
+        for r in records
+        if r.get("outcome") in _VALID_OUTCOMES
+    ]
+
+    passes, gate_reason = _check_playtest_thresholds({"sessions": sessions_for_gate})
+    if not passes:
+        _log.warning("Playtest auto-REVISE: %s", gate_reason)
+    else:
+        _log.info("Playtest quality gate passed: %s", gate_reason)
+
     rollup_full = {
         "cycle_n": cycle_n,
         "iteration_tag": iteration_tag,
+        "playtest_gate_passes": passes,
+        "playtest_gate_reason": gate_reason,
         **rollup,
     }
     project_memory.write(
@@ -230,6 +292,22 @@ def run_playtest_batch(
         content=json.dumps(rollup_full, indent=2),
         created_by=f"pipeline:iterate_artifact:cycle_{cycle_n}",
     )
+
+    # If the gate fails, write a REVISE signal to memory so the pipeline
+    # can auto-set the next step to REVISE (skip human gate).
+    if not passes:
+        project_memory.write(
+            project_id,
+            mem_type="artifact",
+            key=f"playtest_revise_{iteration_tag}",
+            content=json.dumps({
+                "auto_revise": True,
+                "reason": gate_reason,
+                "cycle_n": cycle_n,
+                "iteration_tag": iteration_tag,
+            }, indent=2),
+            created_by=f"pipeline:iterate_artifact:cycle_{cycle_n}",
+        )
 
     return RunnerResult(
         cycle_n=cycle_n,

@@ -1905,6 +1905,127 @@ async def _maybe_resolve_review_loops(project_id: str, pipeline_specs: dict) -> 
                 })
 
 
+async def _maybe_apply_playtest_revise(project_id: str, pipeline_specs: dict) -> None:
+    """Auto-REVISE the iteration cycle when the playtest quality gate fails.
+
+    If `playtest_revise_{tag}` exists in memory (written by run_playtest_batch
+    when thresholds fail), auto-complete any pending human gate that follows
+    the playtest step and inject a REVISE context for the implement/fix agent.
+    This skips the human gate and sends the cycle straight to the implement step.
+    """
+    all_tasks = task_queue.list_tasks(project_id=project_id)
+
+    for pname, pspec in pipeline_specs.items():
+        if not pspec.get("cyclic"):
+            continue
+        steps = pspec.get("steps", []) or []
+
+        # Find completed playtest tasks
+        playtest_title = f"[{pname}] playtest"
+        playtest_tasks = [
+            t for t in all_tasks
+            if t.title == playtest_title and t.status == TaskStatus.COMPLETED
+        ]
+
+        for playtest_task in playtest_tasks:
+            md = playtest_task.metadata or {}
+            iteration_tag = md.get("iteration_tag")
+            cycle_n = md.get("cycle_n")
+            if not iteration_tag:
+                continue
+
+            # Check if a revise signal exists for this iteration
+            revise_signal_raw = project_memory.read(
+                project_id, "artifact", f"playtest_revise_{iteration_tag}"
+            )
+            if not revise_signal_raw:
+                continue
+
+            try:
+                revise_signal = json.loads(revise_signal_raw)
+            except (ValueError, TypeError):
+                continue
+
+            if not revise_signal.get("auto_revise"):
+                continue
+
+            reason = revise_signal.get("reason", "Playtest quality gate failed")
+
+            # Find the pending human gate that follows the postmortem step
+            # (synthesis_gate in iterate_artifact pipeline)
+            synthesis_gate_title = f"[{pname}] synthesis_gate"
+            pending_gates = [
+                t for t in all_tasks
+                if t.title == synthesis_gate_title
+                and t.status == TaskStatus.PENDING
+                and (t.metadata or {}).get("iteration_tag") == iteration_tag
+            ]
+
+            if not pending_gates:
+                # Gate may not be ready yet or already processed — skip
+                continue
+
+            gate_task = pending_gates[0]
+
+            # Check if this gate has already been auto-processed
+            if (gate_task.result or {}).get("auto_revise_applied"):
+                continue
+
+            # Check if all dependencies of the gate are complete
+            deps_complete = all(
+                (dep := task_queue.get(dep_id)) and dep.status == TaskStatus.COMPLETED
+                for dep_id in (gate_task.depends_on or [])
+            )
+            if not deps_complete:
+                continue
+
+            logger.warning(
+                "[%s] Playtest auto-REVISE for %s: %s",
+                project_id, iteration_tag, reason,
+            )
+
+            # Write the failure reason to memory so the implement agent sees it
+            project_memory.write(
+                project_id,
+                mem_type="artifact",
+                key=f"playtest_revise_context_{iteration_tag}",
+                content=json.dumps({
+                    "auto_revise": True,
+                    "reason": reason,
+                    "instruction": (
+                        f"Playtest auto-REVISE: {reason}. "
+                        "Fix the game to improve session length and/or reduce death rate. "
+                        "Focus on: difficulty curve, level 1 pacing, player feedback."
+                    ),
+                }, indent=2),
+                created_by=f"pipeline:{pname}:playtest_gate",
+            )
+
+            # Auto-complete the synthesis gate with a REVISE decision
+            # so the implement step gets triggered with the failure context
+            auto_result = {
+                "decision": "auto_revise",
+                "feedback": (
+                    f"[AUTO-REVISE] Playtest quality gate failed: {reason}. "
+                    "Skipping human review. Implement fixes to address the failure."
+                ),
+                "auto_revise_applied": True,
+                "playtest_gate_reason": reason,
+            }
+            task_queue.update_status(gate_task.id, TaskStatus.COMPLETED, result=auto_result)
+
+            await ws_manager.broadcast({
+                "type": "playtest_auto_revise",
+                "data": {
+                    "project_id": project_id,
+                    "pipeline": pname,
+                    "iteration_tag": iteration_tag,
+                    "gate_task_id": gate_task.id,
+                    "reason": reason,
+                },
+            })
+
+
 async def _maybe_enforce_cd_verdicts(project_id: str, pipeline_specs: dict) -> None:
     """Check completed CD steps and enforce REJECT verdicts by re-queuing upstream agents.
 
@@ -2174,6 +2295,13 @@ async def _advance_pipeline(project_id: str):
         await _maybe_enforce_cd_verdicts(project_id, pipeline_specs)
     except Exception as exc:
         logger.warning(f"CD verdict enforcement failed for {project_id}: {exc}")
+
+    # Playtest hard gate: if playtest_revise_{tag} exists, auto-skip human gate
+    # and inject a REVISE context for the implement/fix agent.
+    try:
+        await _maybe_apply_playtest_revise(project_id, pipeline_specs)
+    except Exception as exc:
+        logger.warning(f"Playtest revise check failed for {project_id}: {exc}")
 
     # Cyclic pipelines relaunch their first step once their terminal step
     # completes — do this BEFORE resolving ready tasks so the new first-step
